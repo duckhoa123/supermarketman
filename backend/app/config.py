@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     clover_app_id: str = ""
     clover_app_secret: str = ""
     # Sandbox: https://apisandbox.dev.clover.com / https://sandbox.dev.clover.com
-    # Production NA: https://api.clover.com / https://www.clover.com  (confirm the host for Australian merchants)
+    # Production, North America (US and Canada): https://api.clover.com / https://www.clover.com
     clover_api_base: str = "https://apisandbox.dev.clover.com"
     clover_web_base: str = "https://sandbox.dev.clover.com"
     clover_webhook_auth_code: str = ""  # "Clover Auth Code" from the app's Webhooks settings

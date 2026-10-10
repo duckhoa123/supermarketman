@@ -78,8 +78,8 @@ class Location(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    timezone: Mapped[str] = mapped_column(String(64), default="Australia/Sydney")
-    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    timezone: Mapped[str] = mapped_column(String(64), default="America/Toronto")
+    currency: Mapped[str] = mapped_column(String(3), default="CAD")
     digest_hour: Mapped[int] = mapped_column(Integer, default=8)  # local hour for the daily digest
 
     organization: Mapped[Organization] = relationship(back_populates="locations")

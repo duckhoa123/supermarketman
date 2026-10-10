@@ -51,8 +51,8 @@ async def me(user: AuthUser = Depends(current_user), session: AsyncSession = Dep
 class OnboardIn(BaseModel):
     business_name: str = Field(min_length=1, max_length=200)
     location_name: str = Field(min_length=1, max_length=200)
-    timezone: str = "Australia/Sydney"
-    currency: str = Field(default="AUD", min_length=3, max_length=3)
+    timezone: str = "America/Toronto"
+    currency: str = Field(default="CAD", min_length=3, max_length=3)
 
 
 @router.post("/onboarding", response_model=LocationOut)
@@ -75,7 +75,7 @@ async def onboard(body: OnboardIn, user: AuthUser = Depends(current_user), sessi
 
 class ProfileIn(BaseModel):
     name: str | None = None
-    phone: str | None = Field(default=None, pattern=r"^\+[1-9]\d{6,14}$", description="E.164, e.g. +61412345678")
+    phone: str | None = Field(default=None, pattern=r"^\+[1-9]\d{6,14}$", description="E.164, e.g. +14165551234")
     channels: dict[str, bool] | None = None
 
 

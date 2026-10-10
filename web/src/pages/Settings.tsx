@@ -221,7 +221,7 @@ export default function Settings() {
           <p className="small muted">Signed in as {me.email}</p>
           <label className="stack" style={{ gap: 6, maxWidth: 320 }}>
             <span className="small">Mobile for WhatsApp and SMS (with country code)</span>
-            <input className="input" placeholder="+61412345678" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input className="input" placeholder="+14165551234" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </label>
           <div className="row">
             {CHANNELS.map((c) => (

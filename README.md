@@ -11,7 +11,7 @@ Owners ask questions about sales, stock, orders, tables and reviews in plain Eng
 | `backend/` | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic. One codebase runs as the **API** and the **worker**. |
 | `web/` | React + Vite installable web app (PWA): assistant, today, stock, orders, tables, reviews, alerts, settings. |
 | `mobile/` | Expo (React Native) app on the same API: assistant, today, alerts, push notifications. |
-| `infra/deploy.sh` | One script that deploys the backend to Google Cloud Run in Sydney with Cloud Scheduler. |
+| `infra/deploy.sh` | One script that deploys the backend to Google Cloud Run in Toronto with Cloud Scheduler. |
 | `.github/workflows/ci.yml` | Backend tests on Postgres, web build, mobile type check, on every push. |
 
 How it fits together: POS and review data is synced into Postgres (webhooks + a pull every 15 minutes) and rolled up per day. The AI agent answers from those tables through typed, tenant-scoped tools, so answers are fast and cheap and never call Clover live. See the architecture doc for the full design and cost estimate.
@@ -44,8 +44,8 @@ python -m unittest tests.test_core_logic   # the dependency-free core tests only
 ## Going live: checklist
 
 1. **Claude API**: create a key at console.anthropic.com, add credits, set a monthly spend limit. (A Claude Pro subscription doesn't include API access.)
-2. **Supabase** (Sydney region): create a project. Put `SUPABASE_URL` in `infra/prod.env`; in the web app set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (build-time env vars), and in `mobile/app.json` set `extra.supabaseUrl` and `extra.supabaseAnonKey`. Enable the Email and Google sign-in providers.
-3. **Clover** (sandbox first): create an app in the developer dashboard with Read permissions for Merchant, Orders, Inventory and Employees. Set the OAuth redirect to `https://<api>/oauth/clover/callback` and the webhook URL to `https://<api>/webhooks/clover`, subscribe to Orders and Inventory events, and copy the Clover Auth Code into `CLOVER_WEBHOOK_AUTH_CODE`. When you save the webhook URL, Clover sends a verification code: it is printed in the API logs; paste it back into the dashboard. Confirm with Clover which production API host serves Australian merchants and set `CLOVER_API_BASE` / `CLOVER_WEB_BASE`.
+2. **Supabase** (Canada (Central) region, so customer data stays in Canada): create a project. Put `SUPABASE_URL` in `infra/prod.env`; in the web app set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (build-time env vars), and in `mobile/app.json` set `extra.supabaseUrl` and `extra.supabaseAnonKey`. Enable the Email and Google sign-in providers.
+3. **Clover** (sandbox first): create an app in the developer dashboard with Read permissions for Merchant, Orders, Inventory and Employees. Set the OAuth redirect to `https://<api>/oauth/clover/callback` and the webhook URL to `https://<api>/webhooks/clover`, subscribe to Orders and Inventory events, and copy the Clover Auth Code into `CLOVER_WEBHOOK_AUTH_CODE`. When you save the webhook URL, Clover sends a verification code: it is printed in the API logs; paste it back into the dashboard. For production set `CLOVER_API_BASE=https://api.clover.com` and `CLOVER_WEB_BASE=https://www.clover.com` (Clover's North America region covers Canada).
 4. **Google Business Profile**: request API access from Google (approval gates the reviews feature), then create an OAuth client (Web application) with redirect `https://<api>/oauth/google/callback`.
 5. **Google Cloud**: `cp .env.example infra/prod.env`, fill it in (generate `TOKEN_ENCRYPTION_KEY` and a long `INTERNAL_TOKEN`), then `PROJECT_ID=your-project ./infra/deploy.sh`.
 6. **Web app hosting**: `cd web && VITE_API_URL=https://<api> npm run build` and upload `web/dist` to Firebase Hosting or Cloudflare Pages (both have free tiers). Add that URL to `CORS_ORIGINS` and `WEB_APP_URL`.

@@ -7,8 +7,8 @@ Endpoints (docs.clover.com):
 - Orders:     GET  {api_base}/v3/merchants/{mId}/orders
 - Items:      GET  {api_base}/v3/merchants/{mId}/items  (limit max 1000)
 
-Hosts: sandbox apisandbox.dev.clover.com; production api.clover.com (NA), api.eu.clover.com,
-api.la.clover.com. Confirm the production host for Australian merchants with Clover before launch.
+Hosts: sandbox apisandbox.dev.clover.com; production api.clover.com (North America: US and Canada),
+api.eu.clover.com, api.la.clover.com.
 """
 
 import asyncio

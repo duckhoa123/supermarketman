@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
-def fmt_money(cents: int | None, currency: str = "AUD") -> str:
+def fmt_money(cents: int | None, currency: str = "CAD") -> str:
     if cents is None:
         return "-"
     symbol = {"AUD": "$", "USD": "$", "CAD": "$", "NZD": "$", "EUR": "€", "GBP": "£"}.get(currency, "")

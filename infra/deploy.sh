@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the backend to Google Cloud Run in Sydney.
+# Deploy the backend to Google Cloud Run in Toronto (data stays in Canada).
 #
 # Prerequisites: gcloud CLI logged in (`gcloud auth login`), a project with billing enabled,
 # and infra/prod.env filled in (copy from .env.example; never commit it).
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 : "${PROJECT_ID:?Set PROJECT_ID}"
-REGION="${REGION:-australia-southeast1}"
+REGION="${REGION:-northamerica-northeast2}"  # Toronto; northamerica-northeast1 is Montreal
 REPO="restaurant"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/backend:$(date +%Y%m%d-%H%M%S)"
 ENV_FILE="${ENV_FILE:-$(dirname "$0")/prod.env}"

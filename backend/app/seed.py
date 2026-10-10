@@ -98,7 +98,7 @@ async def seed(email: str, days: int = 60, reset: bool = False) -> str:
         session.add(org)
         await session.flush()
         session.add(OrgMember(org_id=org.id, user_id=user_id, role="owner"))
-        loc = Location(org_id=org.id, name="Demo Bistro", timezone="Australia/Sydney", currency="AUD")
+        loc = Location(org_id=org.id, name="Demo Bistro", timezone="America/Toronto", currency="CAD")
         session.add(loc)
         await session.flush()
         for kind, channels in (("bad_review", ["push", "email"]), ("low_stock", ["push"]),
@@ -139,7 +139,8 @@ async def seed(email: str, days: int = 60, reset: bool = False) -> str:
                 open_now = back == 0 and (now_local - opened) < timedelta(minutes=45)
                 session.add(Order(
                     location_id=loc.id, provider="demo", external_id=f"demo-{day.isoformat()}-{k}",
-                    status="open" if open_now else "paid", total_cents=subtotal, tax_cents=round(subtotal / 11),
+                    status="open" if open_now else "paid", total_cents=subtotal + round(subtotal * 0.13),
+                    tax_cents=round(subtotal * 0.13),  # Ontario HST, added on top of menu prices
                     tip_cents=rng.choice([0, 0, 0, 200, 500]), table_name=f"T{rng.randint(1, 12)}",
                     employee_name=rng.choice(STAFF), guests=rng.randint(1, 6), opened_at=opened.astimezone(ZoneInfo("UTC")),
                     closed_at=None if open_now else (opened + timedelta(minutes=rng.randint(25, 90))),

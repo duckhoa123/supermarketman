@@ -1,4 +1,4 @@
-export function money(cents: number, currency = "AUD"): string {
+export function money(cents: number, currency = "CAD"): string {
   return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(
     cents / 100
   );

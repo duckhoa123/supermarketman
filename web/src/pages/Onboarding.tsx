@@ -2,6 +2,17 @@ import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 
 const ZONES = [
+  "America/Toronto",
+  "America/Vancouver",
+  "America/Edmonton",
+  "America/Winnipeg",
+  "America/Regina",
+  "America/Halifax",
+  "America/St_Johns",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
   "Australia/Sydney",
   "Australia/Melbourne",
   "Australia/Brisbane",
@@ -9,19 +20,17 @@ const ZONES = [
   "Australia/Perth",
   "Australia/Hobart",
   "Pacific/Auckland",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
   "Europe/London",
 ];
+
+const CANADA = ZONES.slice(0, 7);
 
 export default function Onboarding({ onDone }: { onDone: () => Promise<void> }) {
   const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [business, setBusiness] = useState("");
   const [name, setName] = useState("");
-  const [tz, setTz] = useState(ZONES.includes(guess) ? guess : "Australia/Sydney");
-  const [currency, setCurrency] = useState(tz.startsWith("America") ? "USD" : "AUD");
+  const [tz, setTz] = useState(ZONES.includes(guess) ? guess : "America/Toronto");
+  const [currency, setCurrency] = useState(CANADA.includes(tz) ? "CAD" : tz.startsWith("America") ? "USD" : "AUD");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -65,7 +74,7 @@ export default function Onboarding({ onDone }: { onDone: () => Promise<void> }) 
           <label className="stack" style={{ gap: 6, flex: 1 }}>
             <span className="small">Currency</span>
             <select className="select" value={currency} onChange={(e) => setCurrency(e.target.value)}>
-              {["AUD", "NZD", "USD", "CAD", "GBP", "EUR"].map((c) => (
+              {["CAD", "USD", "AUD", "NZD", "GBP", "EUR"].map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
