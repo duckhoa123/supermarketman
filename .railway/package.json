@@ -1,0 +1,8 @@
+{
+  "name": "supermarketman-railway",
+  "private": true,
+  "description": "Railway infrastructure definition (railway.ts). Install with `npm install` in this folder before `railway config plan`.",
+  "dependencies": {
+    "railway": "latest"
+  }
+}

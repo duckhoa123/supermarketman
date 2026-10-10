@@ -11,7 +11,8 @@ Owners ask questions about sales, stock, orders, tables and reviews in plain Eng
 | `backend/` | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic. One codebase runs as the **API** and the **worker**. |
 | `web/` | React + Vite installable web app (PWA): assistant, today, stock, orders, tables, reviews, alerts, settings. |
 | `mobile/` | Expo (React Native) app on the same API: assistant, today, alerts, push notifications. |
-| `infra/deploy.sh` | One script that deploys the backend to Google Cloud Run in Toronto with Cloud Scheduler. |
+| `.railway/railway.ts` | Railway setup: Postgres, the API and the worker in US East. Deploys on every push to `main`. |
+| `infra/gcp/deploy.sh` | Alternative: deploy to Google Cloud Run in Toronto if you later need data hosted in Canada. |
 | `.github/workflows/ci.yml` | Backend tests on Postgres, web build, mobile type check, on every push. |
 
 How it fits together: POS and review data is synced into Postgres (webhooks + a pull every 15 minutes) and rolled up per day. The AI agent answers from those tables through typed, tenant-scoped tools, so answers are fast and cheap and never call Clover live. See the architecture doc for the full design and cost estimate.
@@ -44,12 +45,32 @@ python -m unittest tests.test_core_logic   # the dependency-free core tests only
 ## Going live: checklist
 
 1. **Claude API**: create a key at console.anthropic.com, add credits, set a monthly spend limit. (A Claude Pro subscription doesn't include API access.)
-2. **Supabase** (Canada (Central) region, so customer data stays in Canada): create a project. Put `SUPABASE_URL` in `infra/prod.env`; in the web app set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (build-time env vars), and in `mobile/app.json` set `extra.supabaseUrl` and `extra.supabaseAnonKey`. Enable the Email and Google sign-in providers.
+2. **Supabase** (used for sign-in only, so the Free plan is enough; pick the Canada (Central) region): create a project. Put `SUPABASE_URL` in the Railway variables (below), plus `SUPABASE_JWT_SECRET` only if your project still signs tokens with the legacy JWT secret; in the web app set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (build-time env vars), and in `mobile/app.json` set `extra.supabaseUrl` and `extra.supabaseAnonKey`. Enable the Email and Google sign-in providers.
 3. **Clover** (sandbox first): create an app in the developer dashboard with Read permissions for Merchant, Orders, Inventory and Employees. Set the OAuth redirect to `https://<api>/oauth/clover/callback` and the webhook URL to `https://<api>/webhooks/clover`, subscribe to Orders and Inventory events, and copy the Clover Auth Code into `CLOVER_WEBHOOK_AUTH_CODE`. When you save the webhook URL, Clover sends a verification code: it is printed in the API logs; paste it back into the dashboard. For production set `CLOVER_API_BASE=https://api.clover.com` and `CLOVER_WEB_BASE=https://www.clover.com` (Clover's North America region covers Canada).
 4. **Google Business Profile**: request API access from Google (approval gates the reviews feature), then create an OAuth client (Web application) with redirect `https://<api>/oauth/google/callback`.
-5. **Google Cloud**: `cp .env.example infra/prod.env`, fill it in (generate `TOKEN_ENCRYPTION_KEY` and a long `INTERNAL_TOKEN`), then `PROJECT_ID=your-project ./infra/deploy.sh`.
-6. **Web app hosting**: `cd web && VITE_API_URL=https://<api> npm run build` and upload `web/dist` to Firebase Hosting or Cloudflare Pages (both have free tiers). Add that URL to `CORS_ORIGINS` and `WEB_APP_URL`.
+5. **Railway**: see [Deploy on Railway](#deploy-on-railway) below.
+6. **Web app hosting**: `cd web && VITE_API_URL=https://<api> npm run build` and upload `web/dist` to Cloudflare Pages or Netlify (both have free tiers). Add that URL to `CORS_ORIGINS` and `WEB_APP_URL`.
 7. **Later**: Resend (email), Twilio WhatsApp sender + approved alert template, VAPID keys for browser push (`npx web-push generate-vapid-keys`), Apple and Google developer accounts for the mobile app.
+
+## Deploy on Railway
+
+The backend runs as three Railway services in one project, all in **US East (Virginia)**: `postgres`, `api` (public) and `worker` (always on; it also queues the 15-minute syncs and morning digests, so no separate scheduler is needed). Every push to `main` redeploys both services, and the API runs `alembic upgrade head` before each new version goes live.
+
+1. Create a Railway account on the **Pro** plan (US$20/month, which includes US$20 of usage).
+2. Install the CLI and log in: `npm i -g @railway/cli`, then `railway login`.
+3. From the repo root: `cd .railway && npm install && cd ..`, then `railway config plan` to preview and `railway config apply` to create the services.
+4. In the Railway dashboard, generate a public domain for `api` (Settings > Networking). That's your `<api>` URL.
+5. Open `api` > Variables and set the secrets marked `preserve()` in `.railway/railway.ts`. Copy the same values to `worker` (or use Railway shared variables). The ones needed to start:
+   - `APP_BASE_URL` = `https://<api>`; `WEB_APP_URL` and `CORS_ORIGINS` = your web app URL
+   - `TOKEN_ENCRYPTION_KEY`: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+   - `INTERNAL_TOKEN`: any long random string
+   - `SUPABASE_URL`, `ANTHROPIC_API_KEY`, `CLOVER_APP_ID`, `CLOVER_APP_SECRET`, `CLOVER_WEBHOOK_AUTH_CODE`
+6. Redeploy both services. Check that `postgres` also sits in US East (its service settings), next to the API, and that `https://<api>/health` returns `{"ok": true}`.
+7. Point the outside services at it: Clover OAuth redirect `https://<api>/oauth/clover/callback` and webhook `https://<api>/webhooks/clover`; Google OAuth redirect `https://<api>/oauth/google/callback`; Twilio inbound `https://<api>/webhooks/twilio`.
+
+Watch the worker's logs once after deploying: you should see a `tick:` line within a minute, then `ran N job(s)` as work comes in. Keep the worker at one replica.
+
+Supabase's Free plan pauses a project after about a week with little activity. Once restaurants sign in daily that won't happen, but during a quiet pilot keep an eye on Supabase's warning emails, or move to Supabase Pro if a pause would hurt.
 
 ## Main API routes
 
@@ -62,7 +83,7 @@ python -m unittest tests.test_core_logic   # the dependency-free core tests only
 | `POST /locations/{id}/reviews/{rid}/reply` | Post an owner reply to Google |
 | `GET /locations/{id}/integrations/{provider}/connect` | Start Clover/Google OAuth |
 | `POST /webhooks/clover`, `POST /webhooks/twilio` | Inbound POS changes; owners texting the assistant |
-| `POST /internal/tick`, `POST /internal/run-jobs` | Called by Cloud Scheduler |
+| `POST /internal/tick`, `POST /internal/run-jobs` | Manual triggers for operators (the worker schedules itself) |
 
 Interactive docs at `http://localhost:8000/docs` in development.
 

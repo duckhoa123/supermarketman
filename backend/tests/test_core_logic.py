@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 
 from app.agent.pricing import Usage, cost_usd
 from app.agent.router import choose_model, needs_deep_model
+from app.db_url import to_async_url
 from app.integrations.pos import clover_parse
 from app.integrations.reviews.parse import normalize_google_review
 from app.integrations.twilio_sig import compute_signature, is_valid
@@ -181,6 +182,21 @@ class PricingAndRoutingTest(unittest.TestCase):
         self.assertEqual(choose_model("Forecast next week", deep_requested=False, budget_exceeded=False, **kw), "deep")
         self.assertEqual(choose_model("Top items", deep_requested=True, budget_exceeded=False, **kw), "deep")
         self.assertEqual(choose_model("Why?", deep_requested=True, budget_exceeded=True, **kw), "cheap")
+
+
+class DatabaseUrlTest(unittest.TestCase):
+    def test_railway_and_heroku_urls(self):
+        self.assertEqual(to_async_url("postgresql://u:p@postgres.railway.internal:5432/railway"),
+                         "postgresql+asyncpg://u:p@postgres.railway.internal:5432/railway")
+        self.assertEqual(to_async_url("postgres://u:p@h/db"), "postgresql+asyncpg://u:p@h/db")
+
+    def test_sslmode_becomes_ssl(self):
+        self.assertEqual(to_async_url("postgresql://u:p@h/db?sslmode=require"), "postgresql+asyncpg://u:p@h/db?ssl=require")
+        self.assertEqual(to_async_url("postgresql://u:p@h/db?sslmode=disable"), "postgresql+asyncpg://u:p@h/db")
+
+    def test_leaves_other_urls_alone(self):
+        for url in ("postgresql+asyncpg://u@h/db", "sqlite+aiosqlite:///./test.db", ""):
+            self.assertEqual(to_async_url(url), url)
 
 
 class SignaturesTest(unittest.TestCase):

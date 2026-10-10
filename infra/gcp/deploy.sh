@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Deploy the backend to Google Cloud Run in Toronto (data stays in Canada).
+# ALTERNATIVE to Railway: deploy the backend to Google Cloud Run in Toronto (data stays in Canada).
+# The project deploys on Railway by default (see README); keep this for a later move to Canadian hosting.
 #
 # Prerequisites: gcloud CLI logged in (`gcloud auth login`), a project with billing enabled,
-# and infra/prod.env filled in (copy from .env.example; never commit it).
+# and infra/gcp/prod.env filled in (copy from .env.example; never commit it).
 #
-#   PROJECT_ID=my-project ./infra/deploy.sh            # full setup + deploy
-#   PROJECT_ID=my-project ./infra/deploy.sh --code-only # rebuild and redeploy code only
+#   PROJECT_ID=my-project ./infra/gcp/deploy.sh            # full setup + deploy
+#   PROJECT_ID=my-project ./infra/gcp/deploy.sh --code-only # rebuild and redeploy code only
 #
 # What it creates (idempotent where gcloud allows):
 #   - Artifact Registry repo "restaurant"
@@ -70,7 +71,7 @@ done < "$ENV_FILE"
 SECRETS="${SECRETS%,}"
 
 echo "==> Building $IMAGE"
-gcloud builds submit "$(dirname "$0")/../backend" --tag "$IMAGE" --region "$REGION"
+gcloud builds submit "$(dirname "$0")/../../backend" --tag "$IMAGE" --region "$REGION"
 
 COMMON=(--image "$IMAGE" --region "$REGION" --service-account "$SA" --set-secrets "$SECRETS"
         --set-env-vars "ENV=production,DEV_AUTH_ENABLED=false")
@@ -113,7 +114,7 @@ Done.
   Worker:  $WORKER_URL (private)
 
 Next:
-  - Set APP_BASE_URL=$API_URL in infra/prod.env and re-run if it changed.
+  - Set APP_BASE_URL=$API_URL in infra/gcp/prod.env and re-run if it changed.
   - Clover dashboard: OAuth redirect  $API_URL/oauth/clover/callback
                       Webhook URL     $API_URL/webhooks/clover
   - Google OAuth client redirect:     $API_URL/oauth/google/callback

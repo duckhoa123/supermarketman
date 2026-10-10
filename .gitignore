@@ -10,3 +10,5 @@ web/dist/
 mobile/.expo/
 mobile/dist/
 .DS_Store
+infra/gcp/prod.env
+.railway/node_modules/

@@ -2,7 +2,10 @@
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.db_url import to_async_url
 
 
 class Settings(BaseSettings):
@@ -67,6 +70,12 @@ class Settings(BaseSettings):
     vapid_public_key: str = ""
     vapid_private_key: str = ""
     vapid_subject: str = "mailto:alerts@example.com"
+
+    @field_validator("database_url")
+    @classmethod
+    def _async_driver(cls, value: str) -> str:
+        # Railway provides postgresql://...; SQLAlchemy needs the asyncpg driver name.
+        return to_async_url(value)
 
     @property
     def is_production(self) -> bool:
