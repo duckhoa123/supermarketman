@@ -258,10 +258,11 @@ async def test_digest(session, demo_location_id):
 
 async def test_failed_job_is_retried_later(session, engine):
     job = await enqueue(session, "no_such_handler", {})
+    job_id = job.id  # read before expire_all: expired attributes can't lazy-load in async code
     await session.commit()
     await run_pending(time_budget_s=5)
     session.expire_all()
-    job = await session.get(Job, job.id)
+    job = await session.get(Job, job_id)
     assert job.status == "queued" and job.attempts == 1 and "No handler" in job.last_error
     assert job.run_at > utcnow()
 
