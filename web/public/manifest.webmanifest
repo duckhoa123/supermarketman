@@ -1,0 +1,11 @@
+{
+  "name": "Pass — restaurant assistant",
+  "short_name": "Pass",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F8F6",
+  "theme_color": "#2F5D50",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

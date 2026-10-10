@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Pass",
+    "slug": "pass-restaurant",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "pass",
+    "ios": { "bundleIdentifier": "com.example.pass", "supportsTablet": true },
+    "android": { "package": "com.example.pass" },
+    "plugins": ["expo-notifications"],
+    "extra": {
+      "apiUrl": "http://localhost:8000",
+      "supabaseUrl": "",
+      "supabaseAnonKey": "",
+      "eas": { "projectId": "" }
+    }
+  }
+}
