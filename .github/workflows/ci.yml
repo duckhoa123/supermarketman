@@ -31,7 +31,14 @@ jobs:
           cache: pip
       - run: pip install ".[dev]"
       - run: ruff check app tests migrations
-      - run: pytest -q
+      - name: pytest
+        run: |
+          set -o pipefail
+          pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+      - name: Show test failures on the run summary
+        if: failure()
+        working-directory: .
+        run: python .github/annotate_pytest.py backend/pytest.log
 
   web:
     runs-on: ubuntu-latest
