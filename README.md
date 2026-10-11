@@ -72,6 +72,23 @@ Watch the worker's logs once after deploying: you should see a `tick:` line with
 
 Supabase's Free plan pauses a project after about a week with little activity. Once restaurants sign in daily that won't happen, but during a quiet pilot keep an eye on Supabase's warning emails, or move to Supabase Pro if a pause would hurt.
 
+## Web app on Railway
+
+The `web` folder deploys as a fourth Railway service (it has its own `Dockerfile` and `Caddyfile`).
+
+1. In the Railway project: **+ New → GitHub Repo → duckhoa123/supermarketman**. Name it `web`; Settings → Root Directory `web`.
+2. Variables on `web` (they're baked in at build time, so redeploy after changing them):
+   - `VITE_API_URL` = `https://<api address>`
+   - `VITE_SUPABASE_URL` = your Supabase project URL
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = Supabase → Settings → API Keys → publishable key (`sb_publishable_...`)
+   - `PORT` = `8080`
+   - Optional: `VITE_GOOGLE_SIGNIN=true` once the Google provider is enabled in Supabase
+3. Settings → Networking → **+ HTTP Proxy**, port `8080`. That's the address people open.
+4. On `api`, set `WEB_APP_URL` and `CORS_ORIGINS` to `https://<web address>` and redeploy `api`.
+5. In Supabase → Authentication → URL Configuration, set **Site URL** to `https://<web address>` and add it under **Redirect URLs**, so sign-in links come back to the app.
+
+New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" with sample data. Set `DEMO_DATA_ENABLED=false` on `api` to hide it once real restaurants are using the app.
+
 ## Main API routes
 
 | Route | Purpose |

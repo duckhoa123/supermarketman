@@ -25,7 +25,13 @@ const ZONES = [
 
 const CANADA = ZONES.slice(0, 7);
 
-export default function Onboarding({ onDone }: { onDone: () => Promise<void> }) {
+export default function Onboarding({
+  onDone,
+  demoAvailable,
+}: {
+  onDone: () => Promise<void>;
+  demoAvailable: boolean;
+}) {
   const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [business, setBusiness] = useState("");
   const [name, setName] = useState("");
@@ -33,6 +39,18 @@ export default function Onboarding({ onDone }: { onDone: () => Promise<void> }) 
   const [currency, setCurrency] = useState(CANADA.includes(tz) ? "CAD" : tz.startsWith("America") ? "USD" : "AUD");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  async function loadDemo() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/demo", { method: "POST" });
+      await onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't load the demo restaurant.");
+      setBusy(false);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -83,6 +101,19 @@ export default function Onboarding({ onDone }: { onDone: () => Promise<void> }) 
         <button className="btn primary" disabled={busy}>
           Create restaurant
         </button>
+        {demoAvailable && (
+          <>
+            <p className="small muted" style={{ textAlign: "center" }}>
+              or
+            </p>
+            <button type="button" className="btn" disabled={busy} onClick={() => void loadDemo()}>
+              {busy ? "Setting up…" : "Explore a demo restaurant first"}
+            </button>
+            <p className="small muted">
+              Adds "Demo Bistro" with six weeks of sample sales, stock, tables and reviews. Takes up to a minute.
+            </p>
+          </>
+        )}
         {error && <p className="error">{error}</p>}
       </form>
     </div>

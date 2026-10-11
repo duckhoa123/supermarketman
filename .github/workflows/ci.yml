@@ -65,3 +65,15 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npx tsc --noEmit
+
+  docker:
+    # Builds the same image Railway deploys, so a broken Dockerfile is caught before it reaches production.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t supermarketman-backend backend
+      - name: Image starts and imports the app
+        run: docker run --rm --entrypoint python supermarketman-backend -c "import app.main, app.worker; print('ok')"
+      - run: docker build --build-arg VITE_API_URL=https://api.example.com -t supermarketman-web web
+      - name: Web server config is valid
+        run: docker run --rm supermarketman-web caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

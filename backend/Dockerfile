@@ -15,5 +15,8 @@ COPY . .
 RUN useradd --create-home appuser
 USER appuser
 
-# API by default; the worker service overrides with: python -m app.worker
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips="*"
+# API by default: bring the database schema up to date, then serve. Running migrations here (not only as a
+# platform "pre-deploy" step) means a missing dashboard setting can't leave the database empty. Safe with one
+# API replica; `alembic upgrade head` is a no-op when nothing is pending.
+# The worker service overrides this with: python -m app.worker --schedule
+CMD alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips="*"

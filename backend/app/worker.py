@@ -16,6 +16,7 @@ from app.services.jobs import run_pending
 
 log = logging.getLogger("worker")
 TICK_EVERY_S = 15 * 60
+ERROR_BACKOFF_S = 15
 
 
 async def main(once: bool, schedule: bool) -> None:
@@ -28,13 +29,24 @@ async def main(once: bool, schedule: bool) -> None:
             pass
     last_tick = 0.0
     while not stop.is_set():
-        if schedule and time.monotonic() - last_tick > TICK_EVERY_S:
-            async with sessionmaker()() as session:
-                log.info("tick: %s", await schedule_periodic(session))
-            last_tick = time.monotonic()
-        ran = await run_pending(max_jobs=500, time_budget_s=55)
-        if ran:
-            log.info("ran %d job(s)", ran)
+        ran = 0
+        try:
+            if schedule and time.monotonic() - last_tick > TICK_EVERY_S:
+                async with sessionmaker()() as session:
+                    log.info("tick: %s", await schedule_periodic(session))
+                last_tick = time.monotonic()
+            ran = await run_pending(max_jobs=500, time_budget_s=55)
+            if ran:
+                log.info("ran %d job(s)", ran)
+        except Exception:  # noqa: BLE001 - e.g. database not migrated yet or briefly unreachable: retry, don't crash
+            log.exception("worker loop failed; retrying in %ss", ERROR_BACKOFF_S)
+            if once:
+                return
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=ERROR_BACKOFF_S)
+            except TimeoutError:
+                pass
+            continue
         if once:
             return
         try:

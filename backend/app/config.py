@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     model_deep: str = "claude-sonnet-5-5"
     agent_max_tool_rounds: int = 6
     agent_max_output_tokens: int = 1500
+    # Lets a signed-in user add a "Demo Bistro" with sample data (onboarding and Settings). Turn off once live.
+    demo_data_enabled: bool = True
     # Monthly AI budget per location in US$; above it the agent stays on the default (cheap) model.
     monthly_ai_budget_usd: float = 5.0
 

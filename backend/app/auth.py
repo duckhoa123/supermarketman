@@ -28,13 +28,17 @@ class AuthUser:
 _jwks_client: jwt.PyJWKClient | None = None
 
 
+def _supabase_base() -> str:
+    return get_settings().supabase_url.strip().rstrip("/")
+
+
 def _jwks() -> jwt.PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
         settings = get_settings()
         if not settings.supabase_url:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "SUPABASE_URL is not configured")
-        _jwks_client = jwt.PyJWKClient(f"{settings.supabase_url}/auth/v1/.well-known/jwks.json", cache_keys=True)
+        _jwks_client = jwt.PyJWKClient(f"{_supabase_base()}/auth/v1/.well-known/jwks.json", cache_keys=True)
     return _jwks_client
 
 
@@ -47,17 +51,27 @@ def verify_token(token: str) -> AuthUser:
         if "@" not in email:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid dev token")
         return AuthUser(id=f"dev-{email}", email=email)
+    if not settings.supabase_url:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "SUPABASE_URL is not configured")
     try:
-        if settings.supabase_jwt_secret:  # older Supabase projects sign with a shared HS256 secret
+        # Supabase projects sign either with asymmetric keys (current) or a shared HS256 secret (legacy);
+        # the token's header says which, so both work without extra configuration.
+        alg = jwt.get_unverified_header(token).get("alg")
+        if alg == "HS256":
+            if not settings.supabase_jwt_secret:
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    "This Supabase project uses the legacy JWT secret: set SUPABASE_JWT_SECRET",
+                )
             key, algorithms = settings.supabase_jwt_secret, ["HS256"]
-        else:  # current projects publish asymmetric signing keys
+        else:
             key, algorithms = _jwks().get_signing_key_from_jwt(token).key, ["ES256", "RS256"]
         claims = jwt.decode(
             token,
             key,
             algorithms=algorithms,
             audience=settings.supabase_jwt_audience,
-            issuer=f"{settings.supabase_url}/auth/v1",
+            issuer=f"{_supabase_base()}/auth/v1",
         )
     except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from exc

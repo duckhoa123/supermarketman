@@ -78,12 +78,17 @@ def _hour_weights(weekday: int) -> dict[int, float]:
     return base
 
 
-async def seed(email: str, days: int = 60, reset: bool = False) -> str:
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)  # convenience for local dev; prod uses Alembic
+async def seed(
+    email: str, days: int = 60, reset: bool = False, user_id: str | None = None, create_tables: bool = True
+) -> str:
+    """Create the demo restaurant for a user. `user_id` defaults to the dev sign-in id for `email`;
+    pass the real account id (the Supabase user id) to seed a signed-in production account."""
+    if create_tables:
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)  # convenience for local dev; prod uses Alembic
     rng = random.Random(42)
-    user_id = f"dev-{email.lower()}"
+    user_id = user_id or f"dev-{email.lower()}"
     async with sessionmaker()() as session:
         existing = await session.scalar(
             select(Location).join(OrgMember, OrgMember.org_id == Location.org_id)

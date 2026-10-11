@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 
+import pytest
+
 from sqlalchemy import func, select
 
 from app.crypto import encrypt
@@ -291,3 +293,57 @@ async def test_table_status_update(client, demo_location_id):
     assert r.status_code == 200
     again = (await client.get(f"/locations/{demo_location_id}/tables", headers=OWNER)).json()["tables"]
     assert next(x for x in again if x["id"] == t["id"])["status"] == "cleaning"
+
+
+async def test_worker_survives_errors_instead_of_crashing(engine, monkeypatch):
+    """A failing tick (e.g. tables not created yet) must be logged and retried, not kill the process."""
+    import app.worker as worker
+
+    async def boom(session):
+        raise RuntimeError('relation "integrations" does not exist')
+
+    monkeypatch.setattr(worker, "schedule_periodic", boom)
+    await worker.main(once=True, schedule=True)  # returns normally
+
+
+async def test_demo_data_for_signed_in_account(client):
+    me = (await client.get("/me", headers=OWNER)).json()
+    assert me["demo_available"] is True and me["locations"] == []
+    r = await client.post("/demo", headers=OWNER)
+    assert r.status_code == 200, r.text
+    loc_id = r.json()["id"]
+    assert [x["id"] for x in (await client.get("/me", headers=OWNER)).json()["locations"]] == [loc_id]
+    dash = (await client.get(f"/locations/{loc_id}/dashboard?period=last_7_days", headers=OWNER)).json()
+    assert dash["summary"]["orders"] > 0
+    assert (await client.post("/demo", headers=OWNER)).json()["id"] == loc_id  # once per account
+    # Another user can't see it.
+    assert (await client.get(f"/locations/{loc_id}/dashboard", headers=INTRUDER)).status_code == 404
+
+
+def test_supabase_legacy_hs256_tokens(monkeypatch):
+    import time
+
+    import jwt as pyjwt
+    from fastapi import HTTPException
+
+    from app.auth import verify_token
+    from app.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "supabase_url", "https://abc.supabase.co/")  # trailing slash tolerated
+    claims = {"sub": "user-1", "email": "Owner@Example.com", "aud": "authenticated",
+              "iss": "https://abc.supabase.co/auth/v1", "exp": int(time.time()) + 60}
+    token = pyjwt.encode(claims, "legacy-secret", algorithm="HS256")
+
+    monkeypatch.setattr(s, "supabase_jwt_secret", "")
+    with pytest.raises(HTTPException) as missing:
+        verify_token(token)
+    assert missing.value.status_code == 500 and "SUPABASE_JWT_SECRET" in missing.value.detail
+
+    monkeypatch.setattr(s, "supabase_jwt_secret", "legacy-secret")
+    user = verify_token(token)
+    assert (user.id, user.email) == ("user-1", "owner@example.com")
+
+    with pytest.raises(HTTPException) as bad:
+        verify_token(pyjwt.encode(claims, "wrong-secret", algorithm="HS256"))
+    assert bad.value.status_code == 401

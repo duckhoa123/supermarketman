@@ -90,7 +90,7 @@ export default function App() {
         </div>
       </div>
     );
-  if (phase === "onboarding" || !me) return <Onboarding onDone={refreshMe} />;
+  if (phase === "onboarding" || !me) return <Onboarding onDone={refreshMe} demoAvailable={!!me?.demo_available} />;
 
   const location = me.locations.find((l) => l.id === locationId) ?? me.locations[0];
 

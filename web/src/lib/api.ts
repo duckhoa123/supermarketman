@@ -109,6 +109,7 @@ export type Me = {
   phone: string | null;
   locations: Location[];
   channels: Record<"push" | "email" | "whatsapp" | "sms", boolean>;
+  demo_available: boolean;
 };
 
 export type Summary = {

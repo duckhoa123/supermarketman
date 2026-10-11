@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { devMode, signInWithEmail, signInWithGoogle } from "../lib/auth";
+import { devMode, googleSignIn, signInWithEmail, signInWithGoogle } from "../lib/auth";
 
 export default function Login({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
   const [email, setEmail] = useState(devMode ? "owner@example.com" : "");
@@ -45,7 +45,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => Promise<void> 
         <button className="btn primary" disabled={busy}>
           {devMode ? "Sign in (development)" : "Email me a sign-in link"}
         </button>
-        {!devMode && (
+        {!devMode && googleSignIn && (
           <button type="button" className="btn" onClick={() => void signInWithGoogle()}>
             Continue with Google
           </button>

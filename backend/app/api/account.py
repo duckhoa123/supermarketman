@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthUser, current_user
+from app.config import get_settings
 from app.db import get_session
 from app.models import AlertRule, Location, Organization, OrgMember, PushSubscription, User, UserChannelPrefs
 from app.tenancy import user_locations
@@ -29,6 +30,7 @@ class MeOut(BaseModel):
     phone: str | None
     locations: list[LocationOut]
     channels: dict
+    demo_available: bool = False
 
 
 @router.get("/me", response_model=MeOut)
@@ -39,6 +41,7 @@ async def me(user: AuthUser = Depends(current_user), session: AsyncSession = Dep
     return MeOut(
         id=row.id, email=row.email, name=row.name, phone=row.phone,
         locations=[LocationOut(id=x.id, name=x.name, timezone=x.timezone, currency=x.currency) for x in locs],
+        demo_available=get_settings().demo_data_enabled,
         channels={
             "push": prefs.push if prefs else True,
             "email": prefs.email if prefs else True,
@@ -46,6 +49,18 @@ async def me(user: AuthUser = Depends(current_user), session: AsyncSession = Dep
             "sms": prefs.sms if prefs else False,
         },
     )
+
+
+@router.post("/demo", response_model=LocationOut)
+async def load_demo(user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Give the signed-in user a 'Demo Bistro' with ~45 days of sample sales, stock, tables and reviews."""
+    if not get_settings().demo_data_enabled:
+        raise HTTPException(403, "Demo data is turned off on this server")
+    from app.seed import seed
+
+    location_id = await seed(user.email, days=45, user_id=user.id, create_tables=False)
+    loc = await session.get(Location, location_id)
+    return LocationOut(id=loc.id, name=loc.name, timezone=loc.timezone, currency=loc.currency)
 
 
 class OnboardIn(BaseModel):

@@ -2,7 +2,12 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Supabase's "publishable" key (sb_publishable_...) or, on older projects, the legacy "anon" key.
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as
+  | string
+  | undefined;
+// Show "Continue with Google" only once the Google provider is enabled in Supabase.
+export const googleSignIn = import.meta.env.VITE_GOOGLE_SIGNIN === "true";
 
 export const supabase: SupabaseClient | null =
   SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
