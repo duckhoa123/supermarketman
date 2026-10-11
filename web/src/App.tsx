@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { AppContext } from "./context";
-import { api, ApiError, type Me } from "./lib/api";
+import { api, API_URL, ApiError, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
 import Alerts from "./pages/Alerts";
 import Assistant from "./pages/Assistant";
@@ -86,6 +86,9 @@ export default function App() {
           <p className="muted">
             The server answered: "{error}". Check your connection and try again. If it keeps happening, the web app
             may be pointing at the wrong API address (VITE_API_URL).
+          </p>
+          <p className="small muted">
+            Tried: <code>{API_URL}/me</code>
           </p>
           <button className="btn primary" onClick={() => void refreshMe()}>
             Try again
