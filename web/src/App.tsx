@@ -83,9 +83,15 @@ export default function App() {
       <div className="center">
         <div className="card-narrow">
           <h1>Can't reach Pass</h1>
-          <p className="muted">{error} Check your connection, then try again.</p>
+          <p className="muted">
+            The server answered: "{error}". Check your connection and try again. If it keeps happening, the web app
+            may be pointing at the wrong API address (VITE_API_URL).
+          </p>
           <button className="btn primary" onClick={() => void refreshMe()}>
             Try again
+          </button>
+          <button className="btn" onClick={() => void signOut().then(refreshMe)}>
+            Sign out
           </button>
         </div>
       </div>

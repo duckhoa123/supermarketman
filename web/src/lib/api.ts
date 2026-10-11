@@ -1,6 +1,9 @@
 import { getToken } from "./auth";
 
-export const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
+// Trailing slashes are trimmed so "https://api.example.com/" works too (otherwise /me would become //me).
+export const API_URL = ((import.meta.env.VITE_API_URL as string | undefined) || "http://localhost:8000")
+  .trim()
+  .replace(/\/+$/, "");
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {

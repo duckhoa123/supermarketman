@@ -6,7 +6,7 @@ import Constants from "expo-constants";
 type Extra = { apiUrl?: string; supabaseUrl?: string; supabaseAnonKey?: string };
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
 
-export const API_URL = extra.apiUrl || "http://localhost:8000";
+export const API_URL = (extra.apiUrl || "http://localhost:8000").trim().replace(/\/+$/, "");
 export const supabase: SupabaseClient | null =
   extra.supabaseUrl && extra.supabaseAnonKey
     ? createClient(extra.supabaseUrl, extra.supabaseAnonKey, {

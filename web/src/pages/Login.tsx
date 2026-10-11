@@ -1,10 +1,21 @@
 import { useState, type FormEvent } from "react";
 import { devMode, googleSignIn, signInWithEmail, signInWithGoogle } from "../lib/auth";
 
+// Supabase sends people back with "#error=...&error_code=otp_expired" when a sign-in link is old or already used.
+function linkError(): string {
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (!params.get("error")) return "";
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (params.get("error_code") === "otp_expired") {
+    return "That sign-in link has expired or was already used. Request a new one below and open it once.";
+  }
+  return params.get("error_description") || "Sign-in didn't complete. Request a new link below.";
+}
+
 export default function Login({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
   const [email, setEmail] = useState(devMode ? "owner@example.com" : "");
   const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(linkError);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: FormEvent) {
