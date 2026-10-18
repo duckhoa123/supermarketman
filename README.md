@@ -1,6 +1,14 @@
-# Pass — AI assistant for restaurants
+# Pass — a food ecosystem run by three AI agents
 
-Owners ask questions about sales, stock, orders, tables and reviews in plain English, and get told when something needs them (bad reviews, low stock, slow days, a morning summary). Data comes from their POS (Clover first, Square next) and Google reviews.
+One platform for Vancouver with three connected agents. Everyone picks an avatar and can rename and restyle it:
+
+| Agent | For | What it does |
+| --- | --- | --- |
+| **Restaurant Manager** | Restaurant owners and managers | Answers about sales, stock, orders, tables, labour and food cost from the POS (Clover first, Square next); forecasts the coming days from sales history, BC holidays and the weather, with a prep list; end-of-day, weekly and monthly reports; low-stock alerts that draft supplier orders for approval; bookings and a consented guest list; marketing ideas; replies to Google reviews; takes app orders. |
+| **Customer agent** | People ordering food | Finds restaurants nearby that fit what they want (dish, diet, calories, open now); places pickup or delivery orders and books tables (the customer confirms in the app); order updates and tipping; a nutrition log against their own goals. |
+| **Driver Assistant** | Drivers we employ (invite only) | Jobs with pickup, drop-off, route link and ETA; nearest-driver dispatch inside a 20 km service area, batching orders from the same restaurant; busy alerts to on-call drivers; deliveries per hour, on-time rate, wages, tips and a weekly goal. |
+
+One order touches all three: a customer orders, the restaurant accepts and marks it ready, the nearest on-shift driver gets the job, the customer is kept updated and can tip, the meal lands in their nutrition log, and the restaurant's reports count it. Agents prepare actions, but anything that sends, posts, orders, books or charges waits for a person to tap confirm.
 
 "Pass" is a working name; rename it in `web/index.html`, `web/public/manifest.webmanifest` and `mobile/app.json`.
 
@@ -9,8 +17,8 @@ Owners ask questions about sales, stock, orders, tables and reviews in plain Eng
 | Folder | What it is |
 | --- | --- |
 | `backend/` | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic. One codebase runs as the **API** and the **worker**. |
-| `web/` | React + Vite installable web app (PWA): assistant, today, stock, orders, tables, reviews, alerts, settings. |
-| `mobile/` | Expo (React Native) app on the same API: assistant, today, alerts, push notifications. |
+| `web/` | React + Vite installable web app (PWA) with a home for each agent. Restaurant: assistant, today, plan (forecast, reports, labour, marketing), app orders, bookings and guests, stock, purchasing, reviews, alerts, settings. Customer: assistant, discover and order, orders and bookings, food log, profile. Driver: jobs, assistant, earnings; plus the fleet dashboard for dispatchers. |
+| `mobile/` | Expo (React Native) app on the same API: Restaurant Manager assistant, today, alerts, push notifications. |
 | `.railway/railway.ts` | Railway setup: Postgres, the API and the worker in US East. Deploys on every push to `main`. |
 | `infra/gcp/deploy.sh` | Alternative: deploy to Google Cloud Run in Toronto if you later need data hosted in Canada. |
 | `.github/workflows/ci.yml` | Backend tests on Postgres, web build, mobile type check, on every push. |
@@ -25,11 +33,14 @@ Needs Docker and Node 20+.
 cp .env.example .env              # works as-is for local dev; add ANTHROPIC_API_KEY to enable chat
 docker compose up --build         # Postgres + API on :8000 + worker
 docker compose exec api python -m app.seed --email owner@example.com   # demo restaurant, 60 days of data
+docker compose exec api python -m app.seed --driver-email owner@example.com   # optional: also make you a driver
 
 cd web && npm install && npm run dev                # http://localhost:5173, sign in as owner@example.com
 ```
 
 Without Supabase configured, the apps use a development sign-in (any email, no password). Without `ANTHROPIC_API_KEY`, everything works except chat and AI review triage.
+
+To try all three agents as one person: seed the demo, invite yourself as a driver (above), and set `PLATFORM_ADMIN_EMAILS=owner@example.com` for the Fleet dashboard. Use "Switch agent" at the top of the side bar. The demo restaurant is listed in your own customer app, so you can order from it, accept it as the restaurant, and deliver it as the driver. Demo restaurants are hidden from every other customer.
 
 Mobile: `cd mobile && npm install && npx expo start`, then open it in Expo Go. Set `extra.apiUrl` in `mobile/app.json` to your computer's LAN address (for example `http://192.168.1.20:8000`) so the phone can reach the API.
 
@@ -89,13 +100,34 @@ The `web` folder deploys as a fourth Railway service (it has its own `Dockerfile
 
 New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" with sample data. Set `DEMO_DATA_ENABLED=false` on `api` to hide it once real restaurants are using the app.
 
+## Ecosystem settings (api and worker)
+
+| Variable | What it does |
+| --- | --- |
+| `PLATFORM_ADMIN_EMAILS` | Comma-separated emails that can invite drivers and open the Fleet dashboard. Invite a driver by email; that account gets the Driver Assistant when it signs in. |
+| `DELIVERY_HUB_LAT`, `DELIVERY_HUB_LNG`, `DELIVERY_RADIUS_KM` | The delivery hub (default Main St & Broadway) and service radius (default 20 km). Restaurants and drop-offs outside it get pickup only. |
+| `DELIVERY_BASE_FEE_CENTS`, `DELIVERY_BASE_KM`, `DELIVERY_PER_KM_CENTS` | Customer delivery fee: $3.99 up to 3 km, then $0.75 per started km. |
+| `RESTAURANT_FEE_PICKUP_BP`, `RESTAURANT_FEE_DELIVERY_BP` | Platform fee to the restaurant (6% pickup, 11% delivery). The code never charges more than BC's 20% cap. |
+| `DEFAULT_DRIVER_WAGE_CENTS` | Starting hourly wage for invited drivers ($20.00; the BC minimum is $18.25 from June 2026). |
+| `OPEN_METEO_API_KEY` | Weather in the sales forecast. Open-Meteo's free API is non-commercial, so production fetches weather only with a paid key. |
+| `STRIPE_SECRET_KEY` | Card payments. Empty means test mode: orders are marked "test" and nothing is charged. Add Stripe's webhook before going live. |
+
 ## Main API routes
 
 | Route | Purpose |
 | --- | --- |
 | `GET /me`, `PUT /me`, `POST /onboarding` | Account, alert channels, first restaurant |
 | `GET /locations/{id}/dashboard?period=` | Headline numbers, hourly and 28-day trend, best sellers, low stock |
-| `POST /locations/{id}/chat` | Ask the assistant (Server-Sent Events stream) |
+| `POST /locations/{id}/chat` | Ask the Restaurant Manager (Server-Sent Events stream) |
+| `GET /agents`, `PUT /agents/{agent}/profile` | Avatars: name, icon, colour, tone |
+| `POST /agents/customer/chat`, `POST /agents/driver/chat` | Ask the Customer agent or the Driver Assistant |
+| `GET /locations/{id}/forecast`, `/reports/{day,week,month}`, `/labour`, `/food-cost`, `/marketing` | Forecast and prep list, reports, cost control, marketing facts |
+| `/locations/{id}/suppliers`, `/purchase-orders` (`/draft`, `/{po}/approve`, `/{po}/received`) | Suppliers and orders drafted from low stock |
+| `/locations/{id}/bookings`, `/guests`, `/shifts`, `/profile`, `/app-orders` | Bookings, guest list, staff shifts, public listing, orders from the customer app |
+| `/customer/restaurants`, `/customer/orders` (`/quote`, `/{id}/tip`), `/customer/bookings`, `/customer/nutrition`, `/customer/profile` | Customer app |
+| `/driver/me`, `/driver/shift/{start,end}`, `/driver/location`, `/driver/deliveries/{id}/status`, `/driver/stats` | Driver app |
+| `/fleet/overview`, `/fleet/drivers`, `/fleet/deliveries/{id}/assign` | Dispatcher and platform admin |
+| `GET /me/alerts` | Personal notifications (order, booking and job updates) |
 | `GET /locations/{id}/inventory`, `/orders`, `/tables`, `/reviews`, `/alerts` | Data screens |
 | `POST /locations/{id}/reviews/{rid}/reply` | Post an owner reply to Google |
 | `GET /locations/{id}/integrations/{provider}/connect` | Start Clover/Google OAuth |

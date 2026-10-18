@@ -43,6 +43,34 @@ class Settings(BaseSettings):
     demo_data_enabled: bool = True
     # Monthly AI budget per location in US$; above it the agent stays on the default (cheap) model.
     monthly_ai_budget_usd: float = 5.0
+    # Customers and drivers chat without a restaurant, so their budget is per person.
+    personal_monthly_ai_budget_usd: float = 0.5
+
+    # --- Ecosystem: platform staff, ordering and the in-house delivery fleet --------------------
+    # Emails (comma separated) allowed to invite drivers and see the fleet dashboard.
+    platform_admin_emails: str = ""
+    # Delivery hub and service radius. Drivers are employees, so deliveries stay inside one compact area.
+    delivery_hub_lat: float = 49.2634  # Main St & Broadway, Mount Pleasant, Vancouver
+    delivery_hub_lng: float = -123.1007
+    delivery_radius_km: float = 20.0
+    delivery_base_fee_cents: int = 399  # charged to the customer up to delivery_base_km
+    delivery_base_km: float = 3.0
+    delivery_per_km_cents: int = 75  # each extra (started) km beyond the base distance
+    # Fee the restaurant pays per order, in basis points of the food subtotal (600 = 6%).
+    # BC caps delivery-company fees to restaurants at 20% of the order value; the code never charges more.
+    restaurant_fee_pickup_bp: int = 600
+    restaurant_fee_delivery_bp: int = 1100
+    driver_max_active_deliveries: int = 2
+    # When waiting + in-progress deliveries per on-shift driver reach this, on-call drivers are alerted.
+    busy_deliveries_per_driver: float = 2.5
+    default_driver_wage_cents: int = 2000  # CAD/hour; BC general minimum wage is $18.25 from June 2026
+
+    # --- Forecasting -------------------------------------------------------
+    # Open-Meteo's free API is for non-commercial use; in production weather is only fetched with a paid key.
+    open_meteo_api_key: str = ""
+
+    # --- Payments (Stripe) ---------------------------------------------------
+    stripe_secret_key: str = ""  # empty: orders are marked as test payments, nothing is charged
 
     # --- Clover -----------------------------------------------------------
     clover_app_id: str = ""
@@ -86,6 +114,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def platform_admins(self) -> set[str]:
+        return {e.strip().lower() for e in self.platform_admin_emails.split(",") if e.strip()}
 
 
 @lru_cache

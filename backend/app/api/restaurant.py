@@ -54,16 +54,38 @@ async def get_inventory(low_stock_only: bool = False, search: str | None = None,
 
 
 class ItemPatch(BaseModel):
+    """Only the fields sent are changed."""
+
     low_stock_threshold: float | None = Field(default=None, ge=0)
+    reorder_qty: float | None = Field(default=None, ge=0)
+    supplier_id: str | None = None
+    cost_cents: int | None = Field(default=None, ge=0)
+    description: str | None = Field(default=None, max_length=1000)
+    calories: float | None = Field(default=None, ge=0, le=10000)
+    protein_g: float | None = Field(default=None, ge=0, le=1000)
+    carbs_g: float | None = Field(default=None, ge=0, le=1000)
+    fat_g: float | None = Field(default=None, ge=0, le=1000)
+    tags: list[str] | None = None
+    orderable: bool | None = None
 
 
 @router.patch("/items/{item_id}")
 async def patch_item(item_id: str, body: ItemPatch, location: Location = Depends(require_manager),
                      session: AsyncSession = Depends(get_session)):
+    from app.models import Supplier
+
     item = await session.get(Item, item_id)
     if item is None or item.location_id != location.id:
         raise HTTPException(404, "Item not found")
-    item.low_stock_threshold = body.low_stock_threshold
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("supplier_id"):
+        supplier = await session.get(Supplier, changes["supplier_id"])
+        if supplier is None or supplier.location_id != location.id:
+            raise HTTPException(404, "Supplier not found")
+    if "tags" in changes:
+        changes["tags"] = sorted({t.strip().lower().replace(" ", "_") for t in changes["tags"] or [] if t.strip()})
+    for key, value in changes.items():
+        setattr(item, key, value)
     await session.commit()
     return {"ok": True}
 
@@ -191,7 +213,8 @@ async def get_rules(location: Location = Depends(require_location), session: Asy
 
 
 class RuleIn(BaseModel):
-    kind: str = Field(pattern="^(bad_review|low_stock|sales_drop|daily_digest|integration_error)$")
+    kind: str = Field(
+        pattern="^(bad_review|low_stock|sales_drop|daily_digest|weekly_report|monthly_report|integration_error|new_order)$")
     channels: list[str] = Field(default_factory=lambda: ["push"])
     params: dict = Field(default_factory=dict)
     enabled: bool = True

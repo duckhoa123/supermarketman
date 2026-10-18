@@ -1,4 +1,8 @@
-"""The agent loop: stream Claude's answer, run tool calls against our database, log usage and cost.
+"""The agent loop, shared by all three agents: stream Claude's answer, run tool calls against our database,
+log usage and cost.
+
+Which agent runs (Restaurant Manager, Customer agent, Driver Assistant) decides the system prompt, the tools
+and whose budget pays: the restaurant's for the Restaurant Manager, the person's own for the other two.
 
 History kept for follow-up questions is text only (questions and final answers, not tool results),
 which keeps later turns small and cheap.
@@ -6,20 +10,22 @@ which keeps later turns small and cheap.
 
 import json
 import logging
-from collections.abc import AsyncIterator
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent import tools_customer, tools_driver
 from app.agent.llm import LLM, LLMResult
 from app.agent.pricing import Usage, cost_usd
-from app.agent.prompts import AGENT_SYSTEM, context_block
+from app.agent.profiles import get_profile, persona_block
+from app.agent.prompts import AGENT_SYSTEM, CUSTOMER_SYSTEM, DRIVER_SYSTEM, context_block, personal_context
 from app.agent.router import choose_model
 from app.agent.tools import TOOLS, ToolContext, ToolError, execute_tool
 from app.config import get_settings
-from app.models import AIUsage, Conversation, Integration, Location, Message, utcnow
+from app.models import AIUsage, Conversation, Integration, Message, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -27,22 +33,49 @@ HISTORY_MESSAGES = 12
 TOOL_RESULT_MAX_CHARS = 12_000
 
 
-async def month_spend(session: AsyncSession, location_id: str) -> float:
+@dataclass(frozen=True)
+class AgentSpec:
+    system: str
+    tools: list[dict]
+    execute: Callable[[str, dict, ToolContext], Awaitable[dict]]
+
+
+AGENT_SPECS = {
+    "restaurant_manager": AgentSpec(AGENT_SYSTEM, TOOLS, execute_tool),
+    "customer": AgentSpec(CUSTOMER_SYSTEM, tools_customer.CUSTOMER_TOOLS, tools_customer.execute),
+    "driver": AgentSpec(DRIVER_SYSTEM, tools_driver.DRIVER_TOOLS, tools_driver.execute),
+}
+
+
+def _month_start() -> datetime:
     now = utcnow()
-    start = datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+    return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+
+
+async def month_spend(session: AsyncSession, location_id: str) -> float:
     total = await session.scalar(
         select(func.coalesce(func.sum(AIUsage.cost_usd), 0.0)).where(
-            AIUsage.location_id == location_id, AIUsage.created_at >= start
+            AIUsage.location_id == location_id, AIUsage.created_at >= _month_start()
         )
     )
     return float(total or 0.0)
 
 
-async def record_usage(session: AsyncSession, location_id: str, purpose: str, model: str, usage: Usage) -> float:
+async def personal_month_spend(session: AsyncSession, user_id: str) -> float:
+    total = await session.scalar(
+        select(func.coalesce(func.sum(AIUsage.cost_usd), 0.0)).where(
+            AIUsage.user_id == user_id, AIUsage.location_id.is_(None), AIUsage.created_at >= _month_start()
+        )
+    )
+    return float(total or 0.0)
+
+
+async def record_usage(session: AsyncSession, location_id: str | None, purpose: str, model: str, usage: Usage,
+                       *, user_id: str | None = None, agent: str | None = None) -> float:
     cost = cost_usd(model, usage)
     session.add(
         AIUsage(
-            location_id=location_id, purpose=purpose, model=model,
+            location_id=location_id, user_id=user_id, agent=agent, purpose=purpose, model=model,
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens, cache_write_tokens=usage.cache_write_tokens, cost_usd=cost,
         )
@@ -50,17 +83,23 @@ async def record_usage(session: AsyncSession, location_id: str, purpose: str, mo
     return cost
 
 
-async def _system(session: AsyncSession, location: Location) -> list[dict]:
-    providers = list(
-        await session.scalars(
-            select(Integration.provider).where(Integration.location_id == location.id, Integration.status == "active")
-        )
-    )
-    return [
-        {"type": "text", "text": AGENT_SYSTEM, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": context_block(name=location.name, tz=location.timezone,
-                                               currency=location.currency, integrations=providers)},
-    ]
+async def _system(session: AsyncSession, spec: AgentSpec, ctx: ToolContext) -> list[dict]:
+    persona = persona_block(await get_profile(session, ctx.user_id, ctx.agent))
+    if ctx.agent == "restaurant_manager":
+        loc = ctx.location
+        providers = list(await session.scalars(
+            select(Integration.provider).where(Integration.location_id == loc.id, Integration.status == "active")))
+        dynamic = context_block(name=loc.name, tz=loc.timezone, currency=loc.currency, integrations=providers,
+                                persona=persona)
+    elif ctx.agent == "driver":
+        d = ctx.driver
+        dynamic = personal_context(persona=persona, extra=f"Driver: {d.name}, vehicle {d.vehicle.replace('_', '-')}, "
+                                   f"status {d.status.replace('_', ' ')}.")
+    else:
+        extra = "The customer shared their current location." if ctx.position else ""
+        dynamic = personal_context(persona=persona, extra=extra)
+    return [{"type": "text", "text": spec.system, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic}]
 
 
 async def _history(session: AsyncSession, conversation_id: str) -> list[dict]:
@@ -93,35 +132,44 @@ async def run_chat(
     session: AsyncSession,
     llm: LLM,
     *,
-    location: Location,
-    user_id: str,
     conversation: Conversation,
     text: str,
+    user_id: str,
+    location=None,
+    agent: str = "restaurant_manager",
+    driver=None,
+    position: tuple[float, float] | None = None,
     deep: bool = False,
 ) -> AsyncIterator[dict]:
     """Yields events: meta, text (delta), tool, action, done, error."""
     settings = get_settings()
+    spec = AGENT_SPECS[agent]
     # Plain values: ORM objects expire if we have to roll back after an error.
-    conversation_id, location_id = conversation.id, location.id
+    conversation_id = conversation.id
+    location_id = location.id if location is not None else None
     history = await _history(session, conversation_id)
     session.add(Message(conversation_id=conversation.id, role="user", content=[{"type": "text", "text": text}]))
     if not conversation.title:
         conversation.title = text[:80]
     await session.commit()
 
-    budget_exceeded = await month_spend(session, location.id) >= settings.monthly_ai_budget_usd
+    if location_id:
+        budget_exceeded = await month_spend(session, location_id) >= settings.monthly_ai_budget_usd
+    else:
+        budget_exceeded = await personal_month_spend(session, user_id) >= settings.personal_monthly_ai_budget_usd
     model = choose_model(
         text, deep_requested=deep, budget_exceeded=budget_exceeded,
         default_model=settings.model_default, deep_model=settings.model_deep,
     )
-    yield {"type": "meta", "conversation_id": conversation.id, "model": model, "budget_limited": budget_exceeded}
+    yield {"type": "meta", "conversation_id": conversation_id, "model": model, "budget_limited": budget_exceeded,
+           "agent": agent}
 
-    system = await _system(session, location)
+    ctx = ToolContext(session=session, user_id=user_id, location=location, agent=agent, driver=driver,
+                      position=position)
+    system = await _system(session, spec, ctx)
     messages = history + [{"role": "user", "content": text}]
-    ctx = ToolContext(session=session, location=location, user_id=user_id)
     total = Usage()
     answer_parts: list[str] = []
-    tz = ZoneInfo(location.timezone)
 
     try:
         for round_no in range(settings.agent_max_tool_rounds + 1):
@@ -129,7 +177,7 @@ async def run_chat(
             result: LLMResult | None = None
             started_text = False
             async for kind, value in llm.stream(
-                model=model, system=system, tools=TOOLS, messages=messages,
+                model=model, system=system, tools=spec.tools, messages=messages,
                 max_tokens=settings.agent_max_output_tokens,
                 # Last round: answer with what we have instead of calling more tools.
                 tool_choice={"type": "none"} if last_round else None,
@@ -151,13 +199,14 @@ async def run_chat(
             tool_results = []
             for block in result.tool_uses:
                 yield {"type": "tool", "name": block["name"]}
+                before = len(ctx.proposals)
                 try:
-                    output = await execute_tool(block["name"], block.get("input") or {}, ctx)
+                    output = await spec.execute(block["name"], block.get("input") or {}, ctx)
                     is_error = False
                 except ToolError as exc:
                     output, is_error = {"error": str(exc)}, True
-                if isinstance(output, dict) and "proposal" in output:
-                    yield {"type": "action", "proposal": output["proposal"]}
+                for proposal in ctx.proposals[before:]:
+                    yield {"type": "action", "proposal": proposal}
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block["id"],
@@ -166,7 +215,7 @@ async def run_chat(
                 })
             messages.append({"role": "user", "content": tool_results})
     except Exception:  # noqa: BLE001 - surface a friendly error, keep the usage we already paid for
-        log.exception("agent failed for location %s", location_id)
+        log.exception("agent %s failed (location %s, user %s)", agent, location_id, user_id)
         await session.rollback()
         message = "Sorry, something went wrong answering that. Please try again."
         yield {"type": "error", "message": message}
@@ -174,10 +223,11 @@ async def run_chat(
 
     answer = "\n\n".join(p.strip() for p in answer_parts if p.strip())
     session.add(Message(conversation_id=conversation_id, role="assistant", content=[{"type": "text", "text": answer}]))
-    cost = await record_usage(session, location_id, "chat", model, total)
+    cost = await record_usage(session, location_id, "chat", model, total,
+                              user_id=None if location_id else user_id, agent=agent)
     conv = await session.get(Conversation, conversation_id)
     if conv is not None:
-        conv.updated_at = datetime.now(tz)
+        conv.updated_at = utcnow()
     await session.commit()
     yield {
         "type": "done",

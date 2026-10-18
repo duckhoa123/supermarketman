@@ -36,7 +36,7 @@ async def chat(body: ChatIn, location: Location = Depends(require_location), use
         if conv is None or conv.location_id != location.id or conv.user_id != user.id:
             raise HTTPException(404, "Conversation not found")
     else:
-        conv = Conversation(location_id=location.id, user_id=user.id, channel="app")
+        conv = Conversation(location_id=location.id, user_id=user.id, agent="restaurant_manager", channel="app")
         session.add(conv)
         await session.commit()
     try:

@@ -2,8 +2,8 @@ import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 
 const ZONES = [
-  "America/Toronto",
   "America/Vancouver",
+  "America/Toronto",
   "America/Edmonton",
   "America/Winnipeg",
   "America/Regina",
@@ -28,14 +28,16 @@ const CANADA = ZONES.slice(0, 7);
 export default function Onboarding({
   onDone,
   demoAvailable,
+  onBack,
 }: {
   onDone: () => Promise<void>;
   demoAvailable: boolean;
+  onBack?: () => void;
 }) {
   const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [business, setBusiness] = useState("");
   const [name, setName] = useState("");
-  const [tz, setTz] = useState(ZONES.includes(guess) ? guess : "America/Toronto");
+  const [tz, setTz] = useState(ZONES.includes(guess) ? guess : "America/Vancouver");
   const [currency, setCurrency] = useState(CANADA.includes(tz) ? "CAD" : tz.startsWith("America") ? "USD" : "AUD");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -110,11 +112,17 @@ export default function Onboarding({
               {busy ? "Setting up…" : "Explore a demo restaurant first"}
             </button>
             <p className="small muted">
-              Adds "Demo Bistro" with six weeks of sample sales, stock, tables and reviews. Takes up to a minute.
+              Adds "Demo Bistro" in Vancouver with six weeks of sample sales, stock, staff shifts, suppliers, bookings
+              and reviews. It also appears in your own customer app so you can place a test order. Takes up to a minute.
             </p>
           </>
         )}
         {error && <p className="error">{error}</p>}
+        {onBack && (
+          <button type="button" className="btn small" onClick={onBack}>
+            ← Choose a different agent
+          </button>
+        )}
       </form>
     </div>
   );

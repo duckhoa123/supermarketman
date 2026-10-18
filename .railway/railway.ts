@@ -48,6 +48,10 @@ export default defineRailway(() => {
     VAPID_PUBLIC_KEY: preserve(),
     VAPID_PRIVATE_KEY: preserve(),
     VAPID_SUBJECT: preserve(),
+    // Ecosystem: platform admins (driver invites, fleet), weather and payments.
+    PLATFORM_ADMIN_EMAILS: preserve(),
+    OPEN_METEO_API_KEY: preserve(),
+    STRIPE_SECRET_KEY: preserve(),
   };
 
   const api = service("api", {
@@ -59,7 +63,8 @@ export default defineRailway(() => {
     env,
   });
 
-  // Always-on worker: drains the job queue and queues the 15-minute syncs, review polls and morning digests.
+  // Always-on worker: drains the job queue and queues the 15-minute syncs, review polls, morning digests,
+  // weekly/monthly reports, weather refreshes and the delivery dispatch sweep.
   const worker = service("worker", {
     source: github(REPO, { branch: "main", rootDirectory: "backend" }),
     start: "python -m app.worker --schedule",

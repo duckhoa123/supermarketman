@@ -10,7 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import AuthUser, current_user
 from app.config import get_settings
 from app.db import get_session
-from app.models import AlertRule, Location, Organization, OrgMember, PushSubscription, User, UserChannelPrefs
+from app.agent.profiles import all_profiles
+from app.models import (
+    Alert,
+    AlertRule,
+    Location,
+    Organization,
+    OrgMember,
+    PushSubscription,
+    User,
+    UserChannelPrefs,
+    utcnow,
+)
+from app.services.fleet import driver_for_user
 from app.tenancy import user_locations
 
 router = APIRouter(tags=["account"])
@@ -31,6 +43,10 @@ class MeOut(BaseModel):
     locations: list[LocationOut]
     channels: dict
     demo_available: bool = False
+    # The agents this person can use: Restaurant Manager and Customer for everyone, Driver Assistant by invite.
+    agents: list[dict] = []
+    is_driver: bool = False
+    is_fleet_admin: bool = False
 
 
 @router.get("/me", response_model=MeOut)
@@ -38,10 +54,22 @@ async def me(user: AuthUser = Depends(current_user), session: AsyncSession = Dep
     row = await session.get(User, user.id)
     prefs = await session.get(UserChannelPrefs, user.id)
     locs = await user_locations(session, user.id)
+    driver = await driver_for_user(session, user.id, user.email)
+    profiles = await all_profiles(session, user.id)
+    agents = [
+        {**profiles["restaurant_manager"], "ready": bool(locs)},
+        {**profiles["customer"], "ready": True},
+    ]
+    if driver is not None:
+        agents.append({**profiles["driver"], "ready": True})
     return MeOut(
         id=row.id, email=row.email, name=row.name, phone=row.phone,
         locations=[LocationOut(id=x.id, name=x.name, timezone=x.timezone, currency=x.currency) for x in locs],
         demo_available=get_settings().demo_data_enabled,
+        agents=agents,
+        is_driver=driver is not None,
+        is_fleet_admin=user.email.lower() in get_settings().platform_admins
+        or (driver is not None and driver.role == "dispatcher"),
         channels={
             "push": prefs.push if prefs else True,
             "email": prefs.email if prefs else True,
@@ -63,10 +91,14 @@ async def load_demo(user: AuthUser = Depends(current_user), session: AsyncSessio
     return LocationOut(id=loc.id, name=loc.name, timezone=loc.timezone, currency=loc.currency)
 
 
+DEFAULT_RULES = (("bad_review", ["push", "email"]), ("low_stock", ["push"]), ("sales_drop", ["push"]),
+                 ("daily_digest", ["email"]), ("weekly_report", ["email"]), ("monthly_report", ["email"]))
+
+
 class OnboardIn(BaseModel):
     business_name: str = Field(min_length=1, max_length=200)
     location_name: str = Field(min_length=1, max_length=200)
-    timezone: str = "America/Toronto"
+    timezone: str = "America/Vancouver"
     currency: str = Field(default="CAD", min_length=3, max_length=3)
 
 
@@ -81,8 +113,7 @@ async def onboard(body: OnboardIn, user: AuthUser = Depends(current_user), sessi
     loc = Location(org_id=org.id, name=body.location_name, timezone=body.timezone, currency=body.currency.upper())
     session.add(loc)
     await session.flush()
-    for kind, channels in (("bad_review", ["push", "email"]), ("low_stock", ["push"]),
-                           ("sales_drop", ["push"]), ("daily_digest", ["email"])):
+    for kind, channels in DEFAULT_RULES:
         session.add(AlertRule(location_id=loc.id, kind=kind, channels=channels, params={}))
     await session.commit()
     return LocationOut(id=loc.id, name=loc.name, timezone=loc.timezone, currency=loc.currency)
@@ -134,5 +165,29 @@ async def remove_push(body: PushIn, user: AuthUser = Depends(current_user), sess
     await session.execute(
         delete(PushSubscription).where(PushSubscription.user_id == user.id, PushSubscription.token == body.token)
     )
+    await session.commit()
+    return {"ok": True}
+
+
+# --- Personal notifications (customers and drivers) -------------------------------------------------
+
+
+@router.get("/me/alerts")
+async def my_alerts(unread_only: bool = False, user: AuthUser = Depends(current_user),
+                    session: AsyncSession = Depends(get_session)):
+    stmt = select(Alert).where(Alert.user_id == user.id, Alert.location_id.is_(None))
+    if unread_only:
+        stmt = stmt.where(Alert.read_at.is_(None))
+    rows = list(await session.scalars(stmt.order_by(Alert.created_at.desc()).limit(50)))
+    unread = sum(1 for a in rows if a.read_at is None)
+    return {"unread": unread, "alerts": [
+        {"id": a.id, "kind": a.kind, "title": a.title, "body": a.body, "data": a.data,
+         "created_at": a.created_at.isoformat(), "read": a.read_at is not None} for a in rows]}
+
+
+@router.post("/me/alerts/read-all")
+async def my_alerts_read(user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    for a in await session.scalars(select(Alert).where(Alert.user_id == user.id, Alert.read_at.is_(None))):
+        a.read_at = utcnow()
     await session.commit()
     return {"ok": True}

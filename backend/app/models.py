@@ -78,9 +78,22 @@ class Location(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    timezone: Mapped[str] = mapped_column(String(64), default="America/Toronto")
+    timezone: Mapped[str] = mapped_column(String(64), default="America/Vancouver")
     currency: Mapped[str] = mapped_column(String(3), default="CAD")
     digest_hour: Mapped[int] = mapped_column(Integer, default=8)  # local hour for the daily digest
+    # Public profile, used by the Customer agent and delivery.
+    address: Mapped[str | None] = mapped_column(String(300))
+    lat: Mapped[float | None] = mapped_column(Float)
+    lng: Mapped[float | None] = mapped_column(Float)
+    phone: Mapped[str | None] = mapped_column(String(32))
+    cuisine: Mapped[str | None] = mapped_column(String(100))
+    # {"mon": [["11:30", "22:00"]], ...}; a closing time before the opening time runs past midnight.
+    opening_hours: Mapped[dict] = mapped_column(JSON, default=dict)
+    listed: Mapped[bool] = mapped_column(Boolean, default=False)  # visible in the customer app
+    accepts_orders: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepts_delivery: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepts_bookings: Mapped[bool] = mapped_column(Boolean, default=False)
+    tax_rate_bp: Mapped[int] = mapped_column(Integer, default=500)  # BC restaurant meals: 5% GST
 
     organization: Mapped[Organization] = relationship(back_populates="locations")
 
@@ -125,6 +138,17 @@ class Item(TimestampMixin, Base):
     low_stock_threshold: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str | None] = mapped_column(String(32))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Purchasing: who supplies it and how much to order when it runs low.
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.id", ondelete="SET NULL"))
+    reorder_qty: Mapped[float | None] = mapped_column(Float)
+    # Menu details for customers: nutrition per serving, and tags like "vegetarian", "gluten_free".
+    description: Mapped[str | None] = mapped_column(Text)
+    calories: Mapped[float | None] = mapped_column(Float)
+    protein_g: Mapped[float | None] = mapped_column(Float)
+    carbs_g: Mapped[float | None] = mapped_column(Float)
+    fat_g: Mapped[float | None] = mapped_column(Float)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    orderable: Mapped[bool] = mapped_column(Boolean, default=True)  # shown on the customer menu
 
 
 class DiningTable(TimestampMixin, Base):
@@ -239,10 +263,14 @@ class AlertRule(TimestampMixin, Base):
 
 
 class Alert(Base):
+    """A notification. Restaurant alerts have a location_id and go to its team; personal ones
+    (a customer's order update, a driver's job) have a user_id and go to that person only."""
+
     __tablename__ = "alerts"
     __table_args__ = (UniqueConstraint("location_id", "dedupe_key"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    location_id: Mapped[str | None] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(64), index=True)
     kind: Mapped[str] = mapped_column(String(32))
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
@@ -288,8 +316,10 @@ class UserChannelPrefs(TimestampMixin, Base):
 class Conversation(TimestampMixin, Base):
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    # Set for the Restaurant Manager; customers and drivers talk to their agent without a restaurant.
+    location_id: Mapped[str | None] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
+    agent: Mapped[str] = mapped_column(String(24), default="restaurant_manager")
     channel: Mapped[str] = mapped_column(String(16), default="app")  # app | whatsapp | sms
     title: Mapped[str | None] = mapped_column(String(200))
 
@@ -307,9 +337,14 @@ class Message(Base):
 
 class AIUsage(Base):
     __tablename__ = "ai_usage"
-    __table_args__ = (Index("ix_ai_usage_location_created", "location_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_ai_usage_location_created", "location_id", "created_at"),
+        Index("ix_ai_usage_user_created", "user_id", "created_at"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    location_id: Mapped[str] = mapped_column(String(36))
+    location_id: Mapped[str | None] = mapped_column(String(36))
+    user_id: Mapped[str | None] = mapped_column(String(64))  # set for customer and driver chats
+    agent: Mapped[str | None] = mapped_column(String(24))
     purpose: Mapped[str] = mapped_column(String(32))  # chat | review_triage | digest
     model: Mapped[str] = mapped_column(String(64))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -347,3 +382,236 @@ class WebhookEvent(Base):
     body: Mapped[dict] = mapped_column(JSON)
     received_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+# --- Ecosystem: agents and avatars -----------------------------------------------------------------
+
+AGENTS = ("restaurant_manager", "customer", "driver")
+
+
+class AgentProfile(TimestampMixin, Base):
+    """How a person has customised one of their AI agents (name, look, tone)."""
+
+    __tablename__ = "agent_profiles"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    agent: Mapped[str] = mapped_column(String(24), primary_key=True)  # one of AGENTS
+    display_name: Mapped[str] = mapped_column(String(60))
+    avatar: Mapped[dict] = mapped_column(JSON, default=dict)  # {"icon": "chef", "color": "#2563eb"}
+    tone: Mapped[str] = mapped_column(String(24), default="friendly")  # friendly | concise | detailed | playful
+
+
+# --- Restaurant Manager: purchasing, labour, guests, bookings, weather ---------------------------
+
+
+class Supplier(TimestampMixin, Base):
+    __tablename__ = "suppliers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    notes: Mapped[str | None] = mapped_column(Text)  # e.g. "order by 2pm for next-day delivery"
+
+
+class PurchaseOrder(TimestampMixin, Base):
+    """Drafted by the app when stock runs low; sent to the supplier only after a manager approves it."""
+
+    __tablename__ = "purchase_orders"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.id", ondelete="SET NULL"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | approved | sent | received | cancelled
+    lines: Mapped[list] = mapped_column(JSON, default=list)  # [{"item_id", "name", "qty", "unit"}]
+    note: Mapped[str | None] = mapped_column(Text)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    send_error: Mapped[str | None] = mapped_column(Text)
+
+
+class StaffShift(TimestampMixin, Base):
+    __tablename__ = "staff_shifts"
+    __table_args__ = (Index("ix_staff_shifts_location_start", "location_id", "starts_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    staff_name: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str | None] = mapped_column(String(32))  # kitchen | floor | bar | manager
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    hourly_rate_cents: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual | pos
+
+
+class Guest(TimestampMixin, Base):
+    """A restaurant's guest list. Contact details are kept only with the guest's consent (BC PIPA);
+    marketing messages additionally need marketing_consent (CASL)."""
+
+    __tablename__ = "guests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(64), index=True)  # linked customer account, if any
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    consent_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    visits: Mapped[int] = mapped_column(Integer, default=0)
+    total_spend_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_visit_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    notes: Mapped[str | None] = mapped_column(Text)  # e.g. allergies, favourite table
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class Booking(TimestampMixin, Base):
+    __tablename__ = "bookings"
+    __table_args__ = (Index("ix_bookings_location_start", "location_id", "starts_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    guest_id: Mapped[str | None] = mapped_column(ForeignKey("guests.id", ondelete="SET NULL"))
+    customer_user_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    party_size: Mapped[int] = mapped_column(Integer, default=2)
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    # requested | confirmed | seated | completed | cancelled | no_show
+    status: Mapped[str] = mapped_column(String(16), default="requested")
+    source: Mapped[str] = mapped_column(String(16), default="staff")  # staff | phone | customer_app | walk_in
+    table_id: Mapped[str | None] = mapped_column(String(36))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class WeatherDay(Base):
+    """Daily weather forecast per restaurant (Open-Meteo), used by the sales forecast."""
+
+    __tablename__ = "weather_daily"
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    temp_max_c: Mapped[float | None] = mapped_column(Float)
+    temp_min_c: Mapped[float | None] = mapped_column(Float)
+    precip_mm: Mapped[float | None] = mapped_column(Float)
+    weather_code: Mapped[int | None] = mapped_column(Integer)
+    fetched_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+# --- Customer agent: profiles, orders, nutrition --------------------------------------------------
+
+
+class CustomerProfile(TimestampMixin, Base):
+    __tablename__ = "customer_profiles"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    home_address: Mapped[str | None] = mapped_column(String(300))
+    home_lat: Mapped[float | None] = mapped_column(Float)
+    home_lng: Mapped[float | None] = mapped_column(Float)
+    diet_tags: Mapped[list] = mapped_column(JSON, default=list)  # e.g. ["vegetarian", "nut_free"]
+    calories_goal: Mapped[float | None] = mapped_column(Float)  # per day
+    protein_goal_g: Mapped[float | None] = mapped_column(Float)
+    carbs_goal_g: Mapped[float | None] = mapped_column(Float)
+    fat_goal_g: Mapped[float | None] = mapped_column(Float)
+
+
+class CustomerOrder(TimestampMixin, Base):
+    """An order placed through the customer app (pickup or delivery), separate from POS orders."""
+
+    __tablename__ = "customer_orders"
+    __table_args__ = (
+        Index("ix_customer_orders_location_placed", "location_id", "placed_at"),
+        Index("ix_customer_orders_user_placed", "customer_user_id", "placed_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    customer_user_id: Mapped[str] = mapped_column(String(64))
+    fulfilment: Mapped[str] = mapped_column(String(16))  # pickup | delivery
+    # placed | accepted | ready | out_for_delivery | delivered | picked_up | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="placed")
+    lines: Mapped[list] = mapped_column(JSON, default=list)  # [{"item_id","name","qty","unit_price_cents",...}]
+    subtotal_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    tax_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    delivery_fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    tip_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    restaurant_fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # platform fee, capped at 20%
+    # unpaid | requires_payment | paid | test | refunded
+    payment_status: Mapped[str] = mapped_column(String(20), default="unpaid")
+    payment_ref: Mapped[str | None] = mapped_column(String(200))
+    delivery_address: Mapped[str | None] = mapped_column(String(300))
+    dropoff_lat: Mapped[float | None] = mapped_column(Float)
+    dropoff_lng: Mapped[float | None] = mapped_column(Float)
+    notes: Mapped[str | None] = mapped_column(Text)
+    share_contact: Mapped[bool] = mapped_column(Boolean, default=False)  # join the restaurant's guest list
+    placed_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    ready_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    eta_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class NutritionEntry(Base):
+    __tablename__ = "nutrition_log"
+    __table_args__ = (Index("ix_nutrition_log_user_day", "user_id", "day"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    day: Mapped[date] = mapped_column(Date)
+    name: Mapped[str] = mapped_column(String(300))
+    calories: Mapped[float | None] = mapped_column(Float)
+    protein_g: Mapped[float | None] = mapped_column(Float)
+    carbs_g: Mapped[float | None] = mapped_column(Float)
+    fat_g: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual | order
+    customer_order_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+# --- Driver Assistant: the in-house delivery fleet ------------------------------------------------
+
+
+class Driver(TimestampMixin, Base):
+    """A driver employed by the platform (not a gig courier). Added by invite: a platform admin
+    enters the email, and the account with that email becomes the driver on first sign-in."""
+
+    __tablename__ = "drivers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    role: Mapped[str] = mapped_column(String(16), default="driver")  # driver | dispatcher
+    vehicle: Mapped[str] = mapped_column(String(16), default="e_bike")  # e_bike | bike | car
+    hourly_wage_cents: Mapped[int] = mapped_column(Integer, default=2000)
+    weekly_goal_cents: Mapped[int | None] = mapped_column(Integer)  # the driver's own earnings goal
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default="off")  # off | on_shift | on_call
+    last_lat: Mapped[float | None] = mapped_column(Float)
+    last_lng: Mapped[float | None] = mapped_column(Float)
+    last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class DriverShift(Base):
+    __tablename__ = "driver_shifts"
+    __table_args__ = (Index("ix_driver_shifts_driver_start", "driver_id", "starts_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    driver_id: Mapped[str] = mapped_column(ForeignKey("drivers.id", ondelete="CASCADE"))
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    ends_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # empty while the shift is running
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Delivery(TimestampMixin, Base):
+    __tablename__ = "deliveries"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    customer_order_id: Mapped[str] = mapped_column(
+        ForeignKey("customer_orders.id", ondelete="CASCADE"), unique=True
+    )
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    driver_id: Mapped[str | None] = mapped_column(ForeignKey("drivers.id", ondelete="SET NULL"), index=True)
+    # waiting (order not ready or no driver yet) | assigned | picked_up | delivered | cancelled
+    status: Mapped[str] = mapped_column(String(16), default="waiting", index=True)
+    pickup_lat: Mapped[float] = mapped_column(Float)
+    pickup_lng: Mapped[float] = mapped_column(Float)
+    dropoff_lat: Mapped[float] = mapped_column(Float)
+    dropoff_lng: Mapped[float] = mapped_column(Float)
+    distance_km: Mapped[float] = mapped_column(Float)  # estimated road distance, restaurant to customer
+    assigned_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    picked_up_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    promised_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # ETA shown when the order was placed
+    eta_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # latest estimate
+    tip_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 100% goes to the driver

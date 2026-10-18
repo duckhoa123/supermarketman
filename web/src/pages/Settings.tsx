@@ -4,6 +4,7 @@ import { useApp } from "../context";
 import { useApi } from "../hooks";
 import { api, type IntegrationRow } from "../lib/api";
 import { timeAgo } from "../lib/format";
+import RestaurantProfile from "../components/RestaurantProfile";
 
 const PROVIDERS = [
   { id: "clover", name: "Clover", about: "Sales, orders, menu items and stock levels." },
@@ -15,7 +16,10 @@ const RULES = [
   { kind: "bad_review", label: "A review of 1–3 stars, or one that mentions illness or safety" },
   { kind: "low_stock", label: "An item drops to its alert level" },
   { kind: "sales_drop", label: "Yesterday's sales were well below a normal day" },
-  { kind: "daily_digest", label: "Morning summary of yesterday" },
+  { kind: "daily_digest", label: "Morning end-of-day report for yesterday" },
+  { kind: "weekly_report", label: "Weekly report on Mondays" },
+  { kind: "monthly_report", label: "Monthly report on the 1st" },
+  { kind: "new_order", label: "A new order or booking from the customer app" },
 ];
 const CHANNELS = ["push", "email", "whatsapp", "sms"] as const;
 const CHANNEL_LABEL: Record<string, string> = { push: "App", email: "Email", whatsapp: "WhatsApp", sms: "SMS" };
@@ -244,6 +248,7 @@ export default function Settings() {
             </button>
           </div>
         </section>
+        <RestaurantProfile />
       </div>
     </>
   );

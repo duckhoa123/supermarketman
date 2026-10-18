@@ -1,4 +1,5 @@
-"""Deliver an alert to every member of the restaurant's organization on the channels they opted into.
+"""Deliver an alert on the channels each recipient opted into: every member of the restaurant's organization,
+or, for a personal alert (user_id set), just that person.
 
 Providers are called over plain HTTPS so there are no SDK dependencies:
 - Expo push:  POST https://exp.host/--/api/v2/push/send
@@ -112,15 +113,15 @@ async def deliver_alert(session: AsyncSession, alert_id: str) -> dict:
     alert = await session.get(Alert, alert_id)
     if alert is None:
         return {"status": "missing"}
-    location = await session.get(Location, alert.location_id)
-    members = list(
-        await session.execute(
-            select(User, UserChannelPrefs)
-            .join(OrgMember, OrgMember.user_id == User.id)
-            .outerjoin(UserChannelPrefs, UserChannelPrefs.user_id == User.id)
-            .where(OrgMember.org_id == location.org_id)
-        )
-    )
+    stmt = select(User, UserChannelPrefs).outerjoin(UserChannelPrefs, UserChannelPrefs.user_id == User.id)
+    if alert.user_id:  # personal alert: a customer's order update, a driver's new job
+        stmt = stmt.where(User.id == alert.user_id)
+    else:  # restaurant alert: everyone in the restaurant's organization
+        location = await session.get(Location, alert.location_id)
+        if location is None:
+            return {"status": "missing"}
+        stmt = stmt.join(OrgMember, OrgMember.user_id == User.id).where(OrgMember.org_id == location.org_id)
+    members = list(await session.execute(stmt))
     already = {
         (d.user_id, d.channel)
         for d in await session.scalars(

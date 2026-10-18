@@ -50,6 +50,31 @@ async def create_alert(
     return alert
 
 
+async def create_user_alert(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    kind: str,
+    title: str,
+    body: str,
+    dedupe_key: str,
+    data: dict | None = None,
+    channels: list[str] | None = None,
+) -> Alert | None:
+    """A personal alert for one person (customer or driver), deduplicated per person."""
+    exists = await session.scalar(
+        select(Alert.id).where(Alert.user_id == user_id, Alert.location_id.is_(None), Alert.dedupe_key == dedupe_key)
+    )
+    if exists:
+        return None
+    alert = Alert(user_id=user_id, location_id=None, kind=kind, title=title, body=body, data=data or {},
+                  channels=channels or ["push"], dedupe_key=dedupe_key)
+    session.add(alert)
+    await session.flush()
+    await enqueue(session, "deliver_alert", {"alert_id": alert.id})
+    return alert
+
+
 async def check_low_stock(session: AsyncSession, location: Location) -> int:
     items = list(
         await session.scalars(
@@ -64,15 +89,23 @@ async def check_low_stock(session: AsyncSession, location: Location) -> int:
     )
     created = 0
     today = utcnow().date().isoformat()
+    # Low items with a supplier go straight into a draft order for the manager to approve.
+    from app.models import Supplier
+    from app.services import purchasing
+
+    drafted = await purchasing.draft_from_low_stock(session, location)
+    suppliers = {s.id: s.name for s in await session.scalars(select(Supplier).where(Supplier.location_id == location.id))}
     for item in items:
+        order_note = (f" A draft order to {suppliers[item.supplier_id]} is ready for you to approve."
+                      if item.supplier_id in suppliers and drafted["drafts"] else "")
         alert = await create_alert(
             session,
             location,
             kind="low_stock",
             title=f"Low stock: {item.name}",
             body=f"{item.name} is down to {item.stock_qty:g}{(' ' + item.unit) if item.unit else ''} "
-            f"(alert level {item.low_stock_threshold:g}).",
-            data={"item_id": item.id},
+            f"(alert level {item.low_stock_threshold:g}).{order_note}",
+            data={"item_id": item.id, "supplier_id": item.supplier_id},
             dedupe_key=f"low_stock:{item.id}:{today}",  # at most once a day per item
         )
         created += alert is not None
@@ -133,29 +166,11 @@ async def check_sales_drop(session: AsyncSession, location: Location, threshold_
 
 
 async def build_digest(session: AsyncSession, location: Location) -> tuple[str, str]:
-    """A plain, numbers-first morning summary. No AI call needed, so it costs nothing."""
-    from app.services import analytics
+    """The morning end-of-day report: numbers first (sales, labour, food cost, app orders, bookings, reviews,
+    stock, next 7 days). No AI call needed, so it costs nothing."""
+    from app.services import reports
 
-    s = await analytics.sales_summary(session, location, "yesterday", "same_weekday_last_week")
-    top = await analytics.top_items(session, location, "yesterday", limit=3)
-    low = await analytics.inventory(session, location, low_stock_only=True, limit=5)
-    reviews = await analytics.list_reviews(session, location, "yesterday", limit=5)
-    cmp = s.get("comparison") or {}
-    change = cmp.get("gross_change_pct")
-    lines = [
-        f"Yesterday: {s['gross']} from {s['orders']} orders (avg ticket {s['avg_ticket']})"
-        + (f", {change:+.0f}% vs last week" if change is not None else "") + ".",
-    ]
-    if top["rows"]:
-        lines.append("Top sellers: " + ", ".join(f"{r['name']} ({r['qty']:g})" for r in top["rows"]) + ".")
-    if low["items"]:
-        lines.append("Running low: " + ", ".join(i["name"] for i in low["items"]) + ".")
-    if reviews["reviews"]:
-        lines.append(
-            f"{len(reviews['reviews'])} new review(s), average {reviews['average_rating']}★."
-        )
-    title = f"{location.name}: yesterday {s['gross']}"
-    return title, "\n".join(lines)
+    return reports.render(await reports.report(session, location, "day"))
 
 
 async def send_daily_digest(session: AsyncSession, location: Location) -> Alert | None:

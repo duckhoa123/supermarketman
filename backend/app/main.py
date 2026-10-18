@@ -5,7 +5,18 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import account, chat, integrations, internal, restaurant, webhooks
+from app.api import (
+    account,
+    agents,
+    chat,
+    customer,
+    fleet,
+    integrations,
+    internal,
+    operations,
+    restaurant,
+    webhooks,
+)
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -14,8 +25,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="Restaurant AI API",
-        version="0.1.0",
+        title="Food ecosystem API",
+        version="0.2.0",
         docs_url=None if settings.is_production else "/docs",
         redoc_url=None,
     )
@@ -31,7 +42,7 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True}
 
-    for module in (account, restaurant, chat, integrations, webhooks, internal):
+    for module in (account, agents, restaurant, operations, chat, customer, fleet, integrations, webhooks, internal):
         app.include_router(module.router)
     return app
 

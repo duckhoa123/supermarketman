@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
-import { api, type InventoryItem } from "../lib/api";
+import { api, type InventoryItem, type Supplier } from "../lib/api";
 
 export default function Stock() {
   const { location } = useApp();
@@ -9,6 +9,20 @@ export default function Stock() {
   const [search, setSearch] = useState("");
   const query = `/locations/${location.id}/inventory?low_stock_only=${lowOnly}${search ? `&search=${encodeURIComponent(search)}` : ""}`;
   const { data, error, reload } = useApi<{ items: InventoryItem[]; items_with_stock_tracking: number }>(query);
+  const suppliers = useApi<Supplier[]>(`/locations/${location.id}/suppliers`);
+
+  async function patch(item: InventoryItem, body: Record<string, unknown>) {
+    await api(`/locations/${location.id}/items/${item.id}`, { method: "PATCH", body });
+    await reload();
+  }
+
+  async function setReorder(item: InventoryItem) {
+    const value = window.prompt(`Order how many ${item.unit ?? ""} of ${item.name} when it runs low?`, String(item.reorder_qty ?? ""));
+    if (value === null) return;
+    const n = value.trim() === "" ? null : Number(value);
+    if (n !== null && (Number.isNaN(n) || n < 0)) return;
+    await patch(item, { reorder_qty: n });
+  }
 
   async function setThreshold(item: InventoryItem) {
     const value = window.prompt(`Alert me when ${item.name} is at or below:`, String(item.low_stock_threshold ?? ""));
@@ -24,7 +38,7 @@ export default function Stock() {
       <div className="page-head">
         <div>
           <h1>Stock</h1>
-          <p>Levels come from your POS. Set an alert level on anything you want to hear about.</p>
+          <p>Levels come from your POS. Set an alert level, and a supplier to have the order drafted for you.</p>
         </div>
         <div className="row">
           <input
@@ -56,6 +70,7 @@ export default function Stock() {
                 <th>Category</th>
                 <th className="num">In stock</th>
                 <th className="num">Alert at</th>
+                <th>Supplier</th>
                 <th className="num">Price</th>
                 <th />
               </tr>
@@ -75,11 +90,29 @@ export default function Stock() {
                     )}
                   </td>
                   <td className="num">{i.low_stock_threshold ?? "–"}</td>
+                  <td>
+                    {i.stock_qty !== null && (
+                      <select className="select" style={{ minWidth: 140 }} value={i.supplier_id ?? ""} aria-label={`Supplier for ${i.name}`}
+                        onChange={(e) => void patch(i, { supplier_id: e.target.value || null })}>
+                        <option value="">No supplier</option>
+                        {suppliers.data?.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
                   <td className="num">{i.price}</td>
                   <td className="num">
-                    <button className="btn small" onClick={() => void setThreshold(i)}>
-                      Set alert
-                    </button>
+                    <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
+                      <button className="btn small" onClick={() => void setThreshold(i)}>
+                        Set alert
+                      </button>
+                      {i.supplier_id && (
+                        <button className="btn small" onClick={() => void setReorder(i)}>
+                          Reorder {i.reorder_qty ?? "auto"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

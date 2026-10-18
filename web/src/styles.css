@@ -96,7 +96,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
     font-size: 0.72rem; color: var(--muted); text-decoration: none; font-weight: 500; position: relative;
   }
   .tabs a.active { color: var(--basil); font-weight: 700; }
-  .tabs .badge { position: absolute; top: 0; right: 18%; }
+  .tabs .badge { position: absolute; top: -4px; left: calc(50% + 10px); min-width: 16px; padding: 0 4px; line-height: 16px; font-size: 0.65rem; }
 }
 
 /* Page header */
@@ -113,6 +113,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.primary:hover { background: var(--basil-strong); }
 .btn.danger { color: var(--tomato); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+a.btn { display: inline-block; text-decoration: none; color: inherit; }
 .btn.small { padding: 4px 10px; font-size: 0.85rem; }
 .input, .select, .textarea {
   border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-s); padding: 8px 10px; width: 100%;
@@ -214,3 +215,38 @@ table.data td.num, table.data th.num { text-align: right; }
 .card-narrow { width: min(420px, 100%); display: flex; flex-direction: column; gap: 14px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Agents and avatars */
+.avatar { display: inline-grid; place-items: center; border-radius: 50%; color: #fff; flex: none; line-height: 1; }
+.agent-switch {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); background: var(--page); border-radius: var(--radius-m); padding: 8px 10px; margin-bottom: 10px;
+}
+.agent-switch > span:last-child { display: flex; flex-direction: column; line-height: 1.25; }
+.agent-switch:hover { border-color: var(--basil); }
+.agent-card.current { border-color: var(--basil); }
+.card-wide { width: min(880px, 100%); }
+.icon-pick { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 18px; }
+.icon-pick.on { border: 2px solid var(--basil); background: var(--basil-tint); }
+.swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface) inset; }
+
+/* Forecast */
+.forecast { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin: 12px 0; }
+.forecast-day { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.forecast-day .bar-wrap { height: 110px; width: 100%; display: flex; align-items: flex-end; }
+.forecast-day .bar { width: 100%; background: var(--basil); border-radius: 3px 3px 0 0; min-height: 2px; }
+.forecast-day .pill { font-size: 0.68rem; }
+.forecast-amount { font-size: 0.78rem; white-space: nowrap; }
+.report-text { white-space: pre-line; margin-top: 4px; }
+
+/* Dockets with lines, order steps, progress meters, tappable tiles */
+.docket-lines { margin: 4px 0 6px; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+div.docket-lines { padding-left: 0; }
+.steps { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.steps li { flex: 1; font-size: 0.75rem; color: var(--muted); border-top: 4px solid var(--line); padding-top: 4px; }
+.steps li.done { border-color: var(--basil); color: var(--ink); font-weight: 600; }
+.meter { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 6px; }
+.meter span { display: block; height: 100%; background: var(--basil); }
+button.tile { text-align: left; cursor: pointer; width: 100%; }
+button.tile:hover { border-color: var(--basil); }
