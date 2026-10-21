@@ -16,6 +16,7 @@ import Onboarding from "./pages/Onboarding";
 import Orders from "./pages/Orders";
 import Plan from "./pages/Plan";
 import Purchasing from "./pages/Purchasing";
+import Receiving from "./pages/Receiving";
 import Reviews from "./pages/Reviews";
 import Settings from "./pages/Settings";
 import Stock from "./pages/Stock";
@@ -157,6 +158,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
     { to: "/stock", label: "Stock" },
+    { to: "/receiving", label: "Receiving" },
     { to: "/purchasing", label: "Purchasing" },
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
@@ -165,7 +167,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/settings", label: "Settings" },
     ...(me.is_fleet_admin ? [{ to: "/fleet", label: "Fleet" }] : []),
   ];
-  const tabs = ["/", "/today", "/app-orders", "/bookings", "/alerts"];
+  const tabs = ["/", "/today", "/app-orders", "/receiving", "/alerts"];
   const picker =
     me.locations.length > 1 ? (
       <select className="select" value={location.id} onChange={(e) => setLocationId(e.target.value)} aria-label="Restaurant">
@@ -190,6 +192,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
           <Route path="/app-orders" element={<AppOrders />} />
           <Route path="/bookings" element={<Bookings />} />
           <Route path="/stock" element={<Stock />} />
+          <Route path="/receiving" element={<Receiving />} />
           <Route path="/purchasing" element={<Purchasing />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/tables" element={<Tables />} />

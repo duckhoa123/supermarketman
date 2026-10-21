@@ -45,7 +45,7 @@ async def test_onboarding_creates_location_and_rules(client):
     assert [x["id"] for x in me["locations"]] == [loc_id]
     rules = (await client.get(f"/locations/{loc_id}/alert-rules", headers=OWNER)).json()
     assert {r["kind"] for r in rules} == {"bad_review", "low_stock", "sales_drop", "daily_digest", "weekly_report",
-                                         "monthly_report"}
+                                         "monthly_report", "price_change"}
 
 
 async def test_tenant_isolation(client, demo_location_id):

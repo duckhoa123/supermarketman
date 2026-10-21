@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.integrations.pos.base import POSAuthError
 from app.integrations.pos.registry import POS_PROVIDERS
 from app.models import Integration, Location, Review, WebhookEvent, utcnow
-from app.services import alerts, fleet, notify, purchasing, reports, reviews, sync, weather  # noqa: F401
+from app.services import alerts, fleet, notify, purchasing, receiving, reports, reviews, sync, weather  # noqa: F401
 from app.services.jobs import enqueue, handler
 
 
@@ -142,5 +142,7 @@ async def schedule_periodic(session: AsyncSession) -> dict:
                              dedupe_key=f"weather:{location.id}:{local.date().isoformat()}"):
                 counts["weather"] += 1
     await enqueue(session, "fleet_sweep", {}, dedupe_key="fleet_sweep")
+    if now.hour == 10 and now.minute < 15:  # once a day: drop invoice images past their keep period
+        await enqueue(session, "purge_invoice_files", {}, dedupe_key=f"purge_invoices:{now.date().isoformat()}")
     await session.commit()
     return {"slot": slot, **counts}

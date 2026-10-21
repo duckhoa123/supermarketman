@@ -205,6 +205,17 @@ async def read_all(location: Location = Depends(require_location), session: Asyn
     return {"ok": True}
 
 
+@router.post("/alerts/{alert_id}/read")
+async def read_one(alert_id: str, location: Location = Depends(require_location),
+                   session: AsyncSession = Depends(get_session)):
+    a = await session.get(Alert, alert_id)
+    if a is None or a.location_id != location.id:
+        raise HTTPException(404, "Alert not found")
+    a.read_at = a.read_at or utcnow()
+    await session.commit()
+    return {"ok": True}
+
+
 @router.get("/alert-rules")
 async def get_rules(location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
     rules = await session.scalars(select(AlertRule).where(AlertRule.location_id == location.id))
@@ -214,7 +225,7 @@ async def get_rules(location: Location = Depends(require_location), session: Asy
 
 class RuleIn(BaseModel):
     kind: str = Field(
-        pattern="^(bad_review|low_stock|sales_drop|daily_digest|weekly_report|monthly_report|integration_error|new_order)$")
+        pattern="^(bad_review|low_stock|sales_drop|daily_digest|weekly_report|monthly_report|integration_error|new_order|price_change)$")
     channels: list[str] = Field(default_factory=lambda: ["push"])
     params: dict = Field(default_factory=dict)
     enabled: bool = True

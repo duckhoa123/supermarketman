@@ -8,6 +8,8 @@ One platform for Vancouver with three connected agents. Everyone picks an avatar
 | **Customer agent** | People ordering food | Finds restaurants nearby that fit what they want (dish, diet, calories, open now); places pickup or delivery orders and books tables (the customer confirms in the app); order updates and tipping; a nutrition log against their own goals. |
 | **Driver Assistant** | Drivers we employ (invite only) | Jobs with pickup, drop-off, route link and ETA; nearest-driver dispatch inside a 20 km service area, batching orders from the same restaurant; busy alerts to on-call drivers; deliveries per hour, on-time rate, wages, tips and a weekly goal. |
 
+**Receiving.** When a delivery arrives, staff photograph the supplier invoice (or upload the PDF). Claude reads the supplier, invoice number, date and every line; the app matches each line to a stock item (remembered from earlier invoices, otherwise by name) and shows the price change against the last delivery. After a person checks and confirms, the lines go into the receiving log sheet (filter, search, download as CSV), tracked stock goes up (with pack sizes, e.g. 24 bottles per case), and any price change of 3% or more is announced by the Restaurant Manager, with what it costs per week at the usual order volume. The agent can also answer "which supplier prices went up?" from the same data.
+
 One order touches all three: a customer orders, the restaurant accepts and marks it ready, the nearest on-shift driver gets the job, the customer is kept updated and can tip, the meal lands in their nutrition log, and the restaurant's reports count it. Agents prepare actions, but anything that sends, posts, orders, books or charges waits for a person to tap confirm.
 
 "Pass" is a working name; rename it in `web/index.html`, `web/public/manifest.webmanifest` and `mobile/app.json`.
@@ -128,6 +130,8 @@ New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" 
 | `/driver/me`, `/driver/shift/{start,end}`, `/driver/location`, `/driver/deliveries/{id}/status`, `/driver/stats` | Driver app |
 | `/fleet/overview`, `/fleet/drivers`, `/fleet/deliveries/{id}/assign` | Dispatcher and platform admin |
 | `GET /me/alerts` | Personal notifications (order, booking and job updates) |
+| `POST /locations/{id}/invoices` (photo or PDF), `GET/PUT /invoices/{scan}`, `/invoices/{scan}/confirm` | Scan, check and confirm a delivery invoice |
+| `GET /locations/{id}/receiving-log` (`?format=csv`), `/price-changes`, `/price-history` | Receiving log sheet and supplier price tracking |
 | `GET /locations/{id}/inventory`, `/orders`, `/tables`, `/reviews`, `/alerts` | Data screens |
 | `POST /locations/{id}/reviews/{rid}/reply` | Post an owner reply to Google |
 | `GET /locations/{id}/integrations/{provider}/connect` | Start Clover/Google OAuth |

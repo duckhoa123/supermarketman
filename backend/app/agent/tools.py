@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CustomerOrder, Driver, Item, Location, Review, Supplier, User
 from app.money import PERIODS, resolve_period
-from app.services import analytics, forecast, guests, marketing, purchasing, reports
+from app.services import analytics, forecast, guests, marketing, purchasing, receiving, reports
 from app.services.sync import _day_bounds
 
 PERIOD_SCHEMA = {
@@ -214,6 +214,28 @@ RESTAURANT_TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_receiving_log",
+        "description": "Deliveries received, from scanned supplier invoices: date, supplier, invoice number, each "
+        "product with quantity, unit price and line total, and spend totals. Filter by dates, supplier or a word.",
+        "input_schema": {"type": "object", "properties": {
+            "period": PERIOD_SCHEMA,
+            "search": {"type": "string", "description": "Product, supplier or invoice number"}}},
+    },
+    {
+        "name": "get_price_changes",
+        "description": "Products whose supplier price changed compared with the previous delivery, newest first, "
+        "with old and new unit price and % change. Use for 'what got more expensive', supplier cost creep.",
+        "input_schema": {"type": "object", "properties": {
+            "days": {"type": "integer", "minimum": 1, "maximum": 730},
+            "min_change_pct": {"type": "number", "description": "Only changes at least this big, e.g. 5"}}},
+    },
+    {
+        "name": "get_price_history",
+        "description": "Every price paid for a product across deliveries, by supplier, with the change since the "
+        "first delivery on record.",
+        "input_schema": {"type": "object", "properties": {"product": {"type": "string"}}, "required": ["product"]},
+    },
+    {
         "name": "get_app_orders",
         "description": "Pickup and delivery orders placed through the customer app, with status.",
         "input_schema": {"type": "object", "properties": {
@@ -366,6 +388,25 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> dict:
             return await guests.list_guests(s, loc, args.get("search"), args.get("sort", "recent"), _limit(args, 20))
         if name == "get_marketing_insights":
             return await marketing.insights(s, loc)
+        if name == "get_receiving_log":
+            start, end = resolve_period(args.get("period") or "last_30_days", analytics.local_today(loc))
+            out = await receiving.log_lines(s, loc, start=start, end=end, search=args.get("search"), limit=60)
+            by_supplier: dict[str, int] = {}
+            for ln in out["lines"]:
+                by_supplier[ln["supplier"] or "Unknown"] = by_supplier.get(ln["supplier"] or "Unknown", 0) \
+                    + ln["line_total_cents"]
+            return {"from": start.isoformat(), "to": end.isoformat(), "lines_shown": out["count"],
+                    "total": out["total"], "by_supplier_cents": by_supplier,
+                    "lines": [{k: ln[k] for k in ("received_on", "supplier", "invoice_number", "description", "qty",
+                                                  "unit", "unit_price", "line_total", "price_change_pct")}
+                              for ln in out["lines"][:60]]}
+        if name == "get_price_changes":
+            out = await receiving.price_changes(s, loc, int(args.get("days") or 90), float(args.get("min_change_pct") or 0))
+            out["changes"] = [{k: c[k] for k in ("received_on", "supplier", "description", "unit", "unit_price",
+                                                 "previous_unit_price", "price_change_pct")} for c in out["changes"][:40]]
+            return out
+        if name == "get_price_history":
+            return await receiving.price_history(s, loc, search=str(args.get("product", "")).strip() or None)
         if name == "get_app_orders":
             start, end = resolve_period(args.get("period") or "today", analytics.local_today(loc))
             st, en = _day_bounds(start, loc.timezone)[0], _day_bounds(end, loc.timezone)[1]

@@ -32,7 +32,8 @@ class LLM(Protocol):
         ...
 
     async def complete(
-        self, *, model: str, system: list[dict], messages: list[dict], max_tokens: int, tools: list[dict] | None = None
+        self, *, model: str, system: list[dict], messages: list[dict], max_tokens: int, tools: list[dict] | None = None,
+        tool_choice: dict | None = None,
     ) -> LLMResult: ...
 
 
@@ -78,10 +79,12 @@ class AnthropicLLM:
             final = await s.get_final_message()
         yield ("final", _to_result(final))
 
-    async def complete(self, *, model, system, messages, max_tokens, tools=None):
+    async def complete(self, *, model, system, messages, max_tokens, tools=None, tool_choice=None):
         kwargs: dict = {"model": model, "max_tokens": max_tokens, "system": system, "messages": messages}
         if tools:
             kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
         return _to_result(await self.client.messages.create(**kwargs))
 
 

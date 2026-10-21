@@ -92,7 +92,8 @@ async def load_demo(user: AuthUser = Depends(current_user), session: AsyncSessio
 
 
 DEFAULT_RULES = (("bad_review", ["push", "email"]), ("low_stock", ["push"]), ("sales_drop", ["push"]),
-                 ("daily_digest", ["email"]), ("weekly_report", ["email"]), ("monthly_report", ["email"]))
+                 ("daily_digest", ["email"]), ("weekly_report", ["email"]), ("monthly_report", ["email"]),
+                 ("price_change", ["push", "email"]))
 
 
 class OnboardIn(BaseModel):

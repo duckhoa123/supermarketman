@@ -430,3 +430,91 @@ export type DriverMe = {
 };
 
 export type PersonalAlert = { id: string; kind: string; title: string; body: string; created_at: string; read: boolean };
+
+// --- Receiving ---------------------------------------------------------------------------------
+
+export type DraftLine = {
+  description: string;
+  sku?: string | null;
+  qty: number;
+  unit?: string | null;
+  unit_price_cents: number;
+  line_total_cents: number;
+  kind: "item" | "fee" | "credit";
+  item_id: string | null;
+  pack_size: number;
+  match: string | null;
+  last_price_cents?: number | null;
+  last_received_on?: string | null;
+  change_pct?: number | null;
+};
+
+export type InvoiceScan = {
+  id: string;
+  status: "processing" | "review" | "confirmed" | "failed" | "discarded";
+  file_name: string | null;
+  content_type: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  subtotal_cents: number | null;
+  tax_cents: number | null;
+  total_cents: number | null;
+  lines_total: string;
+  lines: DraftLine[];
+  warnings: string[];
+  error: string | null;
+  created_at: string | null;
+  confirmed_at: string | null;
+};
+
+export type LogLine = {
+  id: string;
+  received_on: string;
+  supplier: string | null;
+  invoice_number: string | null;
+  description: string;
+  kind: string;
+  item: string | null;
+  qty: number;
+  unit: string | null;
+  unit_price: string;
+  line_total: string;
+  line_total_cents: number;
+  pack_size: number;
+  stock_added: number | null;
+  previous_unit_price: string | null;
+  price_change_pct: number | null;
+};
+
+/** Upload a file (multipart) to the API with the signed-in user's token. */
+export async function uploadFile<T>(path: string, file: Blob, name: string): Promise<T> {
+  const token = await getToken();
+  const form = new FormData();
+  form.append("file", file, name);
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    let message = `Upload failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (typeof data.detail === "string") message = data.detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, message);
+  }
+  return (await res.json()) as T;
+}
+
+/** Fetch a protected file (invoice image, CSV) as a Blob. */
+export async function fetchBlob(path: string): Promise<Blob> {
+  const token = await getToken();
+  const res = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, res.status === 410 ? "The image is no longer stored." : `Request failed (${res.status})`);
+  return res.blob();
+}

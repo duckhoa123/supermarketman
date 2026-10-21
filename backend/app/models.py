@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -615,3 +616,71 @@ class Delivery(TimestampMixin, Base):
     promised_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # ETA shown when the order was placed
     eta_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # latest estimate
     tip_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 100% goes to the driver
+
+
+# --- Receiving: scanned supplier invoices, the receiving log and price history --------------------
+
+
+class InvoiceScan(TimestampMixin, Base):
+    """A supplier invoice photographed or uploaded when a delivery arrives.
+
+    processing -> review (AI read it; a person checks the lines) -> confirmed (lines go into the
+    receiving log and stock) | failed | discarded. The image is kept for INVOICE_FILE_DAYS, the data forever.
+    """
+
+    __tablename__ = "invoice_scans"
+    __table_args__ = (Index("ix_invoice_scans_location_created", "location_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    uploaded_by: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="processing")
+    file_name: Mapped[str | None] = mapped_column(String(300))
+    content_type: Mapped[str | None] = mapped_column(String(100))
+    file_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.id", ondelete="SET NULL"))
+    supplier_name: Mapped[str | None] = mapped_column(String(200))
+    invoice_number: Mapped[str | None] = mapped_column(String(100))
+    invoice_date: Mapped[date | None] = mapped_column(Date)
+    subtotal_cents: Mapped[int | None] = mapped_column(BigInteger)
+    tax_cents: Mapped[int | None] = mapped_column(BigInteger)
+    total_cents: Mapped[int | None] = mapped_column(BigInteger)
+    # Draft lines while in review: [{"description","sku","qty","unit","unit_price_cents","line_total_cents",
+    # "kind","item_id","pack_size","match","last_price_cents","change_pct"}]
+    lines: Mapped[list] = mapped_column(JSON, default=list)
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    purchase_order_id: Mapped[str | None] = mapped_column(String(36))
+    confirmed_by: Mapped[str | None] = mapped_column(String(64))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class ReceivedLine(Base):
+    """One line of a confirmed invoice: the receiving log sheet, and the price history of every product."""
+
+    __tablename__ = "received_lines"
+    __table_args__ = (
+        Index("ix_received_lines_location_day", "location_id", "received_on"),
+        Index("ix_received_lines_location_product", "location_id", "product_key"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    scan_id: Mapped[str] = mapped_column(ForeignKey("invoice_scans.id", ondelete="CASCADE"), index=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.id", ondelete="SET NULL"))
+    supplier_name: Mapped[str | None] = mapped_column(String(200))
+    invoice_number: Mapped[str | None] = mapped_column(String(100))
+    received_on: Mapped[date] = mapped_column(Date)
+    description: Mapped[str] = mapped_column(String(300))
+    sku: Mapped[str | None] = mapped_column(String(100))
+    # Supplier + normalised description: how the same product is recognised on the next invoice.
+    product_key: Mapped[str] = mapped_column(String(400))
+    kind: Mapped[str] = mapped_column(String(16), default="item")  # item | fee | credit
+    item_id: Mapped[str | None] = mapped_column(ForeignKey("items.id", ondelete="SET NULL"), index=True)
+    qty: Mapped[float] = mapped_column(Float, default=1)
+    unit: Mapped[str | None] = mapped_column(String(32))
+    unit_price_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    line_total_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    pack_size: Mapped[float] = mapped_column(Float, default=1)  # stock units per invoice unit, e.g. 24 per case
+    stock_added: Mapped[float | None] = mapped_column(Float)
+    previous_unit_price_cents: Mapped[int | None] = mapped_column(BigInteger)
+    price_change_pct: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

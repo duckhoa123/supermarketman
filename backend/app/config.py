@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     # Open-Meteo's free API is for non-commercial use; in production weather is only fetched with a paid key.
     open_meteo_api_key: str = ""
 
+    # --- Receiving: scanned invoices ----------------------------------------
+    invoice_model: str = ""  # model that reads invoices; empty = MODEL_DEFAULT
+    invoice_max_mb: float = 10.0
+    invoice_file_days: int = 120  # invoice images are deleted after this; the data is kept
+    price_change_threshold_pct: float = 3.0  # default for the price_change alert rule
+
     # --- Payments (Stripe) ---------------------------------------------------
     stripe_secret_key: str = ""  # empty: orders are marked as test payments, nothing is charged
 

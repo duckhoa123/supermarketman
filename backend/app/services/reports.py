@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Booking, CustomerOrder, Item, ItemSalesDaily, Location, Review, StaffShift
+from app.models import Booking, CustomerOrder, Item, ItemSalesDaily, Location, ReceivedLine, Review, StaffShift
 from app.money import fmt_money, pct_change, resolve_period
 from app.services import analytics
 from app.services.sync import _day_bounds
@@ -126,6 +126,7 @@ async def report(session: AsyncSession, location: Location, kind: str = "day") -
         "app_orders": await platform_orders(session, location, start, end),
         "bookings": await bookings_summary(session, location, start, end),
         "reviews": await review_summary(session, location, start, end),
+        "deliveries": await deliveries_summary(session, location, start, end),
         "running_low": [i["name"] for i in (await analytics.inventory(session, location, True, limit=10))["items"]],
     }
     if kind != "day":
@@ -146,6 +147,18 @@ async def report(session: AsyncSession, location: Location, kind: str = "day") -
         "busiest_day": max(fc["days"], key=lambda d: d.get("expected_cents") or 0)["day"],
     }
     return out
+
+
+async def deliveries_summary(session: AsyncSession, location: Location, start: date, end: date) -> dict:
+    """Spend on deliveries received (from scanned invoices) and supplier price changes in the period."""
+    rows = list(await session.scalars(select(ReceivedLine).where(
+        ReceivedLine.location_id == location.id, ReceivedLine.received_on >= start, ReceivedLine.received_on <= end)))
+    spend = sum(r.line_total_cents for r in rows)
+    changes = sorted((r for r in rows if r.price_change_pct), key=lambda r: -abs(r.price_change_pct))
+    return {"invoices": len({r.scan_id for r in rows}), "spend": fmt_money(spend, location.currency),
+            "spend_cents": spend,
+            "price_changes": [{"description": r.description, "supplier": r.supplier_name, "change_pct": r.price_change_pct,
+                               "unit_price": fmt_money(r.unit_price_cents, location.currency)} for r in changes[:5]]}
 
 
 async def review_summary(session: AsyncSession, location: Location, start: date, end: date) -> dict:
@@ -174,6 +187,12 @@ def render(r: dict) -> tuple[str, str]:
         lines.append(f"Food cost: about {r['food_cost']['food_cost_pct']:g}% of sales.")
     if r["top_items"]:
         lines.append("Top sellers: " + ", ".join(f"{i['name']} ({i['qty']:g})" for i in r["top_items"][:3]) + ".")
+    dl = r.get("deliveries") or {}
+    if dl.get("invoices"):
+        lines.append(f"Deliveries: {dl['spend']} on {dl['invoices']} invoice(s).")
+    if dl.get("price_changes"):
+        lines.append("Supplier prices: " + ", ".join(
+            f"{c['description']} {c['change_pct']:+.0f}% ({c['supplier']})" for c in dl["price_changes"][:3]) + ".")
     if r.get("running_low"):
         lines.append("Running low: " + ", ".join(r["running_low"][:6]) + ".")
     app = r["app_orders"]

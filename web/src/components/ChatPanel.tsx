@@ -3,6 +3,8 @@ import Docket from "./Docket";
 import Avatar from "./Avatar";
 import { streamFrom, type AgentProfile, type ChatEvent, type Proposal } from "../lib/api";
 
+export type Notice = { id: string; title: string; body: string; ask: string };
+
 type Turn =
   | { role: "user"; text: string }
   | { role: "ai"; text: string; tools: string[]; proposals: Proposal[]; error?: string; pending: boolean };
@@ -19,6 +21,8 @@ export default function ChatPanel({
   locationId,
   allowDeep = false,
   shareLocation = false,
+  notices = [],
+  onDismissNotice,
 }: {
   path: string;
   profile?: AgentProfile;
@@ -30,6 +34,9 @@ export default function ChatPanel({
   locationId?: string;
   allowDeep?: boolean;
   shareLocation?: boolean;
+  /** Things the agent noticed on its own (e.g. a supplier price rise), shown above the conversation. */
+  notices?: Notice[];
+  onDismissNotice?: (id: string) => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -122,6 +129,21 @@ export default function ChatPanel({
       </div>
 
       <div className="thread">
+        {notices.map((n) => (
+          <section key={n.id} className="panel notice">
+            {profile && <Avatar profile={profile} size={36} />}
+            <div className="stack" style={{ gap: 6, flex: 1 }}>
+              <strong>{n.title}</strong>
+              <p className="small body">{n.body}</p>
+              <div className="row">
+                <button className="btn primary small" disabled={busy} onClick={() => { onDismissNotice?.(n.id); void send(n.ask); }}>
+                  Ask {profile?.display_name ?? "about this"}
+                </button>
+                <button className="btn small" onClick={() => onDismissNotice?.(n.id)}>Got it</button>
+              </div>
+            </div>
+          </section>
+        ))}
         {turns.length === 0 && (
           <div className="starters">
             {starters.map((s) => (

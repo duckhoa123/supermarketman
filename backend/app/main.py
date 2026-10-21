@@ -14,6 +14,7 @@ from app.api import (
     integrations,
     internal,
     operations,
+    receiving,
     restaurant,
     webhooks,
 )
@@ -42,7 +43,8 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True}
 
-    for module in (account, agents, restaurant, operations, chat, customer, fleet, integrations, webhooks, internal):
+    for module in (account, agents, restaurant, operations, receiving, chat, customer, fleet, integrations, webhooks,
+                   internal):
         app.include_router(module.router)
     return app
 

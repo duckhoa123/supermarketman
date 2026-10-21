@@ -20,6 +20,7 @@ const RULES = [
   { kind: "weekly_report", label: "Weekly report on Mondays" },
   { kind: "monthly_report", label: "Monthly report on the 1st" },
   { kind: "new_order", label: "A new order or booking from the customer app" },
+  { kind: "price_change", label: "A supplier price changes by 3% or more on a scanned invoice" },
 ];
 const CHANNELS = ["push", "email", "whatsapp", "sms"] as const;
 const CHANNEL_LABEL: Record<string, string> = { push: "App", email: "Email", whatsapp: "WhatsApp", sms: "SMS" };

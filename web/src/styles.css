@@ -250,3 +250,24 @@ div.docket-lines { padding-left: 0; }
 .meter span { display: block; height: 100%; background: var(--basil); }
 button.tile { text-align: left; cursor: pointer; width: 100%; }
 button.tile:hover { border-color: var(--basil); }
+
+/* Receiving */
+.scan-box { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.invoice-layout { display: grid; grid-template-columns: minmax(240px, 2fr) 5fr; gap: 16px; align-items: start; }
+.invoice-layout > * { min-width: 0; }
+.invoice-preview img { width: 100%; border-radius: var(--radius-s); display: block; }
+.invoice-preview object { width: 100%; height: 70vh; }
+.invoice-preview { position: sticky; top: 16px; padding: 10px; }
+.invoice-lines td { padding: 6px 4px; }
+.invoice-lines .input { padding: 5px 6px; }
+.num-in { width: 78px; text-align: right; }
+.unit-in { width: 64px; }
+.invoice-lines td:first-child .input { min-width: 200px; }
+.invoice-lines .select { min-width: 150px; padding: 5px 6px; }
+.warn-text { color: var(--oil); }
+.notice { display: flex; gap: 12px; align-items: flex-start; border-left: 4px solid var(--oil); }
+.notice .body { white-space: pre-line; }
+@media (max-width: 1250px) {
+  .invoice-layout { grid-template-columns: 1fr; }
+  .invoice-preview { position: static; max-height: 420px; overflow: auto; }
+}

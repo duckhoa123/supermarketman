@@ -251,9 +251,76 @@ async def seed(
         from app.services.purchasing import draft_from_low_stock
 
         await draft_from_low_stock(session, loc)
+        await seed_deliveries(session, loc, suppliers, today)
         await session.commit()
         print(f"Seeded Demo Bistro ({loc.id}) for {email}")
         return loc.id
+
+
+# Past deliveries for the receiving log: (days ago, supplier index, invoice no., [(description, qty, unit, price)])
+DAIRY = [("Burrata 125g", 12, "ea"), ("Mascarpone 500g", 4, "tub"), ("Fior di latte 1kg", 3, "kg")]
+PRODUCE = [("Roma tomatoes", 10, "kg"), ("Basil bunch", 8, "ea"), ("Atlantic salmon fillet", 6, "kg")]
+DRINKS = [("Peroni Nastro Azzurro 330ml", 4, "case"), ("San Pellegrino 750ml", 2, "case")]
+
+
+def _priced(rows, prices):
+    return [(d, q, u, c) for (d, q, u), c in zip(rows, prices, strict=True)]
+
+
+DELIVERIES = [
+    (24, 1, "HD-1012", _priced(DAIRY, [750, 1050, 1490])),
+    (20, 0, "CP-3381", _priced(PRODUCE, [420, 225, 3150])),
+    (17, 2, "WB-552", _priced(DRINKS, [5280, 3360])),
+    (10, 1, "HD-1041", _priced(DAIRY, [750, 1050, 1490])),
+    (6, 0, "CP-3410", _priced(PRODUCE, [465, 225, 3150])),  # tomatoes up 11%
+    (3, 1, "HD-1077", _priced(DAIRY, [840, 1050, 1440])),  # burrata up 12%, fior di latte down 3%
+]
+
+
+async def seed_deliveries(session, loc: Location, suppliers: list[Supplier], today) -> None:
+    """Confirmed invoices with a couple of price changes, and the Restaurant Manager's in-app notice about the
+    latest one (not emailed: it's sample data)."""
+    from app.models import Alert, InvoiceScan, ReceivedLine
+    from app.services import invoice_math as im
+    from app.services.receiving import price_alert_text
+
+    # Link delivered products to the demo's stock items (no stock is added: these deliveries are history).
+    links = {"Burrata 125g": "Burrata & Tomato", "Atlantic salmon fillet": "Grilled Salmon",
+             "Peroni Nastro Azzurro 330ml": "Peroni"}
+    item_ids = {name: iid for name, iid in await session.execute(
+        select(Item.name, Item.id).where(Item.location_id == loc.id, Item.name.in_(links.values())))}
+    last: dict[str, ReceivedLine] = {}
+    for days_ago, sup_i, number, rows in DELIVERIES:
+        sup = suppliers[sup_i]
+        day = today - timedelta(days=days_ago)
+        lines = [{"description": d, "qty": q, "unit": u, "unit_price_cents": c, "line_total_cents": q * c,
+                  "kind": "item", "item_id": None, "pack_size": 1, "match": "none"} for d, q, u, c in rows]
+        scan = InvoiceScan(location_id=loc.id, status="confirmed", file_name=f"{number}.jpg", content_type="image/jpeg",
+                           supplier_id=sup.id, supplier_name=sup.name, invoice_number=number, invoice_date=day,
+                           subtotal_cents=sum(ln["line_total_cents"] for ln in lines), tax_cents=0, lines=lines,
+                           warnings=[], confirmed_at=utcnow() - timedelta(days=days_ago))
+        session.add(scan)
+        await session.flush()
+        changes = []
+        for ln in lines:
+            key = im.product_key(sup.name, ln["description"])
+            prev = last.get(key)
+            pct = im.price_change_pct(ln["unit_price_cents"], 1, prev.unit_price_cents, 1) if prev else None
+            row = ReceivedLine(location_id=loc.id, scan_id=scan.id, supplier_id=sup.id, supplier_name=sup.name,
+                               invoice_number=number, received_on=day, description=ln["description"], product_key=key,
+                               kind="item", qty=ln["qty"], unit=ln["unit"], unit_price_cents=ln["unit_price_cents"],
+                               line_total_cents=ln["line_total_cents"], item_id=item_ids.get(links.get(ln["description"])),
+                               pack_size=24 if ln["unit"] == "case" and "Peroni" in ln["description"] else 1,
+                               previous_unit_price_cents=prev.unit_price_cents if prev else None, price_change_pct=pct)
+            session.add(row)
+            await session.flush()
+            if pct:
+                changes.append({"line": ln, "prev": prev, "pct": pct, "key": key, "pack": 1})
+            last[key] = row
+        if changes and days_ago == DELIVERIES[-1][0]:
+            title, body, data = await price_alert_text(session, loc, sup.name, scan, changes)
+            session.add(Alert(location_id=loc.id, kind="price_change", title=title, body=body, data=data,
+                              channels=[], dedupe_key=f"price:{scan.id}"))
 
 
 async def invite_driver(email: str, name: str = "Test Driver", role: str = "driver") -> str:
