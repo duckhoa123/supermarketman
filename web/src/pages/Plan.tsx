@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAssistant } from "../components/AssistantDock";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
 import type { Forecast, Report } from "../lib/api";
@@ -19,7 +20,8 @@ type Insights = {
 
 /** Forecast, end-of-day/week/month reports, labour and the facts behind a marketing plan. */
 export default function Plan() {
-  const { location } = useApp();
+  const { location, me } = useApp();
+  const assistant = useAssistant();
   const [kind, setKind] = useState<"day" | "week" | "month">("day");
   const fc = useApi<Forecast>(`/locations/${location.id}/forecast?days=7`);
   const report = useApi<Report>(`/locations/${location.id}/reports/${kind}`);
@@ -144,7 +146,9 @@ export default function Plan() {
         <section className="panel" style={{ marginTop: 16 }}>
           <h2>Marketing ideas start here</h2>
           <p className="small muted" style={{ marginBottom: 12 }}>
-            Ask the assistant to "plan a promotion for our slowest night" to turn these into a plan.
+            <button className="btn small" onClick={() => assistant.open("Plan a promotion for our slowest night.")}>
+              Ask {me.agents.find((a) => a.agent === "restaurant_manager")?.display_name ?? "the assistant"} to plan a promotion
+            </button>
           </p>
           <div className="grid two">
             <div>

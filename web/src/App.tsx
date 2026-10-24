@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { PersonalDock, RestaurantDock } from "./components/AgentDocks";
 import Shell, { type NavItem } from "./components/Shell";
 import { AppContext, MeContext } from "./context";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
@@ -8,7 +9,6 @@ import { initialMode, storeMode } from "./lib/mode";
 import Agents from "./pages/Agents";
 import Alerts from "./pages/Alerts";
 import AppOrders from "./pages/AppOrders";
-import Assistant from "./pages/Assistant";
 import Bookings from "./pages/Bookings";
 import Login from "./pages/Login";
 import More from "./pages/More";
@@ -23,12 +23,10 @@ import Stock from "./pages/Stock";
 import Tables from "./pages/Tables";
 import Today from "./pages/Today";
 import Updates from "./pages/Updates";
-import CustomerChat from "./pages/customer/CustomerChat";
 import Discover from "./pages/customer/Discover";
 import MyOrders from "./pages/customer/MyOrders";
 import Nutrition from "./pages/customer/Nutrition";
 import Profile from "./pages/customer/Profile";
-import DriverChat from "./pages/driver/DriverChat";
 import Earnings from "./pages/driver/Earnings";
 import Fleet from "./pages/driver/Fleet";
 import Jobs from "./pages/driver/Jobs";
@@ -152,8 +150,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
   const [unread, refreshUnread] = usePolling(`/locations/${location.id}/alerts?unread_only=true&limit=1`);
   const navigate = useNavigate();
   const nav: NavItem[] = [
-    { to: "/", label: "Assistant", end: true },
-    { to: "/today", label: "Today" },
+    { to: "/", label: "Today", end: true },
     { to: "/plan", label: "Plan" },
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
@@ -167,7 +164,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/settings", label: "Settings" },
     ...(me.is_fleet_admin ? [{ to: "/fleet", label: "Fleet" }] : []),
   ];
-  const tabs = ["/", "/today", "/app-orders", "/receiving", "/alerts"];
+  const tabs = ["/", "/app-orders", "/receiving", "/bookings", "/alerts"];
   const picker =
     me.locations.length > 1 ? (
       <select className="select" value={location.id} onChange={(e) => setLocationId(e.target.value)} aria-label="Restaurant">
@@ -183,11 +180,12 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
 
   return (
     <AppContext.Provider value={{ me, location, unread, refreshUnread, refreshMe }}>
+      <RestaurantDock>
       <Shell nav={nav} tabs={tabs} profile={me.agents.find((a) => a.agent === "restaurant_manager")}
         footer={picker} onSwitchAgent={() => navigate("/agents")}>
         <Routes>
-          <Route path="/" element={<Assistant />} />
-          <Route path="/today" element={<Today />} />
+          <Route path="/" element={<Today />} />
+          <Route path="/today" element={<Navigate to="/" replace />} />
           <Route path="/plan" element={<Plan />} />
           <Route path="/app-orders" element={<AppOrders />} />
           <Route path="/bookings" element={<Bookings />} />
@@ -212,6 +210,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Shell>
+      </RestaurantDock>
     </AppContext.Provider>
   );
 }
@@ -223,8 +222,7 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
   const nav: NavItem[] =
     agent === "customer"
       ? [
-          { to: "/", label: "Assistant", end: true },
-          { to: "/discover", label: "Discover" },
+          { to: "/", label: "Discover", end: true },
           { to: "/orders", label: "Orders" },
           { to: "/nutrition", label: "Food log" },
           { to: "/profile", label: "Profile" },
@@ -233,7 +231,6 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
         ]
       : [
           { to: "/", label: "Jobs", end: true },
-          { to: "/assistant", label: "Assistant" },
           { to: "/earnings", label: "Earnings" },
           { to: "/updates", label: "Updates", badge: unread },
           ...fleet,
@@ -241,12 +238,13 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
   const tabs = nav.slice(0, 5).map((n) => n.to);
 
   return (
+    <PersonalDock me={me} agent={agent}>
     <Shell nav={nav} tabs={tabs} profile={me.agents.find((a) => a.agent === agent)} onSwitchAgent={() => navigate("/agents")}>
       <Routes>
         {agent === "customer" ? (
           <>
-            <Route path="/" element={<CustomerChat />} />
-            <Route path="/discover" element={<Discover />} />
+            <Route path="/" element={<Discover />} />
+            <Route path="/discover" element={<Navigate to="/" replace />} />
             <Route path="/orders" element={<MyOrders />} />
             <Route path="/nutrition" element={<Nutrition />} />
             <Route path="/profile" element={<Profile />} />
@@ -254,7 +252,6 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
         ) : (
           <>
             <Route path="/" element={<Jobs />} />
-            <Route path="/assistant" element={<DriverChat />} />
             <Route path="/earnings" element={<Earnings />} />
           </>
         )}
@@ -268,5 +265,6 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>
+    </PersonalDock>
   );
 }

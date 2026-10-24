@@ -19,7 +19,7 @@ One order touches all three: a customer orders, the restaurant accepts and marks
 | Folder | What it is |
 | --- | --- |
 | `backend/` | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic. One codebase runs as the **API** and the **worker**. |
-| `web/` | React + Vite installable web app (PWA) with a home for each agent. Restaurant: assistant, today, plan (forecast, reports, labour, marketing), app orders, bookings and guests, stock, purchasing, reviews, alerts, settings. Customer: assistant, discover and order, orders and bookings, food log, profile. Driver: jobs, assistant, earnings; plus the fleet dashboard for dispatchers. |
+| `web/` | React + Vite installable web app (PWA) with a home for each agent; each agent is a button in the bottom-right corner that opens a chat window on every screen. Restaurant: today, plan (forecast, reports, labour, marketing), app orders, bookings and guests, stock, purchasing, reviews, alerts, settings. Customer: discover and order, orders and bookings, food log, profile. Driver: jobs, earnings; plus the fleet dashboard for dispatchers. |
 | `mobile/` | Expo (React Native) app on the same API: Restaurant Manager assistant, today, alerts, push notifications. |
 | `.railway/railway.ts` | Railway setup: Postgres, the API and the worker in US East. Deploys on every push to `main`. |
 | `infra/gcp/deploy.sh` | Alternative: deploy to Google Cloud Run in Toronto if you later need data hosted in Canada. |

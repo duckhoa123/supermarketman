@@ -48,7 +48,7 @@ export default function MyOrders() {
         </div>
       </div>
       {message && <p className="panel" role="status">{message}</p>}
-      {orders.data?.orders.length === 0 && <p className="empty panel">No orders yet. Try Discover or ask your assistant.</p>}
+      {orders.data?.orders.length === 0 && <p className="empty panel">No orders yet. Find something on Discover, or tap your assistant in the corner.</p>}
       <div className="stack">
         {orders.data?.orders.map((o) => {
           const steps = STEPS[o.fulfilment];

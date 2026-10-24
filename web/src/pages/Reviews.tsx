@@ -56,7 +56,7 @@ function ReviewCard({ review, locationId, onReplied }: { review: ReviewRow; loca
           <textarea
             className="textarea"
             value={draft}
-            placeholder="Write a reply. Tip: ask the assistant to draft one."
+            placeholder="Write a reply. Tip: tap your assistant in the corner to draft one."
             onChange={(e) => setDraft(e.target.value)}
           />
           <div className="row">

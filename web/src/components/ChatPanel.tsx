@@ -5,16 +5,30 @@ import { streamFrom, type AgentProfile, type ChatEvent, type Proposal } from "..
 
 export type Notice = { id: string; title: string; body: string; ask: string };
 
+export type ChatConfig = {
+  path: string;
+  profile?: AgentProfile;
+  greeting: string;
+  starters: string[];
+  toolLabels: Record<string, string>;
+  placeholder: string;
+  locationId?: string;
+  allowDeep?: boolean;
+  shareLocation?: boolean;
+  /** Things the agent noticed on its own (e.g. a supplier price rise), shown at the top of the chat. */
+  notices?: Notice[];
+  onDismissNotice?: (id: string) => void;
+};
+
 type Turn =
   | { role: "user"; text: string }
   | { role: "ai"; text: string; tools: string[]; proposals: Proposal[]; error?: string; pending: boolean };
 
-/** A conversation with one of the three agents. */
+/** A conversation with one of the three agents, shown inside the chat window. */
 export default function ChatPanel({
   path,
   profile,
-  title,
-  subtitle,
+  greeting,
   starters,
   toolLabels,
   placeholder,
@@ -23,20 +37,14 @@ export default function ChatPanel({
   shareLocation = false,
   notices = [],
   onDismissNotice,
-}: {
-  path: string;
-  profile?: AgentProfile;
-  title: string;
-  subtitle: string;
-  starters: string[];
-  toolLabels: Record<string, string>;
-  placeholder: string;
-  locationId?: string;
-  allowDeep?: boolean;
-  shareLocation?: boolean;
-  /** Things the agent noticed on its own (e.g. a supplier price rise), shown above the conversation. */
-  notices?: Notice[];
-  onDismissNotice?: (id: string) => void;
+  open,
+  onClose,
+  prompt,
+}: ChatConfig & {
+  open: boolean;
+  onClose: () => void;
+  /** A question another screen asked to send (changes `nonce` each time). */
+  prompt?: { text: string; nonce: number } | null;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -45,6 +53,7 @@ export default function ChatPanel({
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
   const conversationId = useRef<string | undefined>(undefined);
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -55,6 +64,14 @@ export default function ChatPanel({
     setTurns([]);
     conversationId.current = undefined;
   }, [path]);
+
+  useEffect(() => {
+    if (open) window.setTimeout(() => inputRef.current?.focus(), 50);
+  }, [open]);
+
+  useEffect(() => {
+    if (prompt?.text) void send(prompt.text);
+  }, [prompt?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function updateLast(fn: (t: Extract<Turn, { role: "ai" }>) => Extract<Turn, { role: "ai" }>) {
     setTurns((prev) => {
@@ -107,13 +124,11 @@ export default function ChatPanel({
 
   return (
     <div className="chat">
-      <div className="page-head">
-        <div className="row" style={{ alignItems: "center" }}>
-          {profile && <Avatar profile={profile} size={44} />}
-          <div>
-            <h1>{title}</h1>
-            <p>{subtitle}</p>
-          </div>
+      <header className="chat-head">
+        {profile && <Avatar profile={profile} size={36} />}
+        <div className="chat-who">
+          <strong>{profile?.display_name ?? "Assistant"}</strong>
+          <span className="small muted">{profile?.label}</span>
         </div>
         {turns.length > 0 && (
           <button
@@ -123,35 +138,38 @@ export default function ChatPanel({
               conversationId.current = undefined;
             }}
           >
-            New conversation
+            New chat
           </button>
         )}
-      </div>
+        <button className="icon-btn" onClick={onClose} aria-label="Close chat">
+          ✕
+        </button>
+      </header>
 
       <div className="thread">
         {notices.map((n) => (
-          <section key={n.id} className="panel notice">
-            {profile && <Avatar profile={profile} size={36} />}
-            <div className="stack" style={{ gap: 6, flex: 1 }}>
-              <strong>{n.title}</strong>
-              <p className="small body">{n.body}</p>
-              <div className="row">
-                <button className="btn primary small" disabled={busy} onClick={() => { onDismissNotice?.(n.id); void send(n.ask); }}>
-                  Ask {profile?.display_name ?? "about this"}
-                </button>
-                <button className="btn small" onClick={() => onDismissNotice?.(n.id)}>Got it</button>
-              </div>
+          <section key={n.id} className="notice">
+            <strong>{n.title}</strong>
+            <p className="small body">{n.body}</p>
+            <div className="row">
+              <button className="btn primary small" disabled={busy} onClick={() => { onDismissNotice?.(n.id); void send(n.ask); }}>
+                Ask {profile?.display_name ?? "about this"}
+              </button>
+              <button className="btn small" onClick={() => onDismissNotice?.(n.id)}>Got it</button>
             </div>
           </section>
         ))}
         {turns.length === 0 && (
-          <div className="starters">
-            {starters.map((s) => (
-              <button key={s} onClick={() => void send(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
+          <>
+            <p className="msg-ai">{greeting}</p>
+            <div className="starters">
+              {starters.map((s) => (
+                <button key={s} onClick={() => void send(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </>
         )}
         {turns.map((t, i) =>
           t.role === "user" ? (
@@ -188,6 +206,7 @@ export default function ChatPanel({
         }}
       >
         <textarea
+          ref={inputRef}
           className="textarea"
           rows={1}
           placeholder={placeholder}
@@ -203,24 +222,26 @@ export default function ChatPanel({
         <button className="btn primary" disabled={busy || !input.trim()}>
           Send
         </button>
-        <div className="composer-opts">
-          {allowDeep && (
-            <label className="check">
-              <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
-              Deep analysis (slower, for why and what-if questions)
-            </label>
-          )}
-          {shareLocation && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={position !== null}
-                onChange={(e) => (e.target.checked ? askForPosition() : setPosition(null))}
-              />
-              Use my current location (otherwise your saved address)
-            </label>
-          )}
-        </div>
+        {(allowDeep || shareLocation) && (
+          <div className="composer-opts">
+            {allowDeep && (
+              <label className="check">
+                <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
+                Deep analysis (slower, for why and what-if)
+              </label>
+            )}
+            {shareLocation && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={position !== null}
+                  onChange={(e) => (e.target.checked ? askForPosition() : setPosition(null))}
+                />
+                Use my current location
+              </label>
+            )}
+          </div>
+        )}
       </form>
     </div>
   );
