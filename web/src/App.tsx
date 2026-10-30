@@ -5,7 +5,7 @@ import Shell, { type NavItem } from "./components/Shell";
 import { AppContext, MeContext } from "./context";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
-import { initialMode, storeMode } from "./lib/mode";
+import { captureWebsiteLink, initialMode, storeMode, takeWebsiteLink } from "./lib/mode";
 import Agents from "./pages/Agents";
 import Alerts from "./pages/Alerts";
 import AppOrders from "./pages/AppOrders";
@@ -23,6 +23,7 @@ import Stock from "./pages/Stock";
 import Tables from "./pages/Tables";
 import Today from "./pages/Today";
 import Updates from "./pages/Updates";
+import Website from "./pages/Website";
 import Discover from "./pages/customer/Discover";
 import MyOrders from "./pages/customer/MyOrders";
 import Nutrition from "./pages/customer/Nutrition";
@@ -49,7 +50,10 @@ function usePolling(path: string | null, every = 60_000): [number, () => void] {
   return [count, refresh];
 }
 
+captureWebsiteLink();
+
 export default function App() {
+  const navigate = useNavigate();
   const [phase, setPhase] = useState<Phase>("loading");
   const [me, setMe] = useState<Me | null>(null);
   const [mode, setModeState] = useState<AgentKind | null>(null);
@@ -63,7 +67,15 @@ export default function App() {
     try {
       const data = await api<Me>("/me");
       setMe(data);
-      setModeState((current) => (current && data.agents.some((a) => a.agent === current) ? current : initialMode(data)));
+      const fromSite = takeWebsiteLink();
+      if (fromSite) {
+        // Came from a restaurant's website: open that restaurant in the customer app.
+        storeMode("customer");
+        setModeState("customer");
+        navigate(`/?restaurant=${encodeURIComponent(fromSite.restaurant)}${fromSite.book ? "&book=1" : ""}`, { replace: true });
+      } else {
+        setModeState((current) => (current && data.agents.some((a) => a.agent === current) ? current : initialMode(data)));
+      }
       setPhase("ready");
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
@@ -74,7 +86,7 @@ export default function App() {
         setPhase("error");
       }
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     void refreshMe();
@@ -160,6 +172,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
     { to: "/reviews", label: "Reviews" },
+    { to: "/website", label: "Website" },
     { to: "/alerts", label: "Alerts", badge: unread },
     { to: "/settings", label: "Settings" },
     ...(me.is_fleet_admin ? [{ to: "/fleet", label: "Fleet" }] : []),
@@ -195,6 +208,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
           <Route path="/orders" element={<Orders />} />
           <Route path="/tables" element={<Tables />} />
           <Route path="/reviews" element={<Reviews />} />
+          <Route path="/website" element={<Website />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/settings" element={<Settings />} />
           {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}

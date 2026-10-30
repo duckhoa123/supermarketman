@@ -684,3 +684,46 @@ class ReceivedLine(Base):
     previous_unit_price_cents: Mapped[int | None] = mapped_column(BigInteger)
     price_change_pct: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+# --- Restaurant websites --------------------------------------------------------------------------
+
+
+class Website(TimestampMixin, Base):
+    """A restaurant's public website. The owner edits `draft` (previewed in the app); Publish copies it to
+    `published`, which is what visitors see at /sites/{slug} or the restaurant's own domain. Menu, hours and
+    reviews are read live from the restaurant's data when a page is served, so they never go stale."""
+
+    __tablename__ = "websites"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), unique=True)
+    slug: Mapped[str] = mapped_column(String(60), unique=True)
+    custom_domain: Mapped[str | None] = mapped_column(String(253), unique=True)
+    draft: Mapped[dict] = mapped_column(JSON, default=dict)
+    published: Mapped[dict | None] = mapped_column(JSON)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    published_by: Mapped[str | None] = mapped_column(String(64))
+
+
+class WebsiteVersion(Base):
+    """Every publish is kept, so an earlier version can be restored."""
+
+    __tablename__ = "website_versions"
+    __table_args__ = (Index("ix_website_versions_site_created", "website_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    website_id: Mapped[str] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"))
+    content: Mapped[dict] = mapped_column(JSON)
+    published_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class SiteAsset(Base):
+    """An image uploaded for the website (hero, about, gallery)."""
+
+    __tablename__ = "site_assets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    content_type: Mapped[str] = mapped_column(String(50))
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

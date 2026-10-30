@@ -17,6 +17,7 @@ from app.api import (
     receiving,
     restaurant,
     webhooks,
+    website,
 )
 from app.config import get_settings
 
@@ -43,9 +44,10 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True}
 
-    for module in (account, agents, restaurant, operations, receiving, chat, customer, fleet, integrations, webhooks,
-                   internal):
+    for module in (account, agents, restaurant, operations, receiving, website, chat, customer, fleet, integrations,
+                   webhooks, internal):
         app.include_router(module.router)
+    app.include_router(website.public)  # restaurants' public websites: /sites/{slug} and custom domains
     return app
 
 

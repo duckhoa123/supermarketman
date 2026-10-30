@@ -1,6 +1,31 @@
 import type { AgentKind, Me } from "./api";
 
 const KEY = "pass.agent";
+const PENDING = "pass.fromWebsite";
+
+/** A restaurant website's "Order online" / "Book a table" link: /?order=<id> or /?book=<id>. Kept until used,
+ * so it survives signing in. */
+export function captureWebsiteLink(): void {
+  const params = new URLSearchParams(window.location.search);
+  const order = params.get("order");
+  const book = params.get("book");
+  if (!order && !book) return;
+  try {
+    window.localStorage.setItem(PENDING, JSON.stringify({ restaurant: order || book, book: Boolean(book) }));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function takeWebsiteLink(): { restaurant: string; book: boolean } | null {
+  try {
+    const raw = window.localStorage.getItem(PENDING);
+    window.localStorage.removeItem(PENDING);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function storedMode(): AgentKind | null {
   try {

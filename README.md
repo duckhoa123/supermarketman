@@ -114,6 +114,18 @@ New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" 
 | `OPEN_METEO_API_KEY` | Weather in the sales forecast. Open-Meteo's free API is non-commercial, so production fetches weather only with a paid key. |
 | `STRIPE_SECRET_KEY` | Card payments. Empty means test mode: orders are marked "test" and nothing is charged. Add Stripe's webhook before going live. |
 
+## Restaurant websites
+
+Each restaurant can build its own site under **Website** in the app.
+
+- **Five templates** (Bistro, Street, Minimal, Night, Garden), each with its own colours, fonts and layout. Switching templates keeps the words and photos; colours and the two fonts can be changed after.
+- **Sections** (big welcome, announcement bar, our story, menu, gallery, reviews, hours and location, order or book) can be reordered, hidden or removed. "Write it for me" drafts the tagline and story from the restaurant's own data.
+- **Draft and publish.** Every edit saves to a draft that only the restaurant's team sees in the preview (desktop or phone). **Publish** makes it live; **Discard changes** goes back to what's live. The last 30 published versions can be restored.
+- **Always current.** Menu, prices, hours and reviews are read live, so a price change in the POS shows on the site within a minute without republishing.
+- **Safe by design.** Owners never enter HTML or CSS: the server builds the page from checked content and escapes everything.
+
+Live sites are served by `api` at `https://<api address>/sites/<web address>`. To use the restaurant's own domain (e.g. `www.demobistro.ca`), enter it in Website → Settings, add a CNAME record at the domain registrar pointing to the `api` address, and add the same domain on the `api` service in Railway (Settings → Networking → Custom domain). The site's buttons open ordering and bookings in the web app (`WEB_APP_URL`), so set that on `api`.
+
 ## Main API routes
 
 | Route | Purpose |
@@ -132,6 +144,8 @@ New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" 
 | `GET /me/alerts` | Personal notifications (order, booking and job updates) |
 | `POST /locations/{id}/invoices` (photo or PDF), `GET/PUT /invoices/{scan}`, `/invoices/{scan}/confirm` | Scan, check and confirm a delivery invoice |
 | `GET /locations/{id}/receiving-log` (`?format=csv`), `/price-changes`, `/price-history` | Receiving log sheet and supplier price tracking |
+| `/locations/{id}/website` (`/draft`, `/template`, `/preview`, `/publish`, `/discard`, `/versions`, `/settings`, `/images`, `/write-copy`) | Website editor |
+| `GET /sites/{slug}` | A restaurant's live website |
 | `GET /locations/{id}/inventory`, `/orders`, `/tables`, `/reviews`, `/alerts` | Data screens |
 | `POST /locations/{id}/reviews/{rid}/reply` | Post an owner reply to Google |
 | `GET /locations/{id}/integrations/{provider}/connect` | Start Clover/Google OAuth |

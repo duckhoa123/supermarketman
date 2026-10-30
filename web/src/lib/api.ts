@@ -518,3 +518,30 @@ export async function fetchBlob(path: string): Promise<Blob> {
   if (!res.ok) throw new ApiError(res.status, res.status === 410 ? "The image is no longer stored." : `Request failed (${res.status})`);
   return res.blob();
 }
+
+// --- Website builder -----------------------------------------------------------------------------
+
+export type SiteSection = { id: string; type: string; visible: boolean; props: Record<string, unknown> };
+export type SiteContent = {
+  template: string;
+  theme: { accent: string; background: string; text: string; heading_font: string; body_font: string };
+  seo: { title: string; description: string };
+  links: { instagram: string; facebook: string; tiktok: string };
+  sections: SiteSection[];
+};
+export type SiteState = {
+  id: string;
+  slug: string;
+  custom_domain: string | null;
+  url: string;
+  draft: SiteContent;
+  is_published: boolean;
+  has_unpublished_changes: boolean;
+  published_at: string | null;
+};
+export type SiteEditor = SiteState & {
+  templates: { id: string; label: string; description: string; theme: SiteContent["theme"] }[];
+  sections: { type: string; label: string }[];
+  fonts: string[];
+  images: { id: string; url: string }[];
+};

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useApi } from "../../hooks";
 import { api, type Menu, type Quote, type RestaurantHit } from "../../lib/api";
 
@@ -13,7 +14,9 @@ export default function Discover() {
   const results = useApi<{ count: number; restaurants: RestaurantHit[] }>(
     `/customer/restaurants?radius_km=8&fulfilment=${fulfilment}&open_now=${openNow}${query ? `&q=${encodeURIComponent(query)}` : ""}`
   );
-  const [restaurant, setRestaurant] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const [restaurant, setRestaurant] = useState<string | null>(params.get("restaurant"));
+  const [booking, setBooking] = useState(params.get("book") === "1");
   const menu = useApi<Menu>(restaurant ? `/customer/restaurants/${restaurant}/menu` : null);
   const [cart, setCart] = useState<Cart>({});
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -108,7 +111,11 @@ export default function Discover() {
               </section>
             ))}
           </div>
-          <section className="panel stack" style={{ alignSelf: "start", position: "sticky", top: 16 }}>
+          <section className="stack" style={{ alignSelf: "start", position: "sticky", top: 16, gap: 16 }}>
+            {r.bookings && (booking ? <BookingForm restaurantId={r.id} name={r.name} onClose={() => setBooking(false)} /> : (
+              <button className="btn" onClick={() => setBooking(true)}>Book a table</button>
+            ))}
+            <div className="panel stack">
             <h2>Your order</h2>
             <div className="seg">
               {(["pickup", "delivery"] as const)
@@ -146,6 +153,7 @@ export default function Discover() {
                 <button className="btn" onClick={() => void price()}>See total</button>
               ))}
             {message && <p className="small">{message}</p>}
+            </div>
           </section>
         </div>
       </>
@@ -197,5 +205,49 @@ export default function Discover() {
         ))}
       </div>
     </>
+  );
+}
+
+/** Request a table. The restaurant confirms it, and the customer gets a notification. */
+function BookingForm({ restaurantId, name, onClose }: { restaurantId: string; name: string; onClose: () => void }) {
+  const tomorrow = new Date(Date.now() + 86_400_000).toLocaleDateString("en-CA");
+  const [day, setDay] = useState(tomorrow);
+  const [time, setTime] = useState("19:00");
+  const [party, setParty] = useState(2);
+  const [notes, setNotes] = useState("");
+  const [message, setMessage] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setMessage("");
+    try {
+      await api("/customer/bookings", {
+        method: "POST",
+        body: { restaurant_id: restaurantId, party_size: party, starts_at: new Date(`${day}T${time}:00`).toISOString(), notes: notes || undefined },
+      });
+      setDone(true);
+      setMessage(`Requested. ${name} will confirm, and you'll get a notification.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Couldn't book.");
+    }
+  }
+
+  return (
+    <form className="panel stack" onSubmit={submit}>
+      <div className="spread"><h2>Book a table</h2><button type="button" className="icon-btn" onClick={onClose} aria-label="Close">✕</button></div>
+      {!done && (
+        <>
+          <div className="row">
+            <input className="input" style={{ flex: 1 }} type="date" value={day} min={new Date().toLocaleDateString("en-CA")} onChange={(e) => setDay(e.target.value)} aria-label="Date" />
+            <input className="input" style={{ width: 120 }} type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" />
+            <input className="input" style={{ width: 80 }} type="number" min={1} max={20} value={party} onChange={(e) => setParty(Number(e.target.value))} aria-label="People" />
+          </div>
+          <input className="input" placeholder="Anything we should know? (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <button className="btn primary">Request table for {party}</button>
+        </>
+      )}
+      {message && <p className="small">{message}</p>}
+    </form>
   );
 }
