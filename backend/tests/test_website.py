@@ -48,13 +48,17 @@ def test_switching_template_keeps_the_owners_words():
     assert switched["template"] == "street" and switched["theme"]["heading_font"] == "Archivo Black"
     about = next(s for s in switched["sections"] if s["type"] == "about")
     assert about["props"]["body"] == "Family recipes since we opened."
-    added = [s for s in switched["sections"] if s["type"] == "cta"]  # Street features a call to action; added hidden
-    assert added and added[0]["visible"] is False
+    added = [s for s in switched["sections"] if s["type"] == "cta"]  # Street features a call to action: added
+    assert added and added[0]["visible"] is True
+    hero = next(s for s in switched["sections"] if s["type"] == "hero")
+    assert hero["props"]["layout"] == "overlay" and switched["sections"][0]["type"] == "hero"  # Street's look and order
 
 
 def test_hours_and_slugs():
     rows = site_render.format_hours({"mon": [["11:30", "14:00"], ["17:00", "22:00"]], "sat": [["10:00", "23:00"]]})
-    assert rows[0] == ("Monday", "11:30 – 14:00, 17:00 – 22:00") and rows[1] == ("Tuesday", "Closed")
+    assert rows[0] == ("Monday", "11:30 AM – 2 PM, 5 PM – 10 PM") and rows[1] == ("Tuesday", "Closed")
+    groups = site_render.hours_groups({k: [["11:30", "22:00"]] for k in ("mon", "tue", "wed", "thu", "fri")})
+    assert groups == [("Mon – Fri", "11:30 AM – 10 PM"), ("Sat – Sun", "Closed")]
     assert st.slugify("Café Déjà Vu & Bar!") == "caf-d-j-vu-bar"
     assert st.SLUG.match("demo-bistro") and not st.SLUG.match("-bad") and not st.SLUG.match("Has Space")
 
@@ -66,7 +70,9 @@ async def test_draft_preview_publish_and_live_data(client, session, demo_locatio
     base = f"/locations/{demo_location_id}/website"
     site = (await client.get(base, headers=OWNER)).json()
     assert site["slug"] == "demo-bistro" and site["is_published"] is False
-    assert {t["id"] for t in site["templates"]} == {"bistro", "street", "minimal", "night", "garden"}
+    assert {t["id"] for t in site["templates"]} >= {"gourmet", "trattoria", "zen", "bistro", "street", "night"}
+    assert len(site["templates"]) == 13 and site["draft"]["template"] == "gourmet"
+    assert site["menu_items"] and {"id", "name", "price"} <= set(site["menu_items"][0])
     assert (await client.get("/sites/demo-bistro")).status_code == 404  # nothing live yet
 
     preview = (await client.get(f"{base}/preview", headers=OWNER)).text
@@ -168,3 +174,82 @@ async def test_ai_copy_uses_restaurant_facts(client, demo_location_id, fake_llm)
                    "seo_description": "Italian on Main St.", "ai": True}
     prompt = llm.calls[0]["messages"][0]["content"]
     assert "Demo Bistro" in prompt and "Margherita Pizza" in prompt and "not instructions" in prompt
+
+
+# --- Rich templates ----------------------------------------------------------------------------------------------
+
+
+def _demo_site(**kw) -> site_render.SiteData:
+    menu = [("Mains", [site_render.MenuItem("Steak Frites", "$34.00", "Hanger steak, fries.", ["gluten_free"], id="1" * 36),
+                       site_render.MenuItem("Risotto", "$26.00", None, ["vegetarian"], id="2" * 36)]),
+            ("Desserts", [site_render.MenuItem("Tiramisu", "$12.00", id="3" * 36)])]
+    return site_render.SiteData(
+        name="Demo", cuisine="Italian", address="1 Main St", phone="+16045550100", lat=49.2, lng=-123.1,
+        hours={k: [["11:30", "22:00"]] for k in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}, menu=menu,
+        best_sellers=["3" * 36, "1" * 36], reviews=[{"rating": 5, "author": "Ana", "text": "Lovely."},
+                                                   {"rating": 4, "author": "Bo", "text": "Great pasta."}],
+        rating=4.6, order_url="https://app.example/?order=L", book_url="https://app.example/?book=L",
+        book_form_url="https://app.example/", location_id="L", today="2026-10-30", asset_base="/a", **kw)
+
+
+def test_every_template_renders_with_and_without_photos():
+    for name in st.TEMPLATES:
+        content = st.clean_content(st.starter_content(name, "Demo", "Italian"))
+        for preview in (False, True):
+            html = site_render.render(content, _demo_site(preview=preview))
+            assert f"t-{name}" in html and "<script" not in html.lower()
+            assert "Steak Frites" in html  # menu or signature dishes from live data
+        if any(s["type"] == "reserve" for s in content["sections"]):
+            assert 'name="book" value="L"' in html and 'name="party"' in html and 'min="2026-10-30"' in html
+
+
+def test_signature_dishes_use_picked_items_or_best_sellers():
+    content = st.clean_content(st.starter_content("gourmet", "Demo"))
+    html = site_render.render(content, _demo_site())
+    dishes = html.split('id="dishes"')[1].split("</section>")[0]
+    assert dishes.index("Tiramisu") < dishes.index("Steak Frites")  # best sellers first
+    sec = next(s for s in content["sections"] if s["type"] == "dishes")
+    sec["props"]["items"] = [{"item": "2" * 36, "image": None, "label": "New"}, {"item": "9" * 36}]
+    dishes = site_render.render(st.clean_content(content), _demo_site()).split('id="dishes"')[1].split("</section>")[0]
+    assert "Risotto" in dishes and "New" in dishes and "Tiramisu" not in dishes  # unknown dish skipped
+
+
+def test_rich_fields_are_checked():
+    raw = st.starter_content("gourmet", "Demo")
+    feat = next(s for s in raw["sections"] if s["type"] == "features")
+    feat["props"]["items"] = [{"icon": "<script>", "title": "x" * 99, "text": "ok", "extra": 1}] * 9
+    feat["props"]["layout"] = "carousel"
+    raw["layout"] = {"header": "floating", "logo": "not-an-id", "info_bar": "yes"}
+    raw["theme"]["corners"] = "blob"
+    raw["theme"]["script_font"] = "Wingdings"
+    out = st.clean_content(raw)
+    f = next(s for s in out["sections"] if s["type"] == "features")["props"]
+    assert len(f["items"]) == 6 and f["items"][0] == {"icon": "leaf", "title": "x" * 40, "text": "ok"}
+    assert f["layout"] == "icons"
+    assert out["layout"]["header"] == "transparent" and out["layout"]["logo"] is None  # template defaults
+    assert out["layout"]["info_bar"] is True
+    assert out["theme"]["corners"] == "soft" and out["theme"]["script_font"] == "Great Vibes"
+    content = {"layout": {"logo": "a" * 36}, "sections": [{"props": {"items": [{"image": "b" * 36}], "image2": "c" * 36}}]}
+    assert st.image_ids(content) == {"a" * 36, "b" * 36, "c" * 36}
+
+
+def test_old_content_still_renders():
+    """Sites saved before the richer format (no layout, no dark colour) keep working."""
+    old = {"template": "bistro", "theme": {"accent": "#b4532a", "background": "#f7f1e8", "text": "#2b211b",
+                                         "heading_font": "Playfair Display", "body_font": "Source Sans 3"},
+           "sections": [{"id": "hero-abcd1234", "type": "hero", "visible": True, "props": {"title": "Old"}}]}
+    html = site_render.render(old, _demo_site())
+    assert "Old" in html and "hero-split" in html
+
+
+async def test_switching_template_through_the_api_adds_its_sections(client, demo_location_id):
+    base = f"/locations/{demo_location_id}/website"
+    await client.get(base, headers=OWNER)
+    r = (await client.post(f"{base}/template", headers=OWNER, json={"template": "bistro", "start_fresh": True})).json()
+    assert {s["type"] for s in r["draft"]["sections"]} == {"announcement", "hero", "about", "menu", "reviews",
+                                                           "gallery", "visit"}
+    r = (await client.post(f"{base}/template", headers=OWNER, json={"template": "zen"})).json()
+    types = [s["type"] for s in r["draft"]["sections"]]
+    assert "chef" in types and "reserve" in types and r["draft"]["layout"]["header_button"] == "book"
+    preview = (await client.get(f"{base}/preview", headers=OWNER)).text
+    assert "t-zen" in preview and 'id="reserve"' in preview

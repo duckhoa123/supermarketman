@@ -3,6 +3,8 @@
 import json
 import logging
 import re
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,7 @@ from app.config import get_settings
 from app.models import Item, ItemSalesDaily, Location, Review, SiteAsset, Website, WebsiteVersion, utcnow
 from app.money import fmt_money
 from app.services import site_render, site_templates as st
+from app.services.site_icons import ICONS
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +39,7 @@ async def get_or_create(session: AsyncSession, location: Location) -> Website:
     site = await session.scalar(select(Website).where(Website.location_id == location.id))
     if site is None:
         site = Website(location_id=location.id, slug=await unique_slug(session, st.slugify(location.name)),
-                       draft=st.starter_content("bistro", location.name, location.cuisine), published=None)
+                       draft=st.starter_content("gourmet", location.name, location.cuisine), published=None)
         session.add(site)
         await session.commit()
     return site
@@ -57,12 +60,23 @@ def site_out(site: Website) -> dict:
     }
 
 
+def _fields(spec: dict) -> list[dict]:
+    return [{"name": k, **{kk: (_fields(vv) if kk == "fields" else vv) for kk, vv in f.items()}} for k, f in spec.items()]
+
+
 def catalog() -> dict:
+    """Everything the editor needs to draw its forms: templates, section fields, fonts and icons."""
     return {
-        "templates": [{"id": k, "label": v["label"], "description": v["description"], "theme": v["theme"]}
+        "templates": [{"id": k, "label": v["label"], "description": v["description"], "group": v["group"],
+                       "best_for": v["best_for"], "theme": v["theme"], "layout": v["layout"]}
                       for k, v in st.TEMPLATES.items()],
-        "sections": [{"type": k, "label": st.SECTION_LABELS[k]} for k in st.SECTION_TYPES],
-        "fonts": list(st.FONTS),
+        "sections": [{"type": k, "label": v["label"], "icon": v["icon"], "help": v.get("help", ""),
+                      "ai": v.get("ai", False), "fields": _fields(v["fields"])} for k, v in st.SECTIONS.items()],
+        "layout_fields": _fields(st.LAYOUT_FIELDS),
+        "theme_fields": _fields(st.THEME_FIELDS),
+        "fonts": [f for f in st.FONTS if f not in st.SCRIPT_FONTS],
+        "script_fonts": st.SCRIPT_FONTS,
+        "icons": [{"key": k, "label": label, "paths": paths} for k, (label, paths) in ICONS.items()],
     }
 
 
@@ -119,6 +133,21 @@ async def update_settings(session: AsyncSession, site: Website, slug: str | None
     return site
 
 
+def _tz(name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or "America/Vancouver")
+    except Exception:  # noqa: BLE001 - unknown zone name: fall back to the first city's
+        return ZoneInfo("America/Vancouver")
+
+
+async def menu_choices(session: AsyncSession, location: Location) -> list[dict]:
+    """Dishes the owner can feature on the site."""
+    items = await session.scalars(select(Item).where(Item.location_id == location.id, Item.active.is_(True),
+                                                     Item.orderable.is_(True)).order_by(Item.category, Item.name))
+    return [{"id": it.id, "name": it.name, "category": it.category or "Menu",
+             "price": fmt_money(it.price_cents, location.currency)} for it in items]
+
+
 # --- Live data for rendering ------------------------------------------------------------------------------------
 
 
@@ -133,8 +162,15 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
     for it in items:
         menu.setdefault(it.category or "Menu", []).append(site_render.MenuItem(
             name=it.name, price=fmt_money(it.price_cents, location.currency), description=it.description,
-            tags=list(it.tags or [])))
+            tags=list(it.tags or []), id=it.id))
     ordered = sorted(menu.items(), key=lambda kv: -(popularity.get(kv[0]) or 0))
+    # Best sellers over the last 90 days, for "Signature dishes" until the owner picks their own.
+    since = date.today() - timedelta(days=90)
+    top_names = [n for n, in await session.execute(
+        select(ItemSalesDaily.name).where(ItemSalesDaily.location_id == location.id, ItemSalesDaily.day >= since)
+        .group_by(ItemSalesDaily.name).order_by(func.sum(ItemSalesDaily.qty).desc()).limit(12))]
+    by_name = {it.name: it.id for it in items}
+    best = [by_name[n] for n in top_names if n in by_name] or [it.id for it in items[:4]]
     reviews = list(await session.scalars(select(Review).where(Review.location_id == location.id)
                                          .order_by(Review.posted_at.desc()).limit(40)))
     avg = await session.scalar(select(func.avg(Review.rating)).where(Review.location_id == location.id))
@@ -145,8 +181,11 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         lat=location.lat, lng=location.lng, hours=location.opening_hours or {}, menu=ordered,
         reviews=[{"rating": r.rating, "author": r.author, "text": r.text} for r in reviews],
         rating=round(float(avg), 1) if avg is not None else None,
+        best_sellers=best,
         order_url=f"{web}/?order={location.id}" if location.listed and location.accepts_orders else None,
         book_url=f"{web}/?book={location.id}" if location.listed and location.accepts_bookings else None,
+        book_form_url=f"{web}/" if location.listed and location.accepts_bookings else None,
+        location_id=location.id, today=datetime.now(_tz(location.timezone)).date().isoformat(),
         asset_base=f"{base}/sites/{site.slug}/assets", preview=preview,
     )
 

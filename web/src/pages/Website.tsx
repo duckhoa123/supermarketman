@@ -1,15 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SectionEditor from "../components/site/SectionEditor";
+import { defaults, type FieldContext, FieldList } from "../components/site/SiteFields";
 import { useApp } from "../context";
-import { api, fetchBlob, type SiteContent, type SiteEditor, type SiteSection } from "../lib/api";
+import { api, fetchBlob, type SiteContent, type SiteEditor, type SiteSection, type SiteTemplate } from "../lib/api";
 import { timeAgo } from "../lib/format";
 
 type Tab = "design" | "sections" | "settings";
+const DESKTOP_WIDTH = 1280;
 type Version = { id: string; created_at: string; template: string; live: boolean };
 
-const SECTION_ICONS: Record<string, string> = {
-  hero: "★", announcement: "📣", about: "📖", menu: "🍽", gallery: "🖼", reviews: "💬", visit: "📍", cta: "👉",
-};
+/** Loads every template font once, so the template cards show their real type. */
+function useTemplateFonts(fonts: string[]) {
+  useEffect(() => {
+    if (!fonts.length || document.getElementById("site-fonts")) return;
+    const link = document.createElement("link");
+    link.id = "site-fonts";
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?${fonts.map((f) => `family=${f.replace(/ /g, "+")}`).join("&")}&display=swap`;
+    document.head.appendChild(link);
+  }, [fonts]);
+}
+
+function TemplateCard({ t, on, onPick }: { t: SiteTemplate; on: boolean; onPick: () => void }) {
+  const th = t.theme;
+  return (
+    <button className={`template-card ${on ? "on" : ""}`} onClick={onPick} aria-pressed={on}>
+      <span className="template-swatch" style={{ background: t.layout.header === "transparent" || t.group === "photo" ? th.dark : th.background, color: t.group === "photo" ? "#fff" : th.text }}>
+        <span className="tpl-script" style={{ fontFamily: `'${th.script_font}', cursive`, color: th.accent }}>Welcome</span>
+        <span className="tpl-head" style={{ fontFamily: `'${th.heading_font}', serif` }}>Aa</span>
+        <span className="tpl-dots">
+          {[th.background, th.accent, th.dark].map((c, i) => <i key={i} style={{ background: c }} />)}
+        </span>
+      </span>
+      <strong>{t.label}</strong>
+      <span className="small muted">{t.best_for}</span>
+    </button>
+  );
+}
 
 /** Build and maintain the restaurant's website: edit a draft with a live preview, then publish. */
 export default function Website() {
@@ -25,7 +52,10 @@ export default function Website() {
   const [message, setMessage] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
+  const [showAllTemplates, setShowAllTemplates] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [boxSize, setBoxSize] = useState({ w: 0, h: 0 });
   const scroll = useRef(0);
   const timer = useRef<number | null>(null);
 
@@ -47,6 +77,22 @@ export default function Website() {
     void api<{ items: { category: string | null }[] }>(`/locations/${location.id}/inventory`).then((r) =>
       setCategories(Array.from(new Set(r.items.map((i) => i.category).filter(Boolean) as string[])).sort()));
   }, [load, location.id]);
+
+  // The desktop preview is drawn at a real laptop width and scaled down to fit.
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      setBoxSize({ w: Math.min(w, DESKTOP_WIDTH), h });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [site !== null]);
 
   // Save the draft shortly after each change, then refresh the preview.
   function change(next: SiteContent) {
@@ -80,6 +126,7 @@ export default function Website() {
     }
   }
 
+  useTemplateFonts(site ? [...site.fonts, ...site.script_fonts] : []);
   if (!site || !draft) return <p className="muted">Loading…</p>;
 
   const setSection = (id: string, patch: Partial<SiteSection>) =>
@@ -94,7 +141,8 @@ export default function Website() {
   const addSection = (type: string) => {
     if (!type) return;
     const id = `${type}-${Math.random().toString(16).slice(2, 10)}`;
-    change({ ...draft, sections: [...draft.sections, { id, type, visible: true, props: {} }] });
+    const spec = site.sections.find((x) => x.type === type);
+    change({ ...draft, sections: [...draft.sections, { id, type, visible: true, props: spec ? defaults(spec.fields) : {} }] });
     setOpen(id);
   };
   const applyCopy = (c: { tagline: string; about: string; seo_description: string }) =>
@@ -106,7 +154,13 @@ export default function Website() {
           : s.type === "about" ? { ...s, props: { ...s.props, body: c.about } } : s),
     });
   const onUploaded = (img: { id: string; url: string }) => setSite((s) => (s ? { ...s, images: [img, ...s.images] } : s));
-  const label = (type: string) => site.sections.find((x) => x.type === type)?.label ?? type;
+  const spec = (type: string) => site.sections.find((x) => x.type === type);
+  const label = (type: string) => spec(type)?.label ?? type;
+  const fieldCtx: FieldContext = {
+    images: site.images, uploadPath: `${base}/images`, onUploaded, categories, menuItems: site.menu_items, icons: site.icons,
+  };
+  const current = site.templates.find((t) => t.id === draft.template);
+  const setTheme = (patch: Partial<SiteContent["theme"]>) => change({ ...draft, theme: { ...draft.theme, ...patch } });
   const status = !site.is_published ? ["Not published yet", "warn"] : site.has_unpublished_changes ? ["Unpublished changes", "warn"] : ["Live", "good"];
 
   return (
@@ -146,39 +200,54 @@ export default function Website() {
           {tab === "design" && (
             <div className="stack">
               <h3>Template</h3>
-              <div className="template-grid">
-                {site.templates.map((t) => (
-                  <button key={t.id} className={`template-card ${draft.template === t.id ? "on" : ""}`}
-                    onClick={() => draft.template !== t.id && void action("/template", { template: t.id })}>
-                    <span className="template-swatch" style={{ background: t.theme.background, color: t.theme.text, borderColor: t.theme.accent }}>
-                      <span style={{ fontFamily: `'${t.theme.heading_font}', serif`, fontWeight: 700 }}>Aa</span>
-                      <span className="dot" style={{ background: t.theme.accent }} />
-                    </span>
-                    <strong>{t.label}</strong>
-                    <span className="small muted">{t.description}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="small muted">Switching template keeps your words and photos. To start over with a template's sample page,{" "}
+              <p className="small muted">
+                Switching template changes the look and adds that template's sections. Your words and photos stay.
+              </p>
+              {(["photo", "simple"] as const).map((g) => (
+                (g === "photo" || showAllTemplates) && (
+                  <div key={g} className="stack" style={{ gap: 6 }}>
+                    <span className="small strong">{g === "photo" ? "Photo-led" : "Simple"}</span>
+                    <div className="template-grid">
+                      {site.templates.filter((t) => t.group === g).map((t) => (
+                        <TemplateCard key={t.id} t={t} on={draft.template === t.id}
+                          onPick={() => draft.template !== t.id && void action("/template", { template: t.id })} />
+                      ))}
+                    </div>
+                  </div>
+                )
+              ))}
+              <button className="linkish small" style={{ alignSelf: "start" }} onClick={() => setShowAllTemplates(!showAllTemplates)}>
+                {showAllTemplates ? "Hide simple templates" : "Show simple templates"}
+              </button>
+              {current && <p className="small muted">{current.description}</p>}
+              <p className="small muted">To start over with this template's sample page,{" "}
                 <button className="linkish" onClick={() => window.confirm("Replace your page with this template's starter page?") && void action("/template", { template: draft.template, start_fresh: true })}>reset to its starter page</button>.
               </p>
-              <h3>Colours and fonts</h3>
-              <div className="row">
-                {([["accent", "Accent"], ["background", "Background"], ["text", "Text"]] as const).map(([k, l]) => (
+
+              <h3>Colours</h3>
+              <div className="color-row">
+                {([["accent", "Accent"], ["background", "Background"], ["text", "Text"], ["dark", "Dark bands"]] as const).map(([k, l]) => (
                   <label key={k} className="stack color-field" style={{ gap: 4 }}>
                     <span className="small">{l}</span>
-                    <input type="color" value={draft.theme[k]} onChange={(e) => change({ ...draft, theme: { ...draft.theme, [k]: e.target.value } })} />
+                    <input type="color" value={draft.theme[k]} onChange={(e) => setTheme({ [k]: e.target.value })} />
                   </label>
                 ))}
               </div>
-              {([["heading_font", "Headings"], ["body_font", "Text"]] as const).map(([k, l]) => (
+              <h3>Fonts</h3>
+              {([["heading_font", "Headings", site.fonts], ["body_font", "Text", site.fonts], ["script_font", "Handwritten touches", site.script_fonts]] as const).map(([k, l, list]) => (
                 <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="small">{l} font</span>
-                  <select className="select" value={draft.theme[k]} onChange={(e) => change({ ...draft, theme: { ...draft.theme, [k]: e.target.value } })}>
-                    {site.fonts.map((f) => <option key={f}>{f}</option>)}
+                  <span className="small">{l}</span>
+                  <select className="select" style={{ fontFamily: `'${draft.theme[k]}'` }} value={draft.theme[k]} onChange={(e) => setTheme({ [k]: e.target.value })}>
+                    {list.map((f) => <option key={f} style={{ fontFamily: `'${f}'` }}>{f}</option>)}
                   </select>
                 </label>
               ))}
+              <FieldList fields={site.theme_fields} values={draft.theme as unknown as Record<string, unknown>} ctx={fieldCtx}
+                onChange={(v) => setTheme(v as Partial<SiteContent["theme"]>)} />
+
+              <h3>Header and footer</h3>
+              <FieldList fields={site.layout_fields} values={draft.layout} ctx={fieldCtx}
+                onChange={(v) => change({ ...draft, layout: v })} />
             </div>
           )}
 
@@ -189,7 +258,7 @@ export default function Website() {
                 <div key={s.id} className={`section-row ${s.visible ? "" : "hidden-section"}`}>
                   <div className="section-head">
                     <button className="section-title" onClick={() => setOpen(open === s.id ? null : s.id)} aria-expanded={open === s.id}>
-                      <span aria-hidden>{SECTION_ICONS[s.type]}</span> {label(s.type)}
+                      <span aria-hidden>{spec(s.type)?.icon}</span> {label(s.type)}
                     </button>
                     <button className="icon-btn" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
                     <button className="icon-btn" title="Move down" aria-label="Move down" disabled={i === draft.sections.length - 1} onClick={() => move(i, 1)}>↓</button>
@@ -199,8 +268,8 @@ export default function Website() {
                   </div>
                   {open === s.id && (
                     <div className="section-body">
-                      <SectionEditor section={s} onChange={(props) => setSection(s.id, { props })} images={site.images}
-                        uploadPath={`${base}/images`} onUploaded={onUploaded} categories={categories} locationId={location.id} onCopy={applyCopy} />
+                      <SectionEditor section={s} spec={spec(s.type)} onChange={(props) => setSection(s.id, { props })}
+                        ctx={fieldCtx} locationId={location.id} onCopy={applyCopy} />
                       <button className="btn small danger" style={{ marginTop: 12 }}
                         onClick={() => change({ ...draft, sections: draft.sections.filter((x) => x.id !== s.id) })}>Remove section</button>
                     </div>
@@ -209,7 +278,7 @@ export default function Website() {
               ))}
               <select className="select" value="" onChange={(e) => addSection(e.target.value)} aria-label="Add a section">
                 <option value="">+ Add a section…</option>
-                {site.sections.map((s) => <option key={s.type} value={s.type}>{s.label}</option>)}
+                {site.sections.map((s) => <option key={s.type} value={s.type}>{s.icon} {s.label}</option>)}
               </select>
             </div>
           )}
@@ -225,8 +294,12 @@ export default function Website() {
             </div>
             <span className="small muted">Preview of your draft</span>
           </div>
-          <div className={`preview-frame ${device}`}>
+          <div ref={box} className={`preview-frame ${device}`}>
             <iframe ref={frame} title="Website preview" srcDoc={html} sandbox="allow-same-origin"
+              style={device === "desktop" && boxSize.w ? {
+                width: DESKTOP_WIDTH, height: boxSize.h / (boxSize.w / DESKTOP_WIDTH), maxWidth: "none", flexShrink: 0,
+                transform: `scale(${boxSize.w / DESKTOP_WIDTH})`, transformOrigin: "0 0",
+              } : undefined}
               onLoad={() => frame.current?.contentWindow?.scrollTo(0, scroll.current)} />
           </div>
         </section>

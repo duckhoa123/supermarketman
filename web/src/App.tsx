@@ -72,7 +72,12 @@ export default function App() {
         // Came from a restaurant's website: open that restaurant in the customer app.
         storeMode("customer");
         setModeState("customer");
-        navigate(`/?restaurant=${encodeURIComponent(fromSite.restaurant)}${fromSite.book ? "&book=1" : ""}`, { replace: true });
+        const q = new URLSearchParams({ restaurant: fromSite.restaurant });
+        if (fromSite.book) q.set("book", "1");
+        if (fromSite.date) q.set("date", fromSite.date);
+        if (fromSite.time) q.set("time", fromSite.time);
+        if (fromSite.party) q.set("party", String(fromSite.party));
+        navigate(`/?${q.toString()}`, { replace: true });
       } else {
         setModeState((current) => (current && data.agents.some((a) => a.agent === current) ? current : initialMode(data)));
       }

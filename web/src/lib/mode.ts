@@ -10,14 +10,22 @@ export function captureWebsiteLink(): void {
   const order = params.get("order");
   const book = params.get("book");
   if (!order && !book) return;
+  // The website's booking form also sends a date, time and party size: keep them only if they look right.
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(params.get("date") ?? "") ? params.get("date") : null;
+  const time = /^\d{2}:\d{2}$/.test(params.get("time") ?? "") ? params.get("time") : null;
+  const party = Number(params.get("party"));
   try {
-    window.localStorage.setItem(PENDING, JSON.stringify({ restaurant: order || book, book: Boolean(book) }));
+    window.localStorage.setItem(PENDING, JSON.stringify({
+      restaurant: order || book, book: Boolean(book), date, time, party: party >= 1 && party <= 20 ? party : null,
+    }));
   } catch {
     /* ignore */
   }
 }
 
-export function takeWebsiteLink(): { restaurant: string; book: boolean } | null {
+export type WebsiteLink = { restaurant: string; book: boolean; date?: string | null; time?: string | null; party?: number | null };
+
+export function takeWebsiteLink(): WebsiteLink | null {
   try {
     const raw = window.localStorage.getItem(PENDING);
     window.localStorage.removeItem(PENDING);

@@ -522,9 +522,14 @@ export async function fetchBlob(path: string): Promise<Blob> {
 // --- Website builder -----------------------------------------------------------------------------
 
 export type SiteSection = { id: string; type: string; visible: boolean; props: Record<string, unknown> };
+export type SiteTheme = {
+  accent: string; background: string; text: string; dark: string;
+  heading_font: string; body_font: string; script_font: string; corners: string; eyebrow: string;
+};
 export type SiteContent = {
   template: string;
-  theme: { accent: string; background: string; text: string; heading_font: string; body_font: string };
+  theme: SiteTheme;
+  layout: Record<string, unknown>;
   seo: { title: string; description: string };
   links: { instagram: string; facebook: string; tiktok: string };
   sections: SiteSection[];
@@ -539,9 +544,33 @@ export type SiteState = {
   has_unpublished_changes: boolean;
   published_at: string | null;
 };
+/** A form field declared by the server (see site_templates.py). */
+export type SiteField = {
+  name: string;
+  kind: "text" | "bool" | "image" | "images" | "choice" | "int" | "icon" | "categories" | "dish" | "items";
+  label: string;
+  default: unknown;
+  limit?: number;
+  long?: boolean;
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  fields?: SiteField[];
+  add_label?: string;
+};
+export type SiteTemplate = {
+  id: string; label: string; description: string; group: "photo" | "simple"; best_for: string;
+  theme: SiteTheme; layout: Record<string, unknown>;
+};
 export type SiteEditor = SiteState & {
-  templates: { id: string; label: string; description: string; theme: SiteContent["theme"] }[];
-  sections: { type: string; label: string }[];
+  templates: SiteTemplate[];
+  sections: { type: string; label: string; icon: string; help: string; ai: boolean; fields: SiteField[] }[];
+  layout_fields: SiteField[];
+  theme_fields: SiteField[];
   fonts: string[];
+  script_fonts: string[];
+  icons: { key: string; label: string; paths: string[] }[];
   images: { id: string; url: string }[];
+  menu_items: { id: string; name: string; category: string; price: string }[];
 };

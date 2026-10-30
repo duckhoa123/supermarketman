@@ -118,11 +118,14 @@ New accounts can click **Explore a demo restaurant first** to get "Demo Bistro" 
 
 Each restaurant can build its own site under **Website** in the app.
 
-- **Five templates** (Bistro, Street, Minimal, Night, Garden), each with its own colours, fonts and layout. Switching templates keeps the words and photos; colours and the two fonts can be changed after.
-- **Sections** (big welcome, announcement bar, our story, menu, gallery, reviews, hours and location, order or book) can be reordered, hidden or removed. "Write it for me" drafts the tagline and story from the restaurant's own data.
+- **13 templates.** Eight photo-led ones (Gourmet, Trattoria, Smokehouse, Zen, Café, Coastal, Spice, Patisserie) and five simple ones (Bistro, Street, Minimal, Night, Garden). Switching template changes colours, fonts, header, footer, section backgrounds and layouts, and adds the template's sections; the owner's words and photos stay.
+- **Make it their own:** four colours (accent, background, text, dark bands), heading, text and handwritten fonts, corner style, header style (solid, dark, or see-through over the welcome photo), a top strip with address/phone/hours, a logo, and a simple or multi-column footer.
+- **13 section types**, each with its own layouts and a background (page, soft tint, dark, accent): big welcome, announcement bar, highlights with icons, our story (two photos, round badge, handwritten line), signature dishes (picked from the menu, or the best sellers by default), menu (columns, tabs or cards), events and occasions, booking form with a reviews slider, meet the chef, gallery (grid, mosaic or strip), reviews (cards or slider), hours and location, and an order-or-book banner. Sections can be reordered, hidden or removed. "Write the words for me" drafts the tagline and story from the restaurant's own data.
+- **Booking form.** Guests pick a date, time and party size on the site and confirm in the web app, which opens with those filled in. It needs bookings turned on (Settings → Customer app); until then the form shows the phone number.
 - **Draft and publish.** Every edit saves to a draft that only the restaurant's team sees in the preview (desktop or phone). **Publish** makes it live; **Discard changes** goes back to what's live. The last 30 published versions can be restored.
 - **Always current.** Menu, prices, hours and reviews are read live, so a price change in the POS shows on the site within a minute without republishing.
-- **Safe by design.** Owners never enter HTML or CSS: the server builds the page from checked content and escapes everything.
+- **Safe by design.** Owners never enter HTML or CSS: the server builds the page from checked content and escapes everything. Pages use no JavaScript (tabs, slider and phone menu are plain CSS).
+- Each section type's fields are declared once in `backend/app/services/site_templates.py`; the same declaration validates saved content and draws the editor's forms. Add a template there and its CSS in `site_render.py`.
 
 Live sites are served by `api` at `https://<api address>/sites/<web address>`. To use the restaurant's own domain (e.g. `www.demobistro.ca`), enter it in Website → Settings, add a CNAME record at the domain registrar pointing to the `api` address, and add the same domain on the `api` service in Railway (Settings → Networking → Custom domain). The site's buttons open ordering and bookings in the web app (`WEB_APP_URL`), so set that on `api`.
 

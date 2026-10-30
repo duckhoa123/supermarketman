@@ -28,6 +28,7 @@ async def get_site(location: Location = Depends(require_location), session: Asyn
     # Image paths are relative to the API address.
     return {**website.site_out(site), **website.catalog(),
             "images": [{"id": i, "url": f"/sites/{site.slug}/assets/{i}"} for i in images],
+            "menu_items": await website.menu_choices(session, location),
             "asset_base": f"/sites/{site.slug}/assets"}
 
 
@@ -58,7 +59,7 @@ async def choose_template(body: TemplateIn, location: Location = Depends(require
     if body.template not in site_templates.TEMPLATES:
         raise HTTPException(422, "Unknown template")
     content = (site_templates.starter_content(body.template, location.name, location.cuisine) if body.start_fresh
-               else site_templates.apply_template(site.draft, body.template))
+               else site_templates.apply_template(site.draft, body.template, location.name, location.cuisine))
     await website.save_draft(session, location, site, content)
     return website.site_out(site)
 

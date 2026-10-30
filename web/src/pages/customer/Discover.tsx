@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../../hooks";
 import { api, type Menu, type Quote, type RestaurantHit } from "../../lib/api";
@@ -17,6 +17,14 @@ export default function Discover() {
   const [params] = useSearchParams();
   const [restaurant, setRestaurant] = useState<string | null>(params.get("restaurant"));
   const [booking, setBooking] = useState(params.get("book") === "1");
+  // A link from a restaurant's website can arrive after this page is already open.
+  useEffect(() => {
+    const linked = params.get("restaurant");
+    if (linked) {
+      setRestaurant(linked);
+      setBooking(params.get("book") === "1");
+    }
+  }, [params]);
   const menu = useApi<Menu>(restaurant ? `/customer/restaurants/${restaurant}/menu` : null);
   const [cart, setCart] = useState<Cart>({});
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -112,7 +120,8 @@ export default function Discover() {
             ))}
           </div>
           <section className="stack" style={{ alignSelf: "start", position: "sticky", top: 16, gap: 16 }}>
-            {r.bookings && (booking ? <BookingForm restaurantId={r.id} name={r.name} onClose={() => setBooking(false)} /> : (
+            {r.bookings && (booking ? <BookingForm restaurantId={r.id} name={r.name} onClose={() => setBooking(false)}
+              initial={{ date: params.get("date"), time: params.get("time"), party: Number(params.get("party")) || null }} /> : (
               <button className="btn" onClick={() => setBooking(true)}>Book a table</button>
             ))}
             <div className="panel stack">
@@ -209,11 +218,15 @@ export default function Discover() {
 }
 
 /** Request a table. The restaurant confirms it, and the customer gets a notification. */
-function BookingForm({ restaurantId, name, onClose }: { restaurantId: string; name: string; onClose: () => void }) {
+function BookingForm({ restaurantId, name, onClose, initial }: {
+  restaurantId: string; name: string; onClose: () => void;
+  initial?: { date: string | null; time: string | null; party: number | null };
+}) {
   const tomorrow = new Date(Date.now() + 86_400_000).toLocaleDateString("en-CA");
-  const [day, setDay] = useState(tomorrow);
-  const [time, setTime] = useState("19:00");
-  const [party, setParty] = useState(2);
+  const today = new Date().toLocaleDateString("en-CA");
+  const [day, setDay] = useState(initial?.date && initial.date >= today ? initial.date : tomorrow);
+  const [time, setTime] = useState(initial?.time || "19:00");
+  const [party, setParty] = useState(initial?.party || 2);
   const [notes, setNotes] = useState("");
   const [message, setMessage] = useState("");
   const [done, setDone] = useState(false);
