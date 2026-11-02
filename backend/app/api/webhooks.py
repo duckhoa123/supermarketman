@@ -30,7 +30,14 @@ async def clover_webhook(request: Request, x_clover_auth: str | None = Header(de
         # logs so you can paste it into the dashboard; nothing else is done with it.
         log.warning("Clover webhook verification code: %s", body["verificationCode"])
         return {"ok": True}
-    if not verify_auth_header(x_clover_auth, get_settings().clover_webhook_auth_code):
+    expected = get_settings().clover_webhook_auth_code
+    if not verify_auth_header(x_clover_auth, expected):
+        # Say what Clover sent (first and last 4 characters only) so it can be matched to the dashboard.
+        got = (x_clover_auth or "").strip()
+        hint = f"{got[:4]}…{got[-4:]} ({len(got)} characters)" if len(got) > 8 else "nothing"
+        log.warning("Clover webhook rejected: X-Clover-Auth was %s; CLOVER_WEBHOOK_AUTH_CODE is %s. "
+                    "Set CLOVER_WEBHOOK_AUTH_CODE on the api service to the matching value from the Clover "
+                    "dashboard.", hint, "set but different" if expected else "not set")
         raise HTTPException(401, "Bad Clover auth code")
     event = WebhookEvent(provider="clover", body=body)
     session.add(event)
