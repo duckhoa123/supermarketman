@@ -94,6 +94,7 @@ class Location(TimestampMixin, Base):
     accepts_orders: Mapped[bool] = mapped_column(Boolean, default=False)
     accepts_delivery: Mapped[bool] = mapped_column(Boolean, default=False)
     accepts_bookings: Mapped[bool] = mapped_column(Boolean, default=False)
+    order_template: Mapped[str | None] = mapped_column(Text)  # message to suppliers; None = the default
     tax_rate_bp: Mapped[int] = mapped_column(Integer, default=500)  # BC restaurant meals: 5% GST
 
     organization: Mapped[Organization] = relationship(back_populates="locations")
@@ -428,6 +429,9 @@ class PurchaseOrder(TimestampMixin, Base):
     approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     send_error: Mapped[str | None] = mapped_column(Text)
+    delivery_date: Mapped[date | None] = mapped_column(Date)
+    message: Mapped[str | None] = mapped_column(Text)  # the exact text sent to the supplier
+    sent_via: Mapped[str | None] = mapped_column(String(16))  # email | sms | manual
 
 
 class StaffShift(TimestampMixin, Base):

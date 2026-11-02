@@ -139,7 +139,7 @@ Live sites are served by `api` at `https://<api address>/sites/<web address>`. T
 | `GET /agents`, `PUT /agents/{agent}/profile` | Avatars: name, icon, colour, tone |
 | `POST /agents/customer/chat`, `POST /agents/driver/chat` | Ask the Customer agent or the Driver Assistant |
 | `GET /locations/{id}/forecast`, `/reports/{day,week,month}`, `/labour`, `/food-cost`, `/marketing` | Forecast and prep list, reports, cost control, marketing facts |
-| `/locations/{id}/suppliers`, `/purchase-orders` (`/draft`, `/{po}/approve`, `/{po}/received`) | Suppliers and orders drafted from low stock |
+| `/locations/{id}/suppliers`, `/purchase-orders` (`/draft`, `/{po}/message`, `/{po}/send`, `/{po}/received`), `/order-template` | Suppliers, orders drafted from low stock, and the message sent to the supplier (by email, text, or by the manager via WhatsApp/their own email) from the restaurant's template |
 | `/locations/{id}/bookings`, `/guests`, `/shifts`, `/profile`, `/app-orders` | Bookings, guest list, staff shifts, public listing, orders from the customer app |
 | `/customer/restaurants`, `/customer/orders` (`/quote`, `/{id}/tip`), `/customer/bookings`, `/customer/nutrition`, `/customer/profile` | Customer app |
 | `/driver/me`, `/driver/shift/{start,end}`, `/driver/location`, `/driver/deliveries/{id}/status`, `/driver/stats` | Driver app |

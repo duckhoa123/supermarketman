@@ -281,6 +281,25 @@ export type PurchaseOrder = {
   created_at: string | null;
   sent_at: string | null;
   send_error: string | null;
+  delivery_date: string | null;
+  message: string | null;
+  sent_via: "email" | "sms" | "manual" | null;
+};
+
+export type OrderMessage = {
+  subject: string;
+  body: string;
+  delivery_date: string;
+  to_email: string | null;
+  to_phone: string | null;
+  ready: { email: boolean; sms: boolean };
+};
+
+export type OrderTemplate = {
+  template: string;
+  default: string;
+  is_default: boolean;
+  placeholders: { key: string; label: string }[];
 };
 
 export type BookingRow = {

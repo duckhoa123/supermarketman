@@ -354,3 +354,18 @@ button.tile:hover { border-color: var(--basil); }
   .preview-frame { height: 640px; }
 }
 .main:has(.site-editor) { max-width: none; }
+
+/* Purchasing: supplier messages */
+.po-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.po-lines li { display: flex; align-items: center; gap: 8px; }
+.po-lines .input { width: 84px; padding: 4px 8px; }
+.po-message { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius-m); padding: 12px; background: var(--page); }
+.po-message .textarea { font: inherit; line-height: 1.5; background: var(--surface); min-height: 240px; }
+.tpl-details > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.tpl-details > summary::-webkit-details-marker { display: none; }
+.tpl-details > summary h2 { margin: 0; }
+.tpl-details[open] > summary { margin-bottom: 10px; }
+.send-yourself { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 10px; font-size: 0.82rem; cursor: pointer; color: var(--ink); }
+.chip:hover { border-color: var(--basil); }

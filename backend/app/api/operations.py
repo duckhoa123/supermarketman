@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthUser, current_user
 from app.db import get_session
-from app.models import Booking, CustomerOrder, Delivery, Guest, Item, Location, PurchaseOrder, StaffShift, Supplier, utcnow
+from app.models import (Booking, CustomerOrder, Delivery, Guest, Item, Location, PurchaseOrder, StaffShift, Supplier,
+                        User, utcnow)
 from app.money import fmt_money
 from app.services import analytics, forecast, guests, marketing, ordering, purchasing, reports
 from app.services.geo import WEEKDAY_KEYS
@@ -238,6 +239,7 @@ class POLine(BaseModel):
 class POPatch(BaseModel):
     lines: list[POLine] | None = None
     note: str | None = Field(default=None, max_length=1000)
+    delivery_date: date | None = None
 
 
 @router.patch("/purchase-orders/{po_id}")
@@ -250,8 +252,63 @@ async def edit_po(po_id: str, body: POPatch, location: Location = Depends(requir
         po.lines = [ln.model_dump() for ln in body.lines]
     if body.note is not None:
         po.note = body.note
+    if body.delivery_date is not None:
+        po.delivery_date = body.delivery_date
     await session.commit()
     return {"ok": True}
+
+
+# Message template for supplier orders ("Hello {supplier}, I want to order: {items} ...").
+
+
+class TemplateIn(BaseModel):
+    template: str = Field(max_length=purchasing.MAX_MESSAGE)  # empty = back to the default
+
+
+@router.get("/order-template")
+async def get_order_template(location: Location = Depends(require_location)):
+    return {"template": purchasing.template_for(location), "default": purchasing.DEFAULT_TEMPLATE,
+            "is_default": location.order_template is None,
+            "placeholders": [{"key": k, "label": label} for k, label in purchasing.PLACEHOLDERS]}
+
+
+@router.put("/order-template")
+async def set_order_template(body: TemplateIn, location: Location = Depends(require_manager),
+                             session: AsyncSession = Depends(get_session)):
+    text = body.template.replace("\r", "").strip()
+    if text and "{items}" not in text:
+        raise HTTPException(422, "Keep {items} in the template so suppliers see what you're ordering")
+    location.order_template = text if text and text != purchasing.DEFAULT_TEMPLATE else None
+    await session.commit()
+    return await get_order_template(location)
+
+
+@router.get("/purchase-orders/{po_id}/message")
+async def po_message(po_id: str, delivery_date: date | None = None, location: Location = Depends(require_location),
+                     user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """The order written out from the template, ready to check, edit and send."""
+    po = await _po(session, location, po_id)
+    supplier = await session.get(Supplier, po.supplier_id) if po.supplier_id else None
+    return purchasing.compose(location, supplier, po, await session.get(User, user.id), delivery_date)
+
+
+class SendIn(BaseModel):
+    channel: str = Field(pattern="^(email|sms|manual)$")
+    message: str | None = Field(default=None, max_length=purchasing.MAX_MESSAGE)
+    delivery_date: date | None = None
+
+
+@router.post("/purchase-orders/{po_id}/send")
+async def send_po(po_id: str, body: SendIn, location: Location = Depends(require_manager),
+                  user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Approve and send: by email or text from the app, or 'manual' once you've sent it yourself."""
+    po = await _po(session, location, po_id)
+    try:
+        await purchasing.send(session, location, po, await session.get(User, user.id), body.channel,
+                              body.message, body.delivery_date)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "status": po.status}
 
 
 class ApproveIn(BaseModel):
