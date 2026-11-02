@@ -434,3 +434,4 @@ button.tile:hover { border-color: var(--basil); }
 }
 .greeter-typing .greeter-bubble { width: auto; }
 .clover-launch { margin-bottom: 16px; border-left: 4px solid var(--basil); }
+.test-token { border: 1px dashed var(--line); border-radius: var(--radius-m); padding: 12px; background: var(--page); }

@@ -57,6 +57,7 @@ export default function Settings() {
   const [params, setParams] = useSearchParams();
   const integrations = useApi<IntegrationRow[]>(`/locations/${location.id}/integrations`);
   const rules = useApi<Rule[]>(`/locations/${location.id}/alert-rules`);
+  const options = useApi<{ clover_test_token: boolean }>("/integrations/options");
   const [phone, setPhone] = useState(me.phone ?? "");
   const [channels, setChannels] = useState(me.channels);
   const [notice, setNotice] = useState("");
@@ -194,6 +195,12 @@ export default function Settings() {
                     )}
                   </div>
                   {row?.last_error && <p className="small error">{row.last_error}</p>}
+                  {p.id === "clover" && (!row || row.status !== "active") && options.data?.clover_test_token && (
+                    <CloverTestToken locationId={location.id} onConnected={(name) => {
+                      setNotice(`Connected to ${name}. The first sync runs in the background.`);
+                      void integrations.reload();
+                    }} />
+                  )}
                   {p.id === "google" && row && !row.external_id && row.choices && row.choices.length > 0 && (
                     <label className="row small">
                       Which business?
@@ -288,5 +295,60 @@ export default function Settings() {
         <RestaurantProfile />
       </div>
     </>
+  );
+}
+
+/** Sandbox only: connect with a merchant test API token instead of Clover's sign-in. */
+function CloverTestToken({ locationId, onConnected }: { locationId: string; onConnected: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [merchant, setMerchant] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api<{ merchant: string }>(`/locations/${locationId}/integrations/clover/test-token`, {
+        method: "POST", body: { merchant_id: merchant.trim(), token: token.trim() },
+      });
+      setToken("");
+      setOpen(false);
+      onConnected(r.merchant);
+    } catch (x) {
+      setError(x instanceof Error ? x.message : "Couldn't connect.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button className="linkish small" style={{ alignSelf: "start" }} onClick={() => setOpen(true)}>
+        Testing with Clover's sandbox? Connect with a test API token instead
+      </button>
+    );
+  }
+  return (
+    <form className="stack test-token" style={{ gap: 8 }} onSubmit={submit}>
+      <p className="small muted">
+        In the test merchant's dashboard, open <strong>Account &amp; Setup → API Tokens</strong>, create a token with
+        Merchant, Inventory, Orders and Employees (read), and copy it. The merchant ID is the 13 characters after
+        <code> /m/ </code> in that dashboard's address. Sandbox only: real restaurants use Connect Clover.
+      </p>
+      <div className="row">
+        <input className="input" style={{ flex: 1, minWidth: 160 }} placeholder="Merchant ID, e.g. PF2YPSMFAZYV1" required
+          value={merchant} onChange={(e) => setMerchant(e.target.value)} autoComplete="off" />
+        <input className="input" style={{ flex: 2, minWidth: 200 }} placeholder="Test API token" required type="password"
+          value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
+      </div>
+      {error && <p className="small error">{error}</p>}
+      <div className="row">
+        <button className="btn small primary" disabled={busy}>{busy ? "Checking with Clover…" : "Connect with token"}</button>
+        <button type="button" className="btn small" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </form>
   );
 }

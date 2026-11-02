@@ -94,6 +94,11 @@ class CloverAdapter:
 
     # --- REST -----------------------------------------------------------------------------------
 
+    async def merchant_name(self, token: str, merchant_id: str) -> str | None:
+        """The merchant's name if this token can read it (None if the merchant doesn't exist for it)."""
+        data = await self._get(token, f"/v3/merchants/{merchant_id}", {})
+        return (data.get("name") or merchant_id) if data else None
+
     async def _get(self, token: str, path: str, params: dict) -> dict:
         url = f"{self.settings.clover_api_base}{path}"
         headers = {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT, "Accept": "application/json"}

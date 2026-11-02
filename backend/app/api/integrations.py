@@ -5,14 +5,14 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthUser, current_user
 from app.config import get_settings
 from app.db import get_session
-from app.integrations.pos.base import POSAuthError
+from app.integrations.pos.base import POSAuthError, TokenSet
 from app.integrations.pos.registry import POS_PROVIDERS, get_adapter
 from app.integrations.reviews.google import get_google_client
 from app.models import Integration, Location
@@ -134,6 +134,55 @@ async def oauth_callback(provider: str, request: Request, session: AsyncSession 
         return RedirectResponse(f"{back}?connected={provider}&error=token")
     await session.commit()
     return RedirectResponse(f"{back}?connected={provider}")
+
+
+# --- Sandbox only: connect with a merchant test API token -----------------------------------------------------
+# Clover recommends merchant test tokens for sandbox testing. They don't expire and need no app install, so they
+# get around sandbox sign-in problems. Real restaurants always connect through OAuth.
+
+
+def clover_sandbox() -> bool:
+    return "sandbox" in get_settings().clover_api_base
+
+
+@router.get("/integrations/options")
+async def integration_options(user: AuthUser = Depends(current_user)):
+    return {"clover_test_token": clover_sandbox()}
+
+
+class TestTokenIn(BaseModel):
+    merchant_id: str = Field(pattern=r"^[A-Za-z0-9]{8,32}$")
+    token: str = Field(min_length=8, max_length=300)
+
+
+@router.post("/locations/{location_id}/integrations/clover/test-token")
+async def clover_test_token(body: TestTokenIn, location: Location = Depends(require_manager),
+                            session: AsyncSession = Depends(get_session)):
+    if not clover_sandbox():
+        raise HTTPException(403, "Test tokens only work with Clover's sandbox. Use Connect Clover instead.")
+    token, merchant = body.token.strip(), body.merchant_id.strip().upper()
+    try:
+        name = await get_adapter("clover").merchant_name(token, merchant)
+    except POSAuthError as exc:
+        raise HTTPException(422, "Clover didn't accept that token. Check you copied all of it, and that it was "
+                                 "made in this merchant's dashboard.") from exc
+    except Exception as exc:  # noqa: BLE001 - network or Clover error
+        raise HTTPException(502, "Couldn't reach Clover's sandbox. Try again in a minute.") from exc
+    if name is None:
+        raise HTTPException(422, "That merchant ID wasn't found for this token. Copy it from the merchant "
+                                 "dashboard's address (the 13 characters after /m/).")
+    clash = await session.scalar(select(Integration).where(
+        Integration.provider == "clover", Integration.external_id == merchant,
+        Integration.location_id != location.id, Integration.status != "disconnected"))
+    if clash:
+        raise HTTPException(409, "That Clover merchant is already connected to another restaurant.")
+    integ = await save_tokens(session, location, "clover", TokenSet(access_token=token, refresh_token=None,
+                                                                    access_expires_at=None, external_id=merchant))
+    integ.refresh_token_enc = None
+    integ.meta = {**(integ.meta or {}), "test_token": True, "merchant_name": name}
+    await enqueue(session, "sync_pos", {"integration_id": integ.id, "full": True}, dedupe_key=f"sync_pos:{integ.id}")
+    await session.commit()
+    return {"ok": True, "merchant": name}
 
 
 class GoogleLocationIn(BaseModel):
