@@ -23,6 +23,31 @@ export function captureWebsiteLink(): void {
   }
 }
 
+const CLOVER = "pass.cloverLaunch";
+
+/** Opened from Clover (via the API's launch path): remember it through sign-in and onboarding. */
+export function captureCloverLaunch(): void {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("clover_launch") !== "1") return;
+  const merchant = params.get("merchant_id") ?? "";
+  try {
+    window.localStorage.setItem(CLOVER, /^[A-Za-z0-9]{1,32}$/.test(merchant) ? merchant : "");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The pending Clover launch (a merchant id, or "" if Clover didn't say), or null if there isn't one. */
+export function pendingCloverLaunch(clear = false): string | null {
+  try {
+    const v = window.localStorage.getItem(CLOVER);
+    if (clear) window.localStorage.removeItem(CLOVER);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 export type WebsiteLink = { restaurant: string; book: boolean; date?: string | null; time?: string | null; party?: number | null };
 
 export function takeWebsiteLink(): WebsiteLink | null {

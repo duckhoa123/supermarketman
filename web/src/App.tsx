@@ -5,7 +5,7 @@ import Shell, { type NavItem } from "./components/Shell";
 import { AppContext, MeContext } from "./context";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
-import { captureWebsiteLink, initialMode, storeMode, takeWebsiteLink } from "./lib/mode";
+import { captureCloverLaunch, captureWebsiteLink, initialMode, pendingCloverLaunch, storeMode, takeWebsiteLink } from "./lib/mode";
 import Agents from "./pages/Agents";
 import Alerts from "./pages/Alerts";
 import AppOrders from "./pages/AppOrders";
@@ -51,6 +51,7 @@ function usePolling(path: string | null, every = 60_000): [number, () => void] {
 }
 
 captureWebsiteLink();
+captureCloverLaunch();
 
 export default function App() {
   const navigate = useNavigate();
@@ -68,7 +69,13 @@ export default function App() {
       const data = await api<Me>("/me");
       setMe(data);
       const fromSite = takeWebsiteLink();
-      if (fromSite) {
+      const fromClover = data.locations.length ? pendingCloverLaunch(true) : null; // after onboarding if needed
+      if (fromClover !== null) {
+        // Opened from Clover: go to Settings to connect it to this restaurant.
+        storeMode("restaurant_manager");
+        setModeState("restaurant_manager");
+        navigate(`/settings?clover_launch=1${fromClover ? `&merchant_id=${encodeURIComponent(fromClover)}` : ""}`, { replace: true });
+      } else if (fromSite) {
         // Came from a restaurant's website: open that restaurant in the customer app.
         storeMode("customer");
         setModeState("customer");

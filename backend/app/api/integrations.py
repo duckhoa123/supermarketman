@@ -1,5 +1,8 @@
 """Connect, list, re-sync and disconnect Clover / Square / Google for a location."""
 
+import re
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -60,6 +63,29 @@ async def connect(provider: str, location: Location = Depends(require_manager), 
         raise HTTPException(501, str(exc)) from exc
 
 
+def clover_launch_redirect(merchant_id: str | None) -> str:
+    """Where to send someone who opened Pass from Clover and isn't linked yet: Settings, to connect it."""
+    merchant = merchant_id if merchant_id and re.fullmatch(r"[A-Za-z0-9]{1,32}", merchant_id) else ""
+    query = {"clover_launch": "1", **({"merchant_id": merchant} if merchant else {})}
+    return f"{get_settings().web_app_url}/settings?{urlencode(query)}"
+
+
+@router.get("/oauth/clover/launch")
+async def clover_launch(request: Request, session: AsyncSession = Depends(get_session)):
+    """Clover's "Alternate Launch Path": Clover sends a merchant here when they open or install the app from
+    Clover. Already linked: open Pass. Not yet: Pass Settings, where a signed-in owner connects it to their
+    restaurant through the normal flow (with our signed state, so we know which restaurant it belongs to)."""
+    q = request.query_params
+    merchant = q.get("merchant_id") or q.get("merchantId")
+    if merchant and re.fullmatch(r"[A-Za-z0-9]{1,32}", merchant):
+        linked = await session.scalar(select(Integration.id).where(
+            Integration.provider == "clover", Integration.external_id == merchant,
+            Integration.status != "disconnected"))
+        if linked:
+            return RedirectResponse(f"{get_settings().web_app_url}/")
+    return RedirectResponse(clover_launch_redirect(merchant))
+
+
 @router.get("/oauth/{provider}/callback")
 async def oauth_callback(provider: str, request: Request, session: AsyncSession = Depends(get_session)):
     """The provider sends the owner's browser here; we store tokens and send them back to the web app."""
@@ -68,6 +94,9 @@ async def oauth_callback(provider: str, request: Request, session: AsyncSession 
     back = f"{s.web_app_url}/settings"
     if "error" in q or "code" not in q:
         return RedirectResponse(f"{back}?connected={provider}&error=cancelled")
+    if provider == "clover" and not q.get("state"):
+        # Started from Clover rather than from Pass: we don't know which restaurant yet, so ask in Settings.
+        return RedirectResponse(clover_launch_redirect(q.get("merchant_id")))
     try:
         st = read_state(s.internal_token, q.get("state", ""), provider=provider)
     except InvalidState:

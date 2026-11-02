@@ -433,3 +433,4 @@ button.tile:hover { border-color: var(--basil); }
   .greeter .greeter-figure img, .greeter-bubble { animation: none !important; transition: none !important; }
 }
 .greeter-typing .greeter-bubble { width: auto; }
+.clover-launch { margin-bottom: 16px; border-left: 4px solid var(--basil); }

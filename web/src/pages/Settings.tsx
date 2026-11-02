@@ -60,6 +60,13 @@ export default function Settings() {
   const [phone, setPhone] = useState(me.phone ?? "");
   const [channels, setChannels] = useState(me.channels);
   const [notice, setNotice] = useState("");
+  const [cloverLaunch, setCloverLaunch] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (params.get("clover_launch") !== "1") return;
+    setCloverLaunch(params.get("merchant_id") ?? "");
+    setParams({}, { replace: true });
+  }, [params, setParams]);
 
   useEffect(() => {
     const connected = params.get("connected");
@@ -119,6 +126,35 @@ export default function Settings() {
         </div>
       </div>
       {notice && <p className="panel" role="status">{notice}</p>}
+      {cloverLaunch !== null && (() => {
+        const linked = integrations.data?.find((i) => i.provider === "clover" && i.status !== "disconnected");
+        return (
+          <section className="panel clover-launch">
+            {linked ? (
+              <>
+                <h2>Clover is connected</h2>
+                <p>{location.name} is already linked to Clover{linked.external_id ? ` (merchant ${linked.external_id})` : ""}.</p>
+                <div className="row"><button className="btn small" onClick={() => setCloverLaunch(null)}>OK</button></div>
+              </>
+            ) : (
+              <>
+                <h2>Connect Clover to {location.name}?</h2>
+                <p>
+                  You opened Pass from Clover{cloverLaunch ? ` (merchant ${cloverLaunch})` : ""}. Connect it so your sales,
+                  menu and stock come into Pass. Clover will ask you to confirm.
+                </p>
+                {me.locations.length > 1 && (
+                  <p className="small muted">Wrong restaurant? Switch restaurant first, then come back to Settings.</p>
+                )}
+                <div className="row">
+                  <button className="btn primary" onClick={() => void connect("clover")}>Connect Clover</button>
+                  <button className="btn" onClick={() => setCloverLaunch(null)}>Not now</button>
+                </div>
+              </>
+            )}
+          </section>
+        );
+      })()}
 
       <div className="stack" style={{ gap: 16 }}>
         <section className="panel">

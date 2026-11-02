@@ -1,7 +1,7 @@
 """Restaurant websites: the owner's editor (draft, preview, publish, history, images) and the public site."""
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -206,5 +206,10 @@ async def custom_domain_home(request: Request, session: AsyncSession = Depends(g
     host = (request.headers.get("host") or "").split(":")[0].lower()
     site = await session.scalar(select(Website).where(Website.custom_domain == host)) if host else None
     if site is None:
+        if request.query_params.get("merchant_id") or request.query_params.get("client_id"):
+            # Clover sends merchants to the Site URL itself in some flows: treat it as a launch.
+            from app.api.integrations import clover_launch_redirect
+
+            return RedirectResponse(clover_launch_redirect(request.query_params.get("merchant_id")))
         return HTMLResponse(site_render.not_found_page("Nothing here."), status_code=404)
     return _html(await website.render_page(session, site, preview=False))
