@@ -364,3 +364,16 @@ async def test_nutrition_log_is_private(client, session):
     assert (await client.delete(f"/customer/nutrition/{entry}", headers=INTRUDER)).status_code == 404
     assert (await client.get("/customer/nutrition", headers=INTRUDER)).json()["entries"] == []
     assert await session.get(NutritionEntry, entry) is not None
+
+
+async def test_old_default_avatar_follows_the_new_default(session):
+    from app.agent import profiles
+    from app.models import AgentProfile
+
+    old = AgentProfile(user_id="u-old", agent="restaurant_manager", display_name="Chef Bob",
+                       avatar={"icon": "chef", "color": "#2563eb"}, tone="concise")
+    assert profiles.profile_out("restaurant_manager", old)["avatar"]["icon"] == "panda"
+    assert profiles.profile_out("restaurant_manager", old)["display_name"] == "Chef Bob"
+    chosen = AgentProfile(user_id="u-chose", agent="restaurant_manager", display_name="Remy",
+                          avatar={"icon": "chef", "color": "#16a34a"}, tone="concise")
+    assert profiles.profile_out("restaurant_manager", chosen)["avatar"]["icon"] == "chef"  # a real choice stays

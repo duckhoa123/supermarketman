@@ -25,12 +25,19 @@ TONES = {
 }
 
 
+# Avatars that were only ever the old default (saved along with a name or tone change) follow the new default.
+OLD_DEFAULT_AVATARS = {"restaurant_manager": {"icon": "chef", "color": "#2563eb"}}
+
+
 def profile_out(agent: str, p: AgentProfile | None) -> dict:
     d = DEFAULTS[agent]
+    saved = dict(p.avatar or {}) if p else {}
+    if saved == OLD_DEFAULT_AVATARS.get(agent):
+        saved = {}
     return {
         "agent": agent, "label": AGENT_LABELS[agent],
         "display_name": p.display_name if p else d["display_name"],
-        "avatar": {**d["avatar"], **(p.avatar or {})} if p else d["avatar"],
+        "avatar": {**d["avatar"], **saved},
         "tone": p.tone if p else d["tone"],
         "customised": p is not None,
     }

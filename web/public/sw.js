@@ -1,5 +1,5 @@
 // Service worker: installable app shell + web push notifications.
-const SHELL = "pass-shell-v1";
+const SHELL = "pass-shell-v2";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon.svg"])));
@@ -16,7 +16,7 @@ self.addEventListener("activate", (event) => {
 // Network first for navigations so owners always get fresh numbers; fall back to the cached shell offline.
 self.addEventListener("fetch", (event) => {
   if (event.request.mode === "navigate") {
-    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    event.respondWith(fetch(event.request, { cache: "no-cache" }).catch(() => caches.match("/")));
   }
 });
 

@@ -7,7 +7,7 @@
 	encode gzip
 
 	# The service worker and app shell must never be cached long, so new deploys show up immediately.
-	@fresh path /sw.js /index.html /manifest.webmanifest
+	@fresh path / /sw.js /index.html /manifest.webmanifest
 	header @fresh Cache-Control "no-cache"
 	# Built assets have content hashes in their names, so they can be cached for a year.
 	@assets path /assets/*
