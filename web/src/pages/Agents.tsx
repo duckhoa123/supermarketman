@@ -1,5 +1,5 @@
 import { useState } from "react";
-import Avatar, { ICON_GLYPHS, SWATCHES } from "../components/Avatar";
+import Avatar, { ICON_GLYPHS, PICTURE_AVATARS, SWATCHES } from "../components/Avatar";
 import { api, type AgentKind, type AgentProfile, type Me } from "../lib/api";
 
 const ABOUT: Record<AgentKind, string> = {
@@ -45,7 +45,7 @@ function Editor({ profile, onSaved }: { profile: AgentProfile; onSaved: () => Pr
         {Object.entries(ICON_GLYPHS).map(([icon, glyph]) => (
           <button key={icon} type="button" className={`icon-pick ${draft.avatar.icon === icon ? "on" : ""}`}
             onClick={() => setDraft({ ...draft, avatar: { ...draft.avatar, icon } })} aria-label={icon}>
-            {glyph}
+            {PICTURE_AVATARS[icon] ? <img src={PICTURE_AVATARS[icon].head} alt="" /> : glyph}
           </button>
         ))}
       </div>

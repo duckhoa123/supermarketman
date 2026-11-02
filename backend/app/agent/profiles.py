@@ -11,11 +11,12 @@ AGENT_LABELS = {
     "driver": "Driver Assistant",
 }
 DEFAULTS = {
-    "restaurant_manager": {"display_name": "Remy", "avatar": {"icon": "chef", "color": "#2563eb"}, "tone": "concise"},
+    "restaurant_manager": {"display_name": "Remy", "avatar": {"icon": "panda", "color": "#2563eb"}, "tone": "concise"},
     "customer": {"display_name": "Coco", "avatar": {"icon": "bowl", "color": "#16a34a"}, "tone": "friendly"},
     "driver": {"display_name": "Dash", "avatar": {"icon": "scooter", "color": "#ea580c"}, "tone": "concise"},
 }
-ICONS = ("chef", "whisk", "bowl", "fork", "leaf", "star", "scooter", "bike", "car", "map", "robot", "smile")
+# "panda" is a picture avatar (web/public/avatars); the rest are emoji on a coloured circle.
+ICONS = ("panda", "chef", "whisk", "bowl", "fork", "leaf", "star", "scooter", "bike", "car", "map", "robot", "smile")
 TONES = {
     "friendly": "warm and encouraging, in plain words",
     "concise": "brief and to the point; numbers first",

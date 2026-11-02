@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import AssistantDock from "./AssistantDock";
+import AssistantDock, { type Popup } from "./AssistantDock";
 import type { Notice } from "./ChatPanel";
 import { useApp } from "../context";
 import { api, chatPath, type AlertRow, type Me } from "../lib/api";
@@ -41,15 +41,38 @@ const RESTAURANT_STARTERS = [
 
 const stripSpeaker = (title: string) => title.replace(/^[^:]{1,60}:\s*/, ""); // the avatar shows who's speaking
 
+/** What the manager says when it pops up: the unread alerts, or a short hello when all is quiet. */
+function greetingFor(alerts: AlertRow[], firstName: string, place: string, agentName: string): Popup {
+  const hour = new Date().getHours();
+  const hello = `${hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"}${firstName ? `, ${firstName}` : ""}!`;
+  if (!alerts.length) {
+    return { greeting: hello, text: `All quiet at ${place} right now. I'll pop up if anything needs you.`, quiet: true };
+  }
+  const n = alerts.length;
+  return {
+    greeting: hello,
+    text: `${n >= 20 ? "20+" : n} new ${n === 1 ? "alert needs" : "alerts need"} a look:`,
+    lines: alerts.slice(0, 3).map((a) => stripSpeaker(a.title)),
+    more: n > 3 ? n - 3 : 0,
+    actions: [
+      { label: "See alerts", to: "/alerts", primary: true },
+      { label: `Ask ${agentName}`, ask: "What needs my attention today, most important first?" },
+    ],
+  };
+}
+
 /** The Restaurant Manager, on every restaurant screen. Opens with anything it noticed on its own. */
 export function RestaurantDock({ children }: { children: ReactNode }) {
   const { location, me, refreshUnread } = useApp();
   const profile = me.agents.find((a) => a.agent === "restaurant_manager");
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [popup, setPopup] = useState<Popup | null>(null);
+  const firstName = (me.name ?? "").trim().split(/\s+/)[0];
 
   useEffect(() => {
     api<{ alerts: AlertRow[] }>(`/locations/${location.id}/alerts?unread_only=true&limit=20`)
-      .then((r) =>
+      .then((r) => {
+        setPopup(greetingFor(r.alerts, firstName, location.name, profile?.display_name ?? "me"));
         setNotices(
           r.alerts
             .filter((a) => a.kind === "price_change")
@@ -60,10 +83,10 @@ export function RestaurantDock({ children }: { children: ReactNode }) {
               body: a.body,
               ask: `About "${stripSpeaker(a.title)}": how much will this cost us, and what are our options?`,
             }))
-        )
-      )
+        );
+      })
       .catch(() => undefined);
-  }, [location.id]);
+  }, [location.id, firstName, location.name, profile?.display_name]);
 
   function dismiss(id: string) {
     setNotices((n) => n.filter((x) => x.id !== id));
@@ -84,6 +107,7 @@ export function RestaurantDock({ children }: { children: ReactNode }) {
         notices,
         onDismissNotice: dismiss,
       }}
+      popup={popup}
     >
       {children}
     </AssistantDock>
