@@ -85,6 +85,16 @@ export default function Settings() {
     }
   }
 
+  async function syncNow(provider: string) {
+    try {
+      await api(`/locations/${location.id}/integrations/${provider}/sync`, { method: "POST", body: {} });
+      setNotice("Syncing now. New data shows up within a minute or two.");
+      window.setTimeout(() => void integrations.reload(), 20_000);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Couldn't start a sync.");
+    }
+  }
+
   async function disconnect(provider: string) {
     if (!window.confirm("Disconnect? Data already synced stays; new data stops coming in.")) return;
     await api(`/locations/${location.id}/integrations/${provider}`, { method: "DELETE" });
@@ -182,6 +192,9 @@ export default function Settings() {
                           <button className="btn small primary" onClick={() => void connect(p.id)}>
                             Reconnect
                           </button>
+                        )}
+                        {row.status === "active" && (
+                          <button className="btn small" onClick={() => void syncNow(p.id)}>Sync now</button>
                         )}
                         <button className="btn small danger" onClick={() => void disconnect(p.id)}>
                           Disconnect
