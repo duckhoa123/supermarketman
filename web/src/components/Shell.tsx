@@ -1,12 +1,42 @@
-import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import Avatar from "./Avatar";
 import { signOut } from "../lib/auth";
 import type { AgentProfile } from "../lib/api";
 
 export type NavItem = { to: string; label: string; end?: boolean; badge?: number };
 
-/** Side rail on wide screens, bottom tabs (plus "More") on phones. */
+/** On phones the menu bar sits at the top: it slides away while you scroll down to read,
+ *  and comes back as soon as you scroll up (or reach the top, or change page). */
+function useHideOnScroll(): boolean {
+  const [hidden, setHidden] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => setHidden(false), [pathname]);
+  useEffect(() => {
+    let last = window.scrollY;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const y = window.scrollY;
+        const dy = y - last;
+        if (y < 64) setHidden(false);
+        else if (dy > 8) setHidden(true);
+        else if (dy < -8) setHidden(false);
+        if (Math.abs(dy) > 8 || y < 64) last = y;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return hidden;
+}
+
+/** Side rail on wide screens; on phones, a menu bar at the top (plus "More") that hides while scrolling down. */
 export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, children }: {
   nav: NavItem[];
   tabs: string[];
@@ -16,6 +46,7 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
   children: ReactNode;
 }) {
   const badge = (n: NavItem) => (n.badge ? <span className="badge">{n.badge}</span> : null);
+  const hidden = useHideOnScroll();
   return (
     <div className="shell">
       <aside className="rail">
@@ -47,8 +78,7 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
           </button>
         </div>
       </aside>
-      <main className="main">{children}</main>
-      <nav className="tabs" aria-label="Main">
+      <nav className={`tabs ${hidden ? "tabs-hidden" : ""}`} aria-label="Main">
         {nav
           .filter((n) => tabs.includes(n.to))
           .map((n) => (
@@ -59,6 +89,7 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
           ))}
         <NavLink to="/more">More</NavLink>
       </nav>
+      <main className="main">{children}</main>
     </div>
   );
 }
