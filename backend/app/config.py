@@ -77,6 +77,13 @@ class Settings(BaseSettings):
 
     # --- Payments (Stripe) ---------------------------------------------------
     stripe_secret_key: str = ""  # empty: orders are marked as test payments, nothing is charged
+    stripe_webhook_secret: str = ""  # signing secret of the Stripe webhook pointed at /webhooks/stripe
+
+    # --- Website SEO plan ------------------------------------------------------
+    seo_price_cents: int = 1900  # per website, per month
+    seo_currency: str = "CAD"
+    stripe_seo_price_id: str = ""  # optional: a recurring Price made in Stripe; empty = charge seo_price_cents
+    indexnow_key: str = ""  # empty: derived from APP_BASE_URL (the key is public by design)
 
     # --- Clover -----------------------------------------------------------
     clover_app_id: str = ""

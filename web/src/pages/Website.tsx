@@ -6,13 +6,14 @@ import {
   useTemplateFonts, type Version, ZonePanel,
 } from "../components/site/BuilderPanels";
 import Ico from "../components/site/Ico";
+import SeoPanel from "../components/site/SeoPanel";
 import { defaults, type FieldContext } from "../components/site/SiteFields";
 import { useApp } from "../context";
 import { API_URL, api, fetchBlob, type SiteContent, type SiteEditor } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { fieldFor, newSectionId, parseTarget, readTarget, writeTarget } from "../lib/sitePath";
 
-type Panel = "design" | "sections" | "photos" | "settings" | "section" | "header" | "footer" | null;
+type Panel = "design" | "sections" | "photos" | "seo" | "settings" | "section" | "header" | "footer" | null;
 type Menu = "layout" | "bg" | null;
 
 const TIPS_KEY = "pass.siteTips";
@@ -48,6 +49,7 @@ export default function Website() {
   const [photo, setPhoto] = useState<{ target: string; multi: boolean } | null>(null);
   const [adding, setAdding] = useState<{ after: string | null } | null>(null);
   const [tips, setTips] = useState(!tipsSeen());
+  const [seoTick, setSeoTick] = useState(0);
   const [, setHistoryTick] = useState(0);
   const past = useRef<SiteContent[]>([]);
   const future = useRef<SiteContent[]>([]);
@@ -89,6 +91,24 @@ export default function Website() {
     // Only when switching between editing and preview.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+
+  // Back from paying for the SEO plan on Stripe.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const result = q.get("seo");
+    if (!result) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    setPanel("seo");
+    const checkout = q.get("seo_session");
+    if (result === "success" && checkout) {
+      void api(`${base}/seo/confirm`, { method: "POST", body: { session_id: checkout } })
+        .then(() => flash("Welcome to the SEO plan! 🎉 Your tools are unlocked."))
+        .catch((e) => flash(e instanceof Error ? e.message : "We couldn't confirm the payment yet."))
+        .finally(() => setSeoTick((n) => n + 1));
+    } else if (result === "cancelled") {
+      flash("No problem: nothing was charged.");
+    }
+  }, [base, flash]);
 
   useTemplateFonts(site ? [...site.fonts, ...site.script_fonts] : []);
 
@@ -235,6 +255,34 @@ export default function Website() {
     window.setTimeout(() => setReveal({ sid: id, n: Date.now() }), 900);
     flash(`${s?.label ?? "Section"} added. Click its text to make it yours.`);
   }
+  /** Show a section of this type: un-hide it, or add it (a top banner goes first, the rest at the end). */
+  function ensureSection(type: string) {
+    const found = draft!.sections.find((x) => x.type === type);
+    const s = spec(type);
+    let sid = found?.id;
+    if (found && !found.visible) {
+      updateSection(found.id, { visible: true });
+      flash(`${s?.label ?? "Section"} is showing again.`);
+    } else if (!found) {
+      sid = newSectionId(type);
+      const item = { id: sid, type, visible: true, props: s ? defaults(s.fields) : {} };
+      change({ ...draft!, sections: type === "hero" ? [item, ...draft!.sections] : [...draft!.sections, item] });
+      flash(`${s?.label ?? "Section"} added to your page.`);
+    }
+    if (sid) {
+      const id = sid;
+      setSel({ kind: "section", sid: id });
+      window.setTimeout(() => setReveal({ sid: id, n: Date.now() }), found ? 0 : 900);
+    }
+  }
+  function seoFix(fix: string) {
+    if (fix.startsWith("section:")) ensureSection(fix.slice(8));
+    else if (fix === "publish") void action("/publish", {}, "Published! Your changes are live. 🎉");
+    else if (fix === "photos") setPanel("photos");
+    else if (fix === "domain") setPanel("settings");
+    else if (fix === "zone:footer") openZone("footer");
+    else if (fix === "restaurant" || fix === "integrations") navigate("/settings");
+  }
   function pickLayer(sid: string) {
     setSel({ kind: "section", sid });
     setReveal({ sid, n: Date.now() });
@@ -345,10 +393,11 @@ export default function Website() {
     { id: "design", icon: "palette", label: "Design" },
     { id: "sections", icon: "layers", label: "Sections" },
     { id: "photos", icon: "image", label: "Photos" },
+    { id: "seo", icon: "search", label: "SEO" },
     { id: "settings", icon: "settings", label: "Settings" },
   ];
   const panelTitle: Record<Exclude<Panel, null>, string> = {
-    design: "Design", sections: "Sections", photos: "Photos", settings: "Website settings",
+    design: "Design", sections: "Sections", photos: "Photos", seo: "SEO: get found on Google", settings: "Website settings",
     section: section ? `${spec(section.type)?.label ?? "Section"}: more options` : "Section",
     header: "Header", footer: "Footer",
   };
@@ -400,12 +449,13 @@ export default function Website() {
               onClick={() => setPanel(panel === r.id ? null : r.id)}>
               <Ico name={r.icon} size={22} />
               <span>{r.label}</span>
+              {r.id === "seo" && <em className="sb-rail-badge">PRO</em>}
             </button>
           ))}
         </nav>
         <main className="sb-stage" onMouseDown={() => setMenu(null)}>
           {panel && editing && (
-            <Flyout title={panelTitle[panel]} onClose={() => setPanel(null)} wide={panel === "design"}>
+            <Flyout title={panelTitle[panel]} onClose={() => setPanel(null)} wide={panel === "design" || panel === "seo"}>
               {panel === "design" && <DesignPanel site={site} draft={draft} change={change} action={action} fieldCtx={fieldCtx} onZone={openZone} />}
               {panel === "sections" && (
                 <SectionsPanel site={site} draft={draft} change={change} selected={sel?.kind === "section" ? sel.sid : null}
@@ -415,7 +465,10 @@ export default function Website() {
                 <PhotosPanel site={site} apiBase={API_URL} base={base} uploadPath={`${base}/images`} onUploaded={onUploaded}
                   onDeleted={(id) => setSite((s) => (s ? { ...s, images: s.images.filter((i) => i.id !== id) } : s))} />
               )}
-              {panel === "settings" && <SettingsPanel site={site} draft={draft} versions={versions} change={change} action={action} />}
+              {panel === "seo" && (
+                <SeoPanel site={site} draft={draft} change={change} apiBase={API_URL} base={base} reloadKey={seoTick} flash={flash} onFix={seoFix} />
+              )}
+              {panel === "settings" && <SettingsPanel site={site} draft={draft} versions={versions} change={change} action={action} onSeo={() => setPanel("seo")} />}
               {panel === "section" && sel?.kind === "section" && (
                 <SectionPanel site={site} draft={draft} sid={sel.sid} change={change} fieldCtx={fieldCtx} locationId={location.id} />
               )}

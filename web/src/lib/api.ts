@@ -549,9 +549,44 @@ export type SiteContent = {
   template: string;
   theme: SiteTheme;
   layout: Record<string, unknown>;
-  seo: { title: string; description: string };
+  seo: SiteSeo;
   links: { instagram: string; facebook: string; tiktok: string };
   sections: SiteSection[];
+};
+/** Search settings. Title and description are on every site; the rest is used on the SEO plan. */
+export type SiteSeo = {
+  title: string;
+  description: string;
+  keywords: string[];
+  share_image: string | null;
+  index: boolean;
+  price_range: "" | "$" | "$$" | "$$$" | "$$$$";
+  area: string;
+  alts: Record<string, string>;
+  google_verify: string;
+  bing_verify: string;
+  ga_id: string;
+};
+export type SeoCheck = {
+  id: string; label: string; status: "good" | "warn" | "bad"; detail: string; fix: string | null; weight: number; pro: boolean;
+};
+export type SeoPhoto = { id: string; url: string; where: string; auto_alt: string; alt: string; needs_alt: boolean; size: number | null };
+export type SeoOverview = {
+  plan: {
+    active: boolean; status: "off" | "test" | "active" | "canceling"; since: string | null; ends_at: string | null;
+    price: string; billing: "test" | "stripe"; features: { id: string; title: string; text: string }[];
+  };
+  score: number;
+  checks: SeoCheck[];
+  keywords: { phrase: string; title: boolean; description: boolean; headline: boolean; page: boolean }[];
+  photos: SeoPhoto[];
+  city: string;
+  cuisine: string | null;
+  name: string;
+  urls: Record<"page" | "sitemap" | "robots" | "rich_results" | "pagespeed" | "search_console" | "bing" | "business_profile" | "analytics", string>;
+  structured_data: Record<string, unknown>;
+  indexnow: { pinged_at: string | null; result: string | null };
+  share_image: string | null;
 };
 export type SiteState = {
   id: string;

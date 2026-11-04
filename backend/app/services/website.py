@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models import Item, ItemSalesDaily, Location, Review, SiteAsset, Website, WebsiteVersion, utcnow
 from app.money import fmt_money
-from app.services import site_render, site_templates as st
+from app.services import seo, site_render, site_templates as st
 from app.services.site_icons import ICONS
 
 log = logging.getLogger(__name__)
@@ -163,7 +163,8 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
     for it in items:
         menu.setdefault(it.category or "Menu", []).append(site_render.MenuItem(
             name=it.name, price=fmt_money(it.price_cents, location.currency), description=it.description,
-            tags=list(it.tags or []), id=it.id))
+            tags=list(it.tags or []), id=it.id,
+            price_value=f"{it.price_cents / 100:.2f}" if it.price_cents is not None else ""))
     ordered = sorted(menu.items(), key=lambda kv: -(popularity.get(kv[0]) or 0))
     # Best sellers over the last 90 days, for "Signature dishes" until the owner picks their own.
     since = date.today() - timedelta(days=90)
@@ -188,6 +189,7 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         book_form_url=f"{web}/" if location.listed and location.accepts_bookings else None,
         location_id=location.id, today=datetime.now(_tz(location.timezone)).date().isoformat(),
         asset_base=f"{base}/sites/{site.slug}/assets", preview=preview, edit=edit and preview,
+        seo_pro=seo.is_active(site), currency=location.currency or "CAD",
     )
 
 

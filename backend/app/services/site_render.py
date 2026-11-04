@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from app.services.geo import WEEKDAY_KEYS
 from app.services.site_icons import svg
+from app.services.site_seo import head_tags
 from app.services.site_templates import FONTS, SECTIONS, clean_content
 
 DAY_NAMES = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
@@ -27,6 +28,7 @@ class MenuItem:
     description: str | None = None
     tags: list[str] = field(default_factory=list)
     id: str = ""
+    price_value: str = ""  # "12.50", for search engines
 
 
 @dataclass
@@ -51,6 +53,9 @@ class SiteData:
     asset_base: str = ""  # images are served at {asset_base}/{asset_id}
     preview: bool = False
     edit: bool = False  # the visual editor: mark editable text, photos and sections
+    seo_pro: bool = False  # the SEO plan is on: business details for Google, share image, verification tags
+    currency: str = "CAD"
+    alts: dict = field(default_factory=dict)  # photo descriptions the owner wrote, by asset id
 
     def item(self, item_id: str | None) -> MenuItem | None:
         for _, items in self.menu:
@@ -183,6 +188,7 @@ def _img(site: SiteData, asset_id: str | None, alt: str, cls: str = "", eager: b
     if not asset_id:
         return ""
     lazy = "" if eager else ' loading="lazy"'
+    alt = site.alts.get(asset_id) or alt
     return f'<img class="{cls}" src="{e(site.asset_base)}/{e(asset_id)}" alt="{e(alt)}"{lazy}{ed}>'
 
 
@@ -1087,6 +1093,7 @@ def _footer(content: dict, ctx: Ctx, nav: list[tuple[str, str]]) -> str:
 
 def render(content: dict, site: SiteData, page_url: str = "") -> str:
     content = clean_content(content)
+    site.alts = content["seo"]["alts"]
     template = content["template"]
     th = content["theme"]
     visible = [s for s in content["sections"] if s.get("visible")]
@@ -1136,14 +1143,12 @@ def render(content: dict, site: SiteData, page_url: str = "") -> str:
     desc = seo.get("description") or ""
     flag = ('<div class="preview-flag">Preview: only you can see this until you publish</div>'
             if site.preview and not edit else "")
-    robots = '<meta name="robots" content="noindex">' if site.preview else ""
-    canonical = f'<link rel="canonical" href="{e(page_url)}">' if page_url and not site.preview else ""
+    meta = head_tags(content, site, page_url, anchors, title, desc)
     body_cls = (f"t-{e(template)} eb-{e(th.get('eyebrow', 'caps'))}{' is-preview' if site.preview and not edit else ''}"
                 f"{' is-editing' if edit else ''}")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(title)}</title><meta name="description" content="{e(desc)}">{robots}{canonical}
-<meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(desc)}">
+<title>{e(title)}</title><meta name="description" content="{e(desc)}">{meta}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?{fonts}&display=swap" rel="stylesheet">
 <style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>

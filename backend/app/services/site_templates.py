@@ -717,9 +717,41 @@ def clean_content(raw: dict) -> dict:
                          "visible": s.get("visible") if isinstance(s.get("visible"), bool) else True, "props": props})
     return {
         "template": template, "theme": theme, "layout": layout,
-        "seo": {"title": _text(seo_in.get("title"), 70), "description": _text(seo_in.get("description"), 160)},
+        "seo": clean_seo(seo_in),
         "links": {k: _url(links_in.get(k)) for k in ("instagram", "facebook", "tiktok")},
         "sections": sections,
+    }
+
+
+PRICE_RANGES = ("", "$", "$$", "$$$", "$$$$")
+VERIFY_TOKEN = re.compile(r"^[A-Za-z0-9_\-]{8,100}$")
+GA_ID = re.compile(r"^G-[A-Z0-9]{4,16}$")
+MAX_KEYWORDS = 10
+
+
+def clean_seo(raw: dict) -> dict:
+    """Search settings. Title and description are on every site; the rest is used when the SEO plan is on."""
+    words: list[str] = []
+    for k in raw["keywords"] if isinstance(raw.get("keywords"), list) else []:
+        w = re.sub(r"\s+", " ", _text(k, 60)).lower() if isinstance(k, str) else ""
+        if w and w not in words:
+            words.append(w)
+    alts_in = raw.get("alts") if isinstance(raw.get("alts"), dict) else {}
+    alts = {k: _text(v, 125) for k, v in list(alts_in.items())[:120] if _image(k) and _text(v, 125)}
+    google, bing = _text(raw.get("google_verify"), 100), _text(raw.get("bing_verify"), 100)
+    ga = _text(raw.get("ga_id"), 20).upper()
+    return {
+        "title": _text(raw.get("title"), 70),
+        "description": _text(raw.get("description"), 160),
+        "keywords": words[:MAX_KEYWORDS],
+        "share_image": _image(raw.get("share_image")),
+        "index": raw.get("index") if isinstance(raw.get("index"), bool) else True,
+        "price_range": raw.get("price_range") if raw.get("price_range") in PRICE_RANGES else "",
+        "area": _text(raw.get("area"), 80),
+        "alts": alts,
+        "google_verify": google if VERIFY_TOKEN.match(google) else "",
+        "bing_verify": bing if VERIFY_TOKEN.match(bing) else "",
+        "ga_id": ga if GA_ID.match(ga) else "",
     }
 
 
@@ -728,6 +760,9 @@ def image_ids(content: dict) -> set[str]:
     logo = (content.get("layout") or {}).get("logo")
     if logo:
         out.add(logo)
+    share = (content.get("seo") or {}).get("share_image")
+    if share:
+        out.add(share)
     for s in content.get("sections", []):
         p = s.get("props", {})
         for key in ("image", "image2"):

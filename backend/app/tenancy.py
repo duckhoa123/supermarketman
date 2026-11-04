@@ -50,3 +50,14 @@ async def require_manager(
     if role not in ("owner", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner or manager role required")
     return location
+
+
+async def require_owner(
+    location: Location = Depends(require_location),
+    user: AuthUser = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Location:
+    """Billing: only the owner can start or stop a paid plan."""
+    if await user_role(session, user.id, location) != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the owner can change the plan")
+    return location

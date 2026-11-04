@@ -91,3 +91,18 @@ async def twilio_inbound(request: Request, x_twilio_signature: str | None = Head
     if proposals:
         reply += "\n\nOpen the app to approve the suggested change."
     return _twiml(reply or "Sorry, I couldn't answer that.")
+
+
+@router.post("/stripe")
+async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None),
+                         session: AsyncSession = Depends(get_session)):
+    """Stripe: the website SEO plan was paid for, changed or ended."""
+    from app.services import seo
+
+    payload = await request.body()
+    try:
+        event = seo.verify_stripe(payload, stripe_signature, get_settings().stripe_webhook_secret)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, "Invalid signature") from exc
+    handled = await seo.stripe_event(session, event)
+    return {"ok": True, "handled": handled}

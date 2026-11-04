@@ -1,7 +1,7 @@
 """Restaurant websites: the owner's editor (draft, preview, publish, history, images) and the public site."""
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import AuthUser, current_user
 from app.db import get_session
 from app.models import Location, SiteAsset, Website, WebsiteVersion
-from app.services import site_render, site_templates, website
-from app.tenancy import require_location, require_manager
+from app.config import get_settings
+from app.services import seo, site_render, site_seo, site_templates, website
+from app.tenancy import require_location, require_manager, require_owner
 
 router = APIRouter(prefix="/locations/{location_id}/website", tags=["website"])
 public = APIRouter(tags=["website-public"])
@@ -79,7 +80,10 @@ async def publish(location: Location = Depends(require_manager), user: AuthUser 
                   session: AsyncSession = Depends(get_session)):
     site = await website.get_or_create(session, location)
     await website.publish(session, site, user.id)
-    return website.site_out(site)
+    out = website.site_out(site)
+    if seo.is_active(site) and seo.listed(site):
+        out["search_engines"] = await seo.notify_search_engines(session, site, website.public_url(site))
+    return out
 
 
 @router.post("/discard")
@@ -174,6 +178,92 @@ async def write_copy(location: Location = Depends(require_manager), session: Asy
     return await website.write_copy(session, location)
 
 
+# --- SEO plan ------------------------------------------------------------------------------------------------
+
+
+def _seo_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, seo.NeedsPlan):
+        return HTTPException(402, str(exc))
+    return HTTPException(422, str(exc))
+
+
+@router.get("/seo")
+async def seo_overview(location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
+    """The SEO panel: plan, score and checks, search phrases, photos, links and what Google will read."""
+    site = await website.get_or_create(session, location)
+    return await seo.overview(session, location, site)
+
+
+@router.post("/seo/upgrade")
+async def seo_upgrade(location: Location = Depends(require_owner), user: AuthUser = Depends(current_user),
+                      session: AsyncSession = Depends(get_session)):
+    site = await website.get_or_create(session, location)
+    try:
+        return await seo.upgrade(session, location, site, user.email)
+    except ValueError as exc:
+        raise _seo_error(exc) from exc
+
+
+class ConfirmIn(BaseModel):
+    session_id: str = Field(max_length=255)
+
+
+@router.post("/seo/confirm")
+async def seo_confirm(body: ConfirmIn, location: Location = Depends(require_owner),
+                      session: AsyncSession = Depends(get_session)):
+    site = await website.get_or_create(session, location)
+    try:
+        return await seo.confirm(session, site, body.session_id)
+    except ValueError as exc:
+        raise _seo_error(exc) from exc
+
+
+@router.post("/seo/cancel")
+async def seo_cancel(location: Location = Depends(require_owner), session: AsyncSession = Depends(get_session)):
+    site = await website.get_or_create(session, location)
+    try:
+        return await seo.cancel(session, site)
+    except ValueError as exc:
+        raise _seo_error(exc) from exc
+
+
+@router.post("/seo/suggest")
+async def seo_suggest(location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
+    """A title, description and search phrases written for local search (SEO plan)."""
+    site = await website.get_or_create(session, location)
+    try:
+        return await seo.suggest(session, location, site)
+    except (ValueError, PermissionError) as exc:
+        raise _seo_error(exc) from exc
+
+
+class PhotosIn(BaseModel):
+    ids: list[str] = Field(max_length=20)
+
+
+@router.post("/seo/describe-photos")
+async def seo_describe(body: PhotosIn, location: Location = Depends(require_manager),
+                       session: AsyncSession = Depends(get_session)):
+    site = await website.get_or_create(session, location)
+    try:
+        return await seo.describe_photos(session, location, site, body.ids)
+    except (ValueError, PermissionError) as exc:
+        raise _seo_error(exc) from exc
+
+
+@router.post("/seo/notify")
+async def seo_notify(location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
+    """Tell search engines the live site changed (SEO plan)."""
+    site = await website.get_or_create(session, location)
+    try:
+        seo.require(site)
+    except PermissionError as exc:
+        raise _seo_error(exc) from exc
+    if not seo.listed(site):
+        raise HTTPException(409, "Publish your site (and allow search engines) first")
+    return await seo.notify_search_engines(session, site, website.public_url(site))
+
+
 # --- Public site ------------------------------------------------------------------------------------------------
 
 
@@ -200,6 +290,58 @@ async def public_asset(slug: str, asset_id: str, session: AsyncSession = Depends
         raise HTTPException(404, "Not found")
     data = (await session.execute(select(SiteAsset.data).where(SiteAsset.id == asset.id))).scalar_one()
     return Response(data, media_type=asset.content_type, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+def _xml(body: str) -> Response:
+    return Response(body, media_type="application/xml", headers={"Cache-Control": "public, max-age=3600"})
+
+
+def _assets(site: Website) -> str:
+    return f"{get_settings().app_base_url.rstrip('/')}/sites/{site.slug}/assets"
+
+
+async def _site_for_host(request: Request, session: AsyncSession) -> Website | None:
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return await session.scalar(select(Website).where(Website.custom_domain == host)) if host else None
+
+
+@public.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+async def robots(request: Request, session: AsyncSession = Depends(get_session)):
+    """On a restaurant's own domain: everything is crawlable. On this app's address: only the websites."""
+    site = await _site_for_host(request, session)
+    if site is not None:
+        return PlainTextResponse(site_seo.robots(f"https://{site.custom_domain}/sitemap.xml", only_sites=False))
+    base = get_settings().app_base_url.rstrip("/")
+    return PlainTextResponse(site_seo.robots(f"{base}/sitemap.xml", only_sites=True))
+
+
+@public.get("/sitemap.xml", include_in_schema=False)
+async def sitemap(request: Request, session: AsyncSession = Depends(get_session)):
+    site = await _site_for_host(request, session)
+    if site is not None:
+        entries = [seo.sitemap_entry(site, website.public_url(site), _assets(site))] if seo.listed(site) else []
+        return _xml(site_seo.sitemap(entries))
+    # This app's own address lists every published site that doesn't have its own domain.
+    rows = await session.scalars(select(Website).where(Website.published.is_not(None),
+                                                       Website.custom_domain.is_(None)).limit(45000))
+    return _xml(site_seo.sitemap([seo.sitemap_entry(s, website.public_url(s), _assets(s)) for s in rows if seo.listed(s)]))
+
+
+@public.get("/sites/{slug}/sitemap.xml", include_in_schema=False)
+async def site_sitemap(slug: str, session: AsyncSession = Depends(get_session)):
+    site = await session.scalar(select(Website).where(Website.slug == slug.lower()))
+    if site is None:
+        raise HTTPException(404, "Not found")
+    entries = [seo.sitemap_entry(site, website.public_url(site), _assets(site))] if seo.listed(site) else []
+    return _xml(site_seo.sitemap(entries))
+
+
+@public.get("/{key}.txt", response_class=PlainTextResponse, include_in_schema=False)
+async def indexnow_key(key: str):
+    """IndexNow asks for this file to prove the change notices come from the site's owner."""
+    if key != seo.indexnow_key():
+        raise HTTPException(404, "Not found")
+    return PlainTextResponse(key)
 
 
 @public.get("/", response_class=HTMLResponse, include_in_schema=False)

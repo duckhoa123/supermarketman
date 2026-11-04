@@ -253,7 +253,7 @@ function UploadTile({ uploadPath, onUploaded, label = "Upload photos" }: {
   );
 }
 
-function thumb(apiBase: string, url: string) {
+export function thumb(apiBase: string, url: string) {
   return url.startsWith("http") ? url : `${apiBase}${url}`;
 }
 
@@ -288,8 +288,8 @@ export function PhotosPanel({ site, apiBase, uploadPath, onUploaded, onDeleted, 
   );
 }
 
-export function SettingsPanel({ site, draft, versions, change, action }: {
-  site: SiteEditor; draft: SiteContent; versions: Version[]; change: Change; action: Action;
+export function SettingsPanel({ site, versions, action, onSeo }: {
+  site: SiteEditor; draft: SiteContent; versions: Version[]; change: Change; action: Action; onSeo: () => void;
 }) {
   const [slug, setSlug] = useState(site.slug);
   const [domain, setDomain] = useState(site.custom_domain ?? "");
@@ -312,15 +312,8 @@ export function SettingsPanel({ site, draft, versions, change, action }: {
         api service in Railway (Settings → Networking → Custom domain). Ask us if you need a hand.
       </p>
       <h3>Google and sharing</h3>
-      <label className="stack" style={{ gap: 4 }}>
-        <span className="small">Page title</span>
-        <input className="input" maxLength={70} value={draft.seo.title} onChange={(e) => change({ ...draft, seo: { ...draft.seo, title: e.target.value } }, { rerender: false })} />
-      </label>
-      <label className="stack" style={{ gap: 4 }}>
-        <span className="small">Description (shown in Google results, up to 160 characters)</span>
-        <textarea className="textarea" rows={3} maxLength={160} value={draft.seo.description}
-          onChange={(e) => change({ ...draft, seo: { ...draft.seo, description: e.target.value } }, { rerender: false })} />
-      </label>
+      <p className="small muted">Your Google title and description, and the other tools that help people find you, are in SEO.</p>
+      <button className="btn small" style={{ alignSelf: "start" }} onClick={onSeo}><Ico name="search" size={14} /> Open SEO</button>
       <h3>Published versions</h3>
       {versions.length === 0 && <p className="small muted">Nothing published yet.</p>}
       <ul className="list small">

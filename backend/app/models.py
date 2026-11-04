@@ -707,6 +707,9 @@ class Website(TimestampMixin, Base):
     published: Mapped[dict | None] = mapped_column(JSON)
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     published_by: Mapped[str | None] = mapped_column(String(64))
+    # The SEO plan: {"status": "active" | "test" | "canceling" | "off", "since", "ends_at", "subscription",
+    # "customer", "pinged_at", "ping"}. Empty: never upgraded.
+    seo_plan: Mapped[dict | None] = mapped_column(JSON)
 
 
 class WebsiteVersion(Base):
