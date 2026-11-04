@@ -253,3 +253,56 @@ async def test_switching_template_through_the_api_adds_its_sections(client, demo
     assert "chef" in types and "reserve" in types and r["draft"]["layout"]["header_button"] == "book"
     preview = (await client.get(f"{base}/preview", headers=OWNER)).text
     assert "t-zen" in preview and 'id="reserve"' in preview
+
+
+# --- The visual editor's markers -------------------------------------------------------------------------------
+
+
+def test_edit_markers_only_in_the_editor():
+    import re
+
+    for name in st.TEMPLATES:
+        content = st.clean_content(st.starter_content(name, "Demo", "Italian"))
+        content["sections"][-1]["visible"] = False
+        public = site_render.render(content, _demo_site())
+        assert "data-e=" not in public and "data-sid" not in public and "edit-" not in public
+        edit = site_render.render(content, _demo_site(preview=True, edit=True))
+        ids = set(re.findall(r'data-sid="([^"]+)"', edit))
+        assert ids == {s["id"] for s in content["sections"]}, name  # every section can be selected
+        assert "Hidden: " in edit and 'data-add="end"' in edit and 'data-zone="header"' in edit
+        assert 'data-zone="footer"' in edit and "Preview: only you" not in edit
+        hero = next(s for s in content["sections"] if s["type"] == "hero")
+        assert f'data-e="{hero["id"]}:title"' in edit and f'data-img="{hero["id"]}:image"' in edit
+        # An edit preview of the public page isn't possible: the flag needs the private preview too.
+        assert "data-e=" not in site_render.render(content, _demo_site(edit=True))
+
+
+def test_edit_markers_point_at_real_fields():
+    import re
+
+    content = st.clean_content(st.starter_content("gourmet", "Demo"))
+    html = site_render.render(content, _demo_site(preview=True, edit=True))
+    by_id = {s["id"]: s for s in content["sections"]}
+    for target in re.findall(r'data-(?:e|img|imgs)="([^"]+)"', html):
+        where, path = target.split(":", 1)
+        if where == "layout":
+            assert path in st.LAYOUT_FIELDS
+            continue
+        fields = st.SECTIONS[by_id[where]["type"]]["fields"]
+        top = path.split(".")[0]
+        assert top in fields, target
+        if "." in path:  # items.<n>.<field>
+            _, n, sub = path.split(".")
+            assert sub in fields[top]["fields"] and int(n) < len(by_id[where]["props"]["items"])
+    features = next(s for s in content["sections"] if s["type"] == "features")
+    assert f'data-e="{features["id"]}:items.0.title"' in html
+    about = next(s for s in content["sections"] if s["type"] == "about")
+    assert f'data-e="{about["id"]}:body" data-ml="1"' in html  # paragraphs edit as one block
+
+
+async def test_preview_with_edit_markers(client, demo_location_id):
+    base = f"/locations/{demo_location_id}/website"
+    await client.get(base, headers=OWNER)
+    plain = (await client.get(f"{base}/preview", headers=OWNER)).text
+    edit = (await client.get(f"{base}/preview?edit=1", headers=OWNER)).text
+    assert "data-e=" not in plain and "data-e=" in edit and "is-editing" in edit

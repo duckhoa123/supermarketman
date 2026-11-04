@@ -1,367 +1,467 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import SectionEditor from "../components/site/SectionEditor";
-import { defaults, type FieldContext, FieldList } from "../components/site/SiteFields";
+import { useNavigate } from "react-router-dom";
+import Canvas, { type Box, type Device, type Selection } from "../components/site/Canvas";
+import {
+  AddSectionModal, DesignPanel, Flyout, PhotoModal, PhotosPanel, SectionPanel, SectionsPanel, SettingsPanel,
+  useTemplateFonts, type Version, ZonePanel,
+} from "../components/site/BuilderPanels";
+import Ico from "../components/site/Ico";
+import { defaults, type FieldContext } from "../components/site/SiteFields";
 import { useApp } from "../context";
-import { api, fetchBlob, type SiteContent, type SiteEditor, type SiteSection, type SiteTemplate } from "../lib/api";
+import { API_URL, api, fetchBlob, type SiteContent, type SiteEditor } from "../lib/api";
 import { timeAgo } from "../lib/format";
+import { fieldFor, newSectionId, parseTarget, readTarget, writeTarget } from "../lib/sitePath";
 
-type Tab = "design" | "sections" | "settings";
-const DESKTOP_WIDTH = 1280;
-type Version = { id: string; created_at: string; template: string; live: boolean };
+type Panel = "design" | "sections" | "photos" | "settings" | "section" | "header" | "footer" | null;
+type Menu = "layout" | "bg" | null;
 
-/** Loads every template font once, so the template cards show their real type. */
-function useTemplateFonts(fonts: string[]) {
-  useEffect(() => {
-    if (!fonts.length || document.getElementById("site-fonts")) return;
-    const link = document.createElement("link");
-    link.id = "site-fonts";
-    link.rel = "stylesheet";
-    link.href = `https://fonts.googleapis.com/css2?${fonts.map((f) => `family=${f.replace(/ /g, "+")}`).join("&")}&display=swap`;
-    document.head.appendChild(link);
-  }, [fonts]);
+const TIPS_KEY = "pass.siteTips";
+const HISTORY = 60;
+
+function tipsSeen(): boolean {
+  try {
+    return window.localStorage.getItem(TIPS_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
-function TemplateCard({ t, on, onPick }: { t: SiteTemplate; on: boolean; onPick: () => void }) {
-  const th = t.theme;
-  return (
-    <button className={`template-card ${on ? "on" : ""}`} onClick={onPick} aria-pressed={on}>
-      <span className="template-swatch" style={{ background: t.layout.header === "transparent" || t.group === "photo" ? th.dark : th.background, color: t.group === "photo" ? "#fff" : th.text }}>
-        <span className="tpl-script" style={{ fontFamily: `'${th.script_font}', cursive`, color: th.accent }}>Welcome</span>
-        <span className="tpl-head" style={{ fontFamily: `'${th.heading_font}', serif` }}>Aa</span>
-        <span className="tpl-dots">
-          {[th.background, th.accent, th.dark].map((c, i) => <i key={i} style={{ background: c }} />)}
-        </span>
-      </span>
-      <strong>{t.label}</strong>
-      <span className="small muted">{t.best_for}</span>
-    </button>
-  );
-}
-
-/** Build and maintain the restaurant's website: edit a draft with a live preview, then publish. */
+/** Build and maintain the restaurant's website, Canva-style: edit text and photos right on the page, with a
+ * floating toolbar for each section. Nothing is public until "Publish". */
 export default function Website() {
   const { location } = useApp();
+  const navigate = useNavigate();
   const base = `/locations/${location.id}/website`;
   const [site, setSite] = useState<SiteEditor | null>(null);
   const [draft, setDraft] = useState<SiteContent | null>(null);
-  const [tab, setTab] = useState<Tab>("design");
-  const [device, setDevice] = useState<"desktop" | "phone">("desktop");
   const [html, setHtml] = useState("");
+  const [device, setDevice] = useState<Device>(() => (window.innerWidth < 760 ? "phone" : "desktop"));
+  const [editing, setEditing] = useState(true);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [sel, setSel] = useState<Selection>(null);
+  const [menu, setMenu] = useState<Menu>(null);
+  const [reveal, setReveal] = useState<{ sid: string; n: number } | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [open, setOpen] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
+  const [toast, setToast] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
-  const [showAllTemplates, setShowAllTemplates] = useState(false);
-  const frame = useRef<HTMLIFrameElement>(null);
-  const box = useRef<HTMLDivElement>(null);
-  const [boxSize, setBoxSize] = useState({ w: 0, h: 0 });
-  const scroll = useRef(0);
+  const [photo, setPhoto] = useState<{ target: string; multi: boolean } | null>(null);
+  const [adding, setAdding] = useState<{ after: string | null } | null>(null);
+  const [tips, setTips] = useState(!tipsSeen());
+  const [, setHistoryTick] = useState(0);
+  const past = useRef<SiteContent[]>([]);
+  const future = useRef<SiteContent[]>([]);
   const timer = useRef<number | null>(null);
+  const rerenderNext = useRef(false);
+  const draftRef = useRef<SiteContent | null>(null);
+  const editingRef = useRef(editing);
+  draftRef.current = draft;
+  editingRef.current = editing;
+
+  const flash = useCallback((text: string) => {
+    setToast(text);
+    window.setTimeout(() => setToast((t) => (t === text ? "" : t)), 3800);
+  }, []);
 
   const refreshPreview = useCallback(async () => {
-    scroll.current = frame.current?.contentWindow?.scrollY ?? 0;
-    setHtml(await (await fetchBlob(`${base}/preview`)).text());
+    setHtml(await (await fetchBlob(`${base}/preview${editingRef.current ? "?edit=1" : ""}`)).text());
   }, [base]);
 
-  const load = useCallback(async () => {
-    const s = await api<SiteEditor>(base);
-    setSite(s);
-    setDraft(s.draft);
-    void refreshPreview();
-    void api<Version[]>(`${base}/versions`).then(setVersions);
-  }, [base, refreshPreview]);
-
   useEffect(() => {
-    void load();
+    void (async () => {
+      const s = await api<SiteEditor>(base);
+      setSite(s);
+      setDraft(s.draft);
+      void refreshPreview();
+      void api<Version[]>(`${base}/versions`).then(setVersions);
+    })();
     void api<{ items: { category: string | null }[] }>(`/locations/${location.id}/inventory`).then((r) =>
       setCategories(Array.from(new Set(r.items.map((i) => i.category).filter(Boolean) as string[])).sort()));
-  }, [load, location.id]);
+  }, [base, location.id, refreshPreview]);
 
-  // The desktop preview is drawn at a real laptop width and scaled down to fit.
   useEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const measure = () => {
-      const cs = getComputedStyle(el);
-      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      setBoxSize({ w: Math.min(w, DESKTOP_WIDTH), h });
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [site !== null]);
+    if (!site) return;
+    void refreshPreview();
+    if (!editing) {
+      setSel(null);
+      setPanel(null);
+    }
+    // Only when switching between editing and preview.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
-  // Save the draft shortly after each change, then refresh the preview.
-  function change(next: SiteContent) {
+  useTemplateFonts(site ? [...site.fonts, ...site.script_fonts] : []);
+
+  /** Every edit goes through here: remembered for undo, saved shortly after, and the page redrawn when needed
+   * (text typed on the page is already showing, so it isn't redrawn). */
+  const change = useCallback((next: SiteContent, opts: { rerender?: boolean; record?: boolean } = {}) => {
+    const { rerender = true, record = true } = opts;
+    const prev = draftRef.current;
+    if (record && prev) {
+      past.current = [...past.current.slice(-HISTORY + 1), prev];
+      future.current = [];
+    }
+    setHistoryTick((n) => n + 1);
     setDraft(next);
+    draftRef.current = next;
+    if (rerender) rerenderNext.current = true;
     setSaving("saving");
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(async () => {
       try {
-        const s = await api<SiteEditor>(`${base}/draft`, { method: "PUT", body: { content: next } });
+        const s = await api<SiteEditor>(`${base}/draft`, { method: "PUT", body: { content: draftRef.current } });
         setSite((old) => (old ? { ...old, ...s } : old));
         setSaving("saved");
-        void refreshPreview();
+        if (rerenderNext.current) {
+          rerenderNext.current = false;
+          void refreshPreview();
+        }
       } catch (e) {
         setSaving("error");
-        setMessage(e instanceof Error ? e.message : "Couldn't save.");
+        flash(e instanceof Error ? e.message : "Couldn't save.");
       }
-    }, 700);
-  }
+    }, rerender ? 350 : 700);
+  }, [base, refreshPreview, flash]);
 
-  async function action(path: string, body: unknown = {}, done = "") {
-    setMessage("");
+  const action = useCallback(async (path: string, body: unknown = {}, done = "") => {
     try {
       const s = await api<SiteEditor>(`${base}${path}`, { method: path === "/settings" ? "PUT" : "POST", body });
+      if (draftRef.current) {
+        past.current = [...past.current.slice(-HISTORY + 1), draftRef.current];
+        future.current = [];
+        setHistoryTick((n) => n + 1);
+      }
       setSite((old) => (old ? { ...old, ...s } : old));
       setDraft(s.draft);
       void refreshPreview();
       void api<Version[]>(`${base}/versions`).then(setVersions);
-      if (done) setMessage(done);
+      if (done) flash(done);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "That didn't work.");
+      flash(e instanceof Error ? e.message : "That didn't work.");
     }
-  }
+  }, [base, refreshPreview, flash]);
 
-  useTemplateFonts(site ? [...site.fonts, ...site.script_fonts] : []);
-  if (!site || !draft) return <p className="muted">Loading…</p>;
+  const undo = useCallback(() => {
+    const prev = past.current.pop();
+    if (!prev || !draftRef.current) return;
+    future.current.push(draftRef.current);
+    change(prev, { record: false });
+  }, [change]);
+  const redo = useCallback(() => {
+    const next = future.current.pop();
+    if (!next || !draftRef.current) return;
+    past.current.push(draftRef.current);
+    change(next, { record: false });
+  }, [change]);
 
-  const setSection = (id: string, patch: Partial<SiteSection>) =>
-    change({ ...draft, sections: draft.sections.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
-  const move = (i: number, by: number) => {
-    const list = draft.sections.slice();
-    const j = i + by;
-    if (j < 0 || j >= list.length) return;
-    [list[i], list[j]] = [list[j], list[i]];
-    change({ ...draft, sections: list });
-  };
-  const addSection = (type: string) => {
-    if (!type) return;
-    const id = `${type}-${Math.random().toString(16).slice(2, 10)}`;
-    const spec = site.sections.find((x) => x.type === type);
-    change({ ...draft, sections: [...draft.sections, { id, type, visible: true, props: spec ? defaults(spec.fields) : {} }] });
-    setOpen(id);
-  };
-  const applyCopy = (c: { tagline: string; about: string; seo_description: string }) =>
-    change({
-      ...draft,
-      seo: { ...draft.seo, description: draft.seo.description || c.seo_description },
-      sections: draft.sections.map((s) =>
-        s.type === "hero" ? { ...s, props: { ...s.props, tagline: c.tagline } }
-          : s.type === "about" ? { ...s, props: { ...s.props, body: c.about } } : s),
-    });
-  const onUploaded = (img: { id: string; url: string }) => setSite((s) => (s ? { ...s, images: [img, ...s.images] } : s));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      } else if (e.key === "Escape") {
+        setMenu(null);
+        setSel(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
+  if (!site || !draft) return <div className="sb-root sb-loading"><p className="muted">Opening your website…</p></div>;
+
   const spec = (type: string) => site.sections.find((x) => x.type === type);
-  const label = (type: string) => spec(type)?.label ?? type;
+  const onUploaded = (img: { id: string; url: string }) => setSite((s) => (s ? { ...s, images: [img, ...s.images] } : s));
   const fieldCtx: FieldContext = {
     images: site.images, uploadPath: `${base}/images`, onUploaded, categories, menuItems: site.menu_items, icons: site.icons,
   };
-  const current = site.templates.find((t) => t.id === draft.template);
-  const setTheme = (patch: Partial<SiteContent["theme"]>) => change({ ...draft, theme: { ...draft.theme, ...patch } });
   const status = !site.is_published ? ["Not published yet", "warn"] : site.has_unpublished_changes ? ["Unpublished changes", "warn"] : ["Live", "good"];
+  const section = sel?.kind === "section" ? draft.sections.find((s) => s.id === sel.sid) : undefined;
+  const sectionIndex = section ? draft.sections.indexOf(section) : -1;
+
+  function onText(raw: string, value: string) {
+    const t = parseTarget(raw);
+    const f = fieldFor(site!, draftRef.current!, t);
+    let v = value;
+    if (f?.limit && v.length > f.limit) {
+      v = v.slice(0, f.limit);
+      flash(`That's a bit long, so it was shortened to ${f.limit} characters.`);
+    }
+    // Emptied text may fall back to a default heading, so redraw to show what will really appear.
+    change(writeTarget(draftRef.current!, t, v), { rerender: !v || v !== value });
+  }
+
+  function updateSection(sid: string, patch: Partial<SiteContent["sections"][number]>) {
+    change({ ...draft!, sections: draft!.sections.map((s) => (s.id === sid ? { ...s, ...patch } : s)) });
+  }
+  function setProp(sid: string, key: string, value: unknown) {
+    const s = draft!.sections.find((x) => x.id === sid);
+    if (s) updateSection(sid, { props: { ...s.props, [key]: value } });
+  }
+  function move(by: number) {
+    if (sectionIndex < 0) return;
+    const list = draft!.sections.slice();
+    const j = sectionIndex + by;
+    if (j < 0 || j >= list.length) return;
+    [list[sectionIndex], list[j]] = [list[j], list[sectionIndex]];
+    change({ ...draft!, sections: list });
+    const sid = list[j].id;
+    window.setTimeout(() => setReveal({ sid, n: Date.now() }), 900);
+  }
+  function remove() {
+    if (!section) return;
+    const name = spec(section.type)?.label ?? "this section";
+    if (!window.confirm(`Delete “${name}”? You can undo this.`)) return;
+    change({ ...draft!, sections: draft!.sections.filter((s) => s.id !== section.id) });
+    setSel(null);
+    setPanel(null);
+    flash(`${name} deleted. Press Undo to bring it back.`);
+  }
+  function addSection(type: string) {
+    const s = spec(type);
+    const id = newSectionId(type);
+    const list = draft!.sections.slice();
+    const at = adding?.after ? list.findIndex((x) => x.id === adding.after) + 1 : list.length;
+    list.splice(at, 0, { id, type, visible: true, props: s ? defaults(s.fields) : {} });
+    change({ ...draft!, sections: list });
+    setAdding(null);
+    setSel({ kind: "section", sid: id });
+    window.setTimeout(() => setReveal({ sid: id, n: Date.now() }), 900);
+    flash(`${s?.label ?? "Section"} added. Click its text to make it yours.`);
+  }
+  function pickLayer(sid: string) {
+    setSel({ kind: "section", sid });
+    setReveal({ sid, n: Date.now() });
+  }
+  function choosePhotos(ids: string[]) {
+    if (!photo) return;
+    const t = parseTarget(photo.target);
+    change(writeTarget(draftRef.current!, t, photo.multi ? ids : ids[0] ?? null));
+    setPhoto(null);
+  }
+  function openZone(z: "header" | "footer") {
+    setSel({ kind: z });
+    setPanel(z);
+  }
+  function select(s: Selection) {
+    setSel(s);
+    setMenu(null);
+    // Keep the open options panel in step with what's selected.
+    if (s && (s.kind === "header" || s.kind === "footer") && (panel === "section" || panel === "header" || panel === "footer")) setPanel(s.kind);
+    else if (s?.kind === "section" && (panel === "header" || panel === "footer")) setPanel(null);
+  }
+  function dismissTips() {
+    setTips(false);
+    try {
+      window.localStorage.setItem(TIPS_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const layoutField = section ? spec(section.type)?.fields.find((f) => f.name === "layout") : undefined;
+  const bgField = section ? spec(section.type)?.fields.find((f) => f.name === "bg") : undefined;
+  const th = draft.theme;
+  const swatch: Record<string, string> = {
+    page: th.background, alt: `color-mix(in srgb, ${th.background} 90%, ${th.text})`, dark: th.dark, accent: th.accent,
+  };
+  const label = (s: Selection) =>
+    !s ? "" : s.kind === "section"
+      ? spec(draft.sections.find((x) => x.id === s.sid)?.type ?? "")?.label ?? "Section"
+      : s.kind === "header" ? "Header" : "Footer";
+
+  const toolbar = (box: Box, canvasW: number) => {
+    if (box.y + box.h < 48) return null;
+    const top = box.y - 50 < 6 ? Math.max(6, Math.min(box.y + 8, box.y + box.h - 50)) : box.y - 50;
+    const style = { top, left: Math.min(Math.max(8, box.x + 8), Math.max(8, canvasW - 560)) };
+    if (sel?.kind === "header" || sel?.kind === "footer") {
+      return (
+        <div className="sb-toolbar" style={style}>
+          <span className="sb-tb-name">{sel.kind === "header" ? "Header" : "Footer"}</span>
+          <button className="sb-tb-btn" onClick={() => setPanel(sel.kind)}><Ico name="sliders" size={16} /> Edit {sel.kind}</button>
+        </div>
+      );
+    }
+    if (!section) return null;
+    const sp = spec(section.type);
+    return (
+      <div className="sb-toolbar" style={style} onMouseDown={(e) => e.stopPropagation()}>
+        <span className="sb-tb-name"><span aria-hidden>{sp?.icon}</span> <span className="sb-tb-label">{sp?.label}</span></span>
+        <button className="sb-tb-icon" title="Move up" aria-label="Move up" disabled={sectionIndex === 0} onClick={() => move(-1)}><Ico name="up" size={16} /></button>
+        <button className="sb-tb-icon" title="Move down" aria-label="Move down" disabled={sectionIndex === draft.sections.length - 1} onClick={() => move(1)}><Ico name="down" size={16} /></button>
+        {section.visible && layoutField && (
+          <span className="sb-tb-menu">
+            <button className={`sb-tb-btn ${menu === "layout" ? "on" : ""}`} onClick={() => setMenu(menu === "layout" ? null : "layout")}><Ico name="layout" size={16} /> <span className="sb-tb-label">Layout</span></button>
+            {menu === "layout" && (
+              <div className="sb-pop">
+                {layoutField.options?.map((o) => (
+                  <button key={o.value} className={section.props.layout === o.value ? "on" : ""}
+                    onClick={() => { setProp(section.id, "layout", o.value); setMenu(null); }}>
+                    <span className="sb-pop-check">{section.props.layout === o.value && <Ico name="check" size={14} />}</span> {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </span>
+        )}
+        {section.visible && bgField && (
+          <span className="sb-tb-menu">
+            <button className={`sb-tb-btn ${menu === "bg" ? "on" : ""}`} onClick={() => setMenu(menu === "bg" ? null : "bg")}>
+              <i className="sb-dot" style={{ background: swatch[String(section.props.bg ?? "page")] }} /> <span className="sb-tb-label">Background</span>
+            </button>
+            {menu === "bg" && (
+              <div className="sb-pop">
+                {bgField.options?.map((o) => (
+                  <button key={o.value} className={section.props.bg === o.value ? "on" : ""}
+                    onClick={() => { setProp(section.id, "bg", o.value); setMenu(null); }}>
+                    <i className="sb-dot" style={{ background: swatch[o.value] }} /> {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </span>
+        )}
+        {section.visible && (
+          <button className="sb-tb-btn" onClick={() => setPanel("section")}><Ico name="sliders" size={16} /> <span className="sb-tb-label">More options</span></button>
+        )}
+        <button className={`sb-tb-icon ${section.visible ? "" : "wide"}`} title={section.visible ? "Hide this section" : "Show this section"}
+          aria-label={section.visible ? "Hide" : "Show"} onClick={() => updateSection(section.id, { visible: !section.visible })}>
+          <Ico name={section.visible ? "eyeOff" : "eye"} size={16} />
+          {!section.visible && <span>Show it</span>}
+        </button>
+        <button className="sb-tb-icon" title="Add a section below" aria-label="Add a section below" onClick={() => setAdding({ after: section.id })}><Ico name="plus" size={16} /></button>
+        <button className="sb-tb-icon danger" title="Delete this section" aria-label="Delete" onClick={remove}><Ico name="trash" size={16} /></button>
+      </div>
+    );
+  };
+
+  const rail: { id: Exclude<Panel, "section" | "header" | "footer" | null>; icon: string; label: string }[] = [
+    { id: "design", icon: "palette", label: "Design" },
+    { id: "sections", icon: "layers", label: "Sections" },
+    { id: "photos", icon: "image", label: "Photos" },
+    { id: "settings", icon: "settings", label: "Settings" },
+  ];
+  const panelTitle: Record<Exclude<Panel, null>, string> = {
+    design: "Design", sections: "Sections", photos: "Photos", settings: "Website settings",
+    section: section ? `${spec(section.type)?.label ?? "Section"}: more options` : "Section",
+    header: "Header", footer: "Footer",
+  };
+  const photoCurrent = photo ? readTarget(draft, parseTarget(photo.target)) : null;
 
   return (
-    <div className="site-editor">
-      <div className="page-head">
-        <div>
-          <h1>Website</h1>
-          <p>
-            <span className={`pill ${status[1]}`}>{status[0]}</span>{" "}
-            {site.is_published ? <a href={site.url} target="_blank" rel="noreferrer">{site.url.replace(/^https?:\/\//, "")}</a> : "Edit freely: nothing is public until you publish."}
-            {site.published_at && <span className="small muted"> · published {timeAgo(site.published_at)}</span>}
-          </p>
+    <div className="sb-root">
+      <header className="sb-top">
+        <button className="sb-back" onClick={() => navigate("/")} title="Back to Pass"><Ico name="back" /> <span className="sb-hide-sm">Pass</span></button>
+        <div className="sb-title">
+          <strong>Website</strong>
+          <span className={`pill ${status[1]}`}>{status[0]}</span>
+          <span className="small muted sb-save sb-hide-sm">
+            {saving === "saving" ? "Saving…" : saving === "error" ? "Not saved" : site.published_at ? `Published ${timeAgo(site.published_at)}` : "Saved as a draft"}
+          </span>
         </div>
-        <div className="row">
-          <span className="small muted">{saving === "saving" ? "Saving…" : saving === "saved" ? "Draft saved" : saving === "error" ? "Not saved" : ""}</span>
+        <div className="seg sb-devices" role="group" aria-label="Screen size">
+          {(["desktop", "tablet", "phone"] as const).map((d) => (
+            <button key={d} className={device === d ? "on" : ""} onClick={() => setDevice(d)} title={`See it on a ${d}`} aria-label={d}>
+              <Ico name={d} size={16} />
+            </button>
+          ))}
+        </div>
+        <div className="sb-actions">
+          <button className="sb-icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!past.current.length} onClick={undo}><Ico name="undo" /></button>
+          <button className="sb-icon" title="Redo" aria-label="Redo" disabled={!future.current.length} onClick={redo}><Ico name="redo" /></button>
+          <button className="btn small" onClick={() => setEditing(!editing)}>
+            <Ico name={editing ? "eye" : "pencil"} size={16} /> <span className="sb-hide-sm">{editing ? "Preview" : "Back to editing"}</span>
+          </button>
+          {site.is_published && (
+            <a className="btn small sb-hide-sm" href={site.url} target="_blank" rel="noreferrer"><Ico name="external" size={16} /> View live</a>
+          )}
           {site.is_published && site.has_unpublished_changes && (
-            <button className="btn" onClick={() => window.confirm("Throw away your changes and go back to the live version?") && void action("/discard", {}, "Changes discarded.")}>
-              Discard changes
+            <button className="btn small sb-hide-sm" onClick={() => window.confirm("Throw away your changes and go back to the live version?") && void action("/discard", {}, "Changes thrown away.")}>
+              Discard
             </button>
           )}
           <button className="btn primary" disabled={saving === "saving" || (site.is_published && !site.has_unpublished_changes)}
-            onClick={() => void action("/publish", {}, "Published! Your changes are live.")}>
-            {site.is_published ? "Publish changes" : "Publish website"}
+            onClick={() => void action("/publish", {}, "Published! Your changes are live. 🎉")}>
+            {site.is_published ? "Publish changes" : "Publish"}
           </button>
         </div>
-      </div>
-      {message && <p className="panel small" role="status">{message}</p>}
+      </header>
 
-      <div className="site-layout">
-        <aside className="panel site-panel">
-          <div className="seg" role="tablist">
-            {(["design", "sections", "settings"] as const).map((t) => (
-              <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{{ design: "Design", sections: "Sections", settings: "Settings" }[t]}</button>
-            ))}
-          </div>
-
-          {tab === "design" && (
-            <div className="stack">
-              <h3>Template</h3>
-              <p className="small muted">
-                Switching template changes the look and adds that template's sections. Your words and photos stay.
-              </p>
-              {(["photo", "simple"] as const).map((g) => (
-                (g === "photo" || showAllTemplates) && (
-                  <div key={g} className="stack" style={{ gap: 6 }}>
-                    <span className="small strong">{g === "photo" ? "Photo-led" : "Simple"}</span>
-                    <div className="template-grid">
-                      {site.templates.filter((t) => t.group === g).map((t) => (
-                        <TemplateCard key={t.id} t={t} on={draft.template === t.id}
-                          onPick={() => draft.template !== t.id && void action("/template", { template: t.id })} />
-                      ))}
-                    </div>
+      <div className="sb-body">
+        <nav className="sb-rail" aria-label="Editor tools">
+          {rail.map((r) => (
+            <button key={r.id} className={panel === r.id ? "on" : ""} disabled={!editing}
+              onClick={() => setPanel(panel === r.id ? null : r.id)}>
+              <Ico name={r.icon} size={22} />
+              <span>{r.label}</span>
+            </button>
+          ))}
+        </nav>
+        <main className="sb-stage" onMouseDown={() => setMenu(null)}>
+          {panel && editing && (
+            <Flyout title={panelTitle[panel]} onClose={() => setPanel(null)} wide={panel === "design"}>
+              {panel === "design" && <DesignPanel site={site} draft={draft} change={change} action={action} fieldCtx={fieldCtx} onZone={openZone} />}
+              {panel === "sections" && (
+                <SectionsPanel site={site} draft={draft} change={change} selected={sel?.kind === "section" ? sel.sid : null}
+                  onPick={pickLayer} onAdd={() => setAdding({ after: null })} />
+              )}
+              {panel === "photos" && (
+                <PhotosPanel site={site} apiBase={API_URL} base={base} uploadPath={`${base}/images`} onUploaded={onUploaded}
+                  onDeleted={(id) => setSite((s) => (s ? { ...s, images: s.images.filter((i) => i.id !== id) } : s))} />
+              )}
+              {panel === "settings" && <SettingsPanel site={site} draft={draft} versions={versions} change={change} action={action} />}
+              {panel === "section" && sel?.kind === "section" && (
+                <SectionPanel site={site} draft={draft} sid={sel.sid} change={change} fieldCtx={fieldCtx} locationId={location.id} />
+              )}
+              {panel === "section" && sel?.kind !== "section" && <p className="small muted">Click a section on your page.</p>}
+              {(panel === "header" || panel === "footer") && (
+                <ZonePanel zone={panel} site={site} draft={draft} change={change} fieldCtx={fieldCtx} />
+              )}
+            </Flyout>
+          )}
+          <Canvas html={html} device={device} editing={editing} selected={sel} reveal={reveal} onSelect={select}
+            onText={onText}
+            onImage={(t) => setPhoto({ target: t, multi: false })}
+            onImages={(t) => setPhoto({ target: t, multi: true })}
+            onAddEnd={() => setAdding({ after: null })}
+            overlay={(g) => (
+              <>
+                {g.hover && (
+                  <div className="sb-hover" style={{ left: g.hover.x, top: g.hover.y, width: g.hover.w, height: g.hover.h }}>
+                    <span className="sb-tag">{label(g.hoverLabel)}</span>
                   </div>
-                )
-              ))}
-              <button className="linkish small" style={{ alignSelf: "start" }} onClick={() => setShowAllTemplates(!showAllTemplates)}>
-                {showAllTemplates ? "Hide simple templates" : "Show simple templates"}
-              </button>
-              {current && <p className="small muted">{current.description}</p>}
-              <p className="small muted">To start over with this template's sample page,{" "}
-                <button className="linkish" onClick={() => window.confirm("Replace your page with this template's starter page?") && void action("/template", { template: draft.template, start_fresh: true })}>reset to its starter page</button>.
-              </p>
-
-              <h3>Colours</h3>
-              <div className="color-row">
-                {([["accent", "Accent"], ["background", "Background"], ["text", "Text"], ["dark", "Dark bands"]] as const).map(([k, l]) => (
-                  <label key={k} className="stack color-field" style={{ gap: 4 }}>
-                    <span className="small">{l}</span>
-                    <input type="color" value={draft.theme[k]} onChange={(e) => setTheme({ [k]: e.target.value })} />
-                  </label>
-                ))}
-              </div>
-              <h3>Fonts</h3>
-              {([["heading_font", "Headings", site.fonts], ["body_font", "Text", site.fonts], ["script_font", "Handwritten touches", site.script_fonts]] as const).map(([k, l, list]) => (
-                <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="small">{l}</span>
-                  <select className="select" style={{ fontFamily: `'${draft.theme[k]}'` }} value={draft.theme[k]} onChange={(e) => setTheme({ [k]: e.target.value })}>
-                    {list.map((f) => <option key={f} style={{ fontFamily: `'${f}'` }}>{f}</option>)}
-                  </select>
-                </label>
-              ))}
-              <FieldList fields={site.theme_fields} values={draft.theme as unknown as Record<string, unknown>} ctx={fieldCtx}
-                onChange={(v) => setTheme(v as Partial<SiteContent["theme"]>)} />
-
-              <h3>Header and footer</h3>
-              <FieldList fields={site.layout_fields} values={draft.layout} ctx={fieldCtx}
-                onChange={(v) => change({ ...draft, layout: v })} />
+                )}
+                {g.selected && (
+                  <div className="sb-selected" style={{ left: g.selected.x, top: g.selected.y, width: g.selected.w, height: g.selected.h }} />
+                )}
+                {g.selected && toolbar(g.selected, g.canvas.w)}
+              </>
+            )} />
+          {tips && editing && (
+            <div className="sb-tips" role="note">
+              <Ico name="sparkle" />
+              <span><strong>Click any text</strong> on your page to change it. <strong>Click a photo</strong> to swap it.
+                Click a section for its toolbar. Nothing goes live until you press <strong>Publish</strong>.</span>
+              <button className="btn small" onClick={dismissTips}>Got it</button>
             </div>
           )}
-
-          {tab === "sections" && (
-            <div className="stack" style={{ gap: 8 }}>
-              <p className="small muted">The page shows these from top to bottom. Click one to edit it.</p>
-              {draft.sections.map((s, i) => (
-                <div key={s.id} className={`section-row ${s.visible ? "" : "hidden-section"}`}>
-                  <div className="section-head">
-                    <button className="section-title" onClick={() => setOpen(open === s.id ? null : s.id)} aria-expanded={open === s.id}>
-                      <span aria-hidden>{spec(s.type)?.icon}</span> {label(s.type)}
-                    </button>
-                    <button className="icon-btn" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
-                    <button className="icon-btn" title="Move down" aria-label="Move down" disabled={i === draft.sections.length - 1} onClick={() => move(i, 1)}>↓</button>
-                    <button className="icon-btn" title={s.visible ? "Hide" : "Show"} aria-label={s.visible ? "Hide" : "Show"} onClick={() => setSection(s.id, { visible: !s.visible })}>
-                      {s.visible ? "👁" : "🚫"}
-                    </button>
-                  </div>
-                  {open === s.id && (
-                    <div className="section-body">
-                      <SectionEditor section={s} spec={spec(s.type)} onChange={(props) => setSection(s.id, { props })}
-                        ctx={fieldCtx} locationId={location.id} onCopy={applyCopy} />
-                      <button className="btn small danger" style={{ marginTop: 12 }}
-                        onClick={() => change({ ...draft, sections: draft.sections.filter((x) => x.id !== s.id) })}>Remove section</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-              <select className="select" value="" onChange={(e) => addSection(e.target.value)} aria-label="Add a section">
-                <option value="">+ Add a section…</option>
-                {site.sections.map((s) => <option key={s.type} value={s.type}>{s.icon} {s.label}</option>)}
-              </select>
-            </div>
-          )}
-
-          {tab === "settings" && <Settings site={site} draft={draft} versions={versions} change={change} action={action} />}
-        </aside>
-
-        <section className="site-preview">
-          <div className="spread" style={{ marginBottom: 8 }}>
-            <div className="seg">
-              <button className={device === "desktop" ? "on" : ""} onClick={() => setDevice("desktop")}>Desktop</button>
-              <button className={device === "phone" ? "on" : ""} onClick={() => setDevice("phone")}>Phone</button>
-            </div>
-            <span className="small muted">Preview of your draft</span>
-          </div>
-          <div ref={box} className={`preview-frame ${device}`}>
-            <iframe ref={frame} title="Website preview" srcDoc={html} sandbox="allow-same-origin"
-              style={device === "desktop" && boxSize.w ? {
-                width: DESKTOP_WIDTH, height: boxSize.h / (boxSize.w / DESKTOP_WIDTH), maxWidth: "none", flexShrink: 0,
-                transform: `scale(${boxSize.w / DESKTOP_WIDTH})`, transformOrigin: "0 0",
-              } : undefined}
-              onLoad={() => frame.current?.contentWindow?.scrollTo(0, scroll.current)} />
-          </div>
-        </section>
+          {!editing && <div className="sb-preview-note">This is how visitors will see your website.</div>}
+        </main>
       </div>
-    </div>
-  );
-}
 
-function Settings({ site, draft, versions, change, action }: {
-  site: SiteEditor; draft: SiteContent; versions: Version[];
-  change: (c: SiteContent) => void; action: (path: string, body?: unknown, done?: string) => Promise<void>;
-}) {
-  const [slug, setSlug] = useState(site.slug);
-  const [domain, setDomain] = useState(site.custom_domain ?? "");
-  const apiHost = site.url.startsWith("http") && !site.custom_domain ? site.url.split("/sites/")[0] : "";
-  return (
-    <div className="stack">
-      <h3>Web address</h3>
-      <div className="row">
-        <span className="small muted">{apiHost || "…"}/sites/</span>
-        <input className="input" style={{ flex: 1, minWidth: 120 }} value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
-        <button className="btn small" disabled={slug === site.slug} onClick={() => void action("/settings", { slug }, "Web address saved.")}>Save</button>
-      </div>
-      <h3>Your own domain (optional)</h3>
-      <div className="row">
-        <input className="input" style={{ flex: 1 }} placeholder="www.yourrestaurant.ca" value={domain} onChange={(e) => setDomain(e.target.value)} />
-        <button className="btn small" onClick={() => void action("/settings", domain ? { custom_domain: domain } : { clear_domain: true }, "Domain saved.")}>Save</button>
-      </div>
-      <p className="small muted">
-        At your domain registrar, point the domain at this app with a CNAME record, and add the same domain to the
-        api service in Railway (Settings → Networking → Custom domain). Ask us if you need a hand.
-      </p>
-      <h3>Search engines and sharing</h3>
-      <label className="stack" style={{ gap: 4 }}>
-        <span className="small">Page title</span>
-        <input className="input" maxLength={70} value={draft.seo.title} onChange={(e) => change({ ...draft, seo: { ...draft.seo, title: e.target.value } })} />
-      </label>
-      <label className="stack" style={{ gap: 4 }}>
-        <span className="small">Description (shown in Google results, up to 160 characters)</span>
-        <textarea className="textarea" rows={3} maxLength={160} value={draft.seo.description} onChange={(e) => change({ ...draft, seo: { ...draft.seo, description: e.target.value } })} />
-      </label>
-      <h3>Social links</h3>
-      {(["instagram", "facebook", "tiktok"] as const).map((k) => (
-        <input key={k} className="input" placeholder={`https://${k}.com/yourrestaurant`} value={draft.links[k]}
-          onChange={(e) => change({ ...draft, links: { ...draft.links, [k]: e.target.value } })} />
-      ))}
-      <h3>Published versions</h3>
-      {versions.length === 0 && <p className="small muted">Nothing published yet.</p>}
-      <ul className="list small">
-        {versions.map((v) => (
-          <li key={v.id} className="spread">
-            <span>{new Date(v.created_at).toLocaleString()} · {v.template}{v.live && <span className="pill good" style={{ marginLeft: 6 }}>live</span>}</span>
-            {!v.live && <button className="btn small" onClick={() => void action(`/versions/${v.id}/restore`, {}, "Loaded into your draft. Check it, then publish.")}>Restore</button>}
-          </li>
-        ))}
-      </ul>
-      {site.is_published && (
-        <button className="btn small danger" style={{ alignSelf: "start" }}
-          onClick={() => window.confirm("Take the website offline? Visitors will see a 'not published' page.") && void action("/unpublish", {}, "The website is offline.")}>
-          Take website offline
-        </button>
+      {toast && <div className="sb-toast" role="status">{toast}</div>}
+      {photo && (
+        <PhotoModal images={site.images} apiBase={API_URL} uploadPath={`${base}/images`} onUploaded={onUploaded}
+          multi={photo.multi} onClose={() => setPhoto(null)} onDone={choosePhotos}
+          current={Array.isArray(photoCurrent) ? (photoCurrent as string[]) : photoCurrent ? [String(photoCurrent)] : []} />
       )}
+      {adding && <AddSectionModal site={site} onPick={addSection} onClose={() => setAdding(null)} />}
     </div>
   );
 }

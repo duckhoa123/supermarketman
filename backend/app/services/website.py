@@ -151,7 +151,8 @@ async def menu_choices(session: AsyncSession, location: Location) -> list[dict]:
 # --- Live data for rendering ------------------------------------------------------------------------------------
 
 
-async def site_data(session: AsyncSession, location: Location, site: Website, preview: bool) -> site_render.SiteData:
+async def site_data(session: AsyncSession, location: Location, site: Website, preview: bool,
+                    edit: bool = False) -> site_render.SiteData:
     items = list(await session.scalars(select(Item).where(
         Item.location_id == location.id, Item.active.is_(True), Item.orderable.is_(True)).order_by(Item.name)))
     # Categories in order of popularity, so the best-sellers' section comes first.
@@ -186,16 +187,16 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         book_url=f"{web}/?book={location.id}" if location.listed and location.accepts_bookings else None,
         book_form_url=f"{web}/" if location.listed and location.accepts_bookings else None,
         location_id=location.id, today=datetime.now(_tz(location.timezone)).date().isoformat(),
-        asset_base=f"{base}/sites/{site.slug}/assets", preview=preview,
+        asset_base=f"{base}/sites/{site.slug}/assets", preview=preview, edit=edit and preview,
     )
 
 
-async def render_page(session: AsyncSession, site: Website, preview: bool) -> str | None:
+async def render_page(session: AsyncSession, site: Website, preview: bool, edit: bool = False) -> str | None:
     content = site.draft if preview else site.published
     if not content:
         return None
     location = await session.get(Location, site.location_id)
-    data = await site_data(session, location, site, preview)
+    data = await site_data(session, location, site, preview, edit)
     return site_render.render(content, data, public_url(site))
 
 

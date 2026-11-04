@@ -65,10 +65,12 @@ async def choose_template(body: TemplateIn, location: Location = Depends(require
 
 
 @router.get("/preview", response_class=HTMLResponse)
-async def preview(location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
-    """The draft as it would look once published (only for the restaurant's team)."""
+async def preview(edit: bool = False, location: Location = Depends(require_location),
+                  session: AsyncSession = Depends(get_session)):
+    """The draft as it would look once published (only for the restaurant's team). edit=1 adds the markers the
+    visual editor uses (which text and photos can be clicked, each section's id)."""
     site = await website.get_or_create(session, location)
-    return HTMLResponse(await website.render_page(session, site, preview=True) or site_render.not_found_page(),
+    return HTMLResponse(await website.render_page(session, site, preview=True, edit=edit) or site_render.not_found_page(),
                         headers={"Cache-Control": "no-store"})
 
 

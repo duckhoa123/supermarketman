@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from app.services.geo import WEEKDAY_KEYS
 from app.services.site_icons import svg
-from app.services.site_templates import FONTS, clean_content
+from app.services.site_templates import FONTS, SECTIONS, clean_content
 
 DAY_NAMES = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
              "sat": "Saturday", "sun": "Sunday"}
@@ -50,6 +50,7 @@ class SiteData:
     today: str = ""  # YYYY-MM-DD at the restaurant
     asset_base: str = ""  # images are served at {asset_base}/{asset_id}
     preview: bool = False
+    edit: bool = False  # the visual editor: mark editable text, photos and sections
 
     def item(self, item_id: str | None) -> MenuItem | None:
         for _, items in self.menu:
@@ -137,18 +138,60 @@ class Ctx:
     site: SiteData
     template: str
     anchors: set[str]
+    edit: bool = False  # the owner's editor: mark what can be clicked and edited
+    sid: str = ""  # the section being rendered
 
 
-def _img(site: SiteData, asset_id: str | None, alt: str, cls: str = "", eager: bool = False) -> str:
+# --- Edit-mode markers (only in the editor's preview; never on the public site) ---------------------------------
+
+
+def _ed(ctx: "Ctx | None", field: str, multiline: bool = False) -> str:
+    """Marks an element whose text the owner can edit in place: data-e="<section id>:<field>"."""
+    if not (ctx and ctx.edit):
+        return ""
+    target = field if ":" in field else f"{ctx.sid}:{field}"
+    return f' data-e="{e(target)}"' + (' data-ml="1"' if multiline else "")
+
+
+def _ei(ctx: "Ctx | None", field: str) -> str:
+    """Marks a photo the owner can click to change: data-img="<section id>:<field>"."""
+    if not (ctx and ctx.edit):
+        return ""
+    target = field if ":" in field else f"{ctx.sid}:{field}"
+    return f' data-img="{e(target)}"'
+
+
+def _txt(ctx: "Ctx | None", p: dict, field: str, tag: str, cls: str = "", ph: str = "", path: str = "") -> str:
+    """A text element from a section field. Empty fields only appear in the editor, as a prompt to type.
+    path: where the text lives when it isn't a top-level field (e.g. "items.2.title")."""
+    value = p.get(field)
+    klass = f' class="{cls}"' if cls else ""
+    target = path or field
+    if value:
+        return f"<{tag}{klass}{_ed(ctx, target)}>{e(value)}</{tag}>"
+    if ctx and ctx.edit:
+        return f'<{tag} class="{cls} edit-empty"{_ed(ctx, target)} data-ph="{e(ph)}"></{tag}>'
+    return ""
+
+
+def _photo_chip(ctx: Ctx, field: str, label: str) -> str:
+    """In the editor, a button on sections that can take a photo but don't have one."""
+    return f'<button type="button" class="edit-chip"{_ei(ctx, field)}>{e(label)}</button>' if ctx.edit else ""
+
+
+def _img(site: SiteData, asset_id: str | None, alt: str, cls: str = "", eager: bool = False, ed: str = "") -> str:
     if not asset_id:
         return ""
     lazy = "" if eager else ' loading="lazy"'
-    return f'<img class="{cls}" src="{e(site.asset_base)}/{e(asset_id)}" alt="{e(alt)}"{lazy}>'
+    return f'<img class="{cls}" src="{e(site.asset_base)}/{e(asset_id)}" alt="{e(alt)}"{lazy}{ed}>'
 
 
-def _ph(ctx: Ctx, label: str, cls: str = "") -> str:
+def _ph(ctx: Ctx, label: str, cls: str = "", ed: str = "") -> str:
     """A dashed 'add a photo' box, only in the owner's preview."""
-    return f'<div class="ph {cls}">{e(label)}</div>' if ctx.site.preview else ""
+    if not ctx.site.preview:
+        return ""
+    label = "Click to add a photo" if ctx.edit else label
+    return f'<div class="ph {cls}"{ed}>{e(label)}</div>'
 
 
 def _book_href(ctx: Ctx) -> str | None:
@@ -176,9 +219,9 @@ def _actions(*buttons: str) -> str:
     return f'<div class="actions">{inner}</div>' if inner else ""
 
 
-def _head(p: dict, align: str = "center", key: str = "heading", extra: str = "") -> str:
-    eb = f'<p class="eyebrow">{e(p.get("eyebrow"))}</p>' if p.get("eyebrow") else ""
-    h2 = f"<h2>{e(p.get(key))}</h2>" if p.get(key) else ""
+def _head(p: dict, align: str = "center", key: str = "heading", extra: str = "", ctx: Ctx | None = None) -> str:
+    eb = _txt(ctx, p, "eyebrow", "p", "eyebrow", "Add a small line above the heading")
+    h2 = _txt(ctx, p, key, "h2", "", "Add a heading")
     if not (eb or h2 or extra):
         return ""
     if align == "split":
@@ -265,21 +308,23 @@ def s_hero(p: dict, ctx: Ctx, anchor: str | None) -> str:
     site = ctx.site
     layout = p.get("layout", "split")
     title = p.get("title") or site.name
-    eb = f'<p class="eyebrow">{e(p.get("eyebrow"))}</p>' if p.get("eyebrow") else ""
-    tagline = f'<p class="lead">{e(p.get("tagline"))}</p>' if p.get("tagline") else ""
+    eb = _txt(ctx, p, "eyebrow", "p", "eyebrow", "Add a small line, e.g. Good food, good mood")
+    tagline = _txt(ctx, p, "tagline", "p", "lead", "Add a tagline")
     overlay = layout in ("overlay", "centered")
     buttons = _actions(_button("order", ctx) if p.get("order_button", True) else "",
                        _button("book", ctx, "light" if overlay else "alt") if p.get("booking_button", True) else "")
     if not buttons and site.phone:
         buttons = _actions(_button("call", ctx))
-    copy_html = f'<div class="hero-copy">{eb}<h1>{e(title)}</h1>{tagline}{buttons}</div>'
+    copy_html = f'<div class="hero-copy">{eb}<h1{_ed(ctx, "title")}>{e(title)}</h1>{tagline}{buttons}</div>'
     img_id = p.get("image")
     aid = f' id="{anchor}"' if anchor else ""
     if overlay:
-        bg = _img(site, img_id, title, "hero-bg", eager=True)
+        bg = _img(site, img_id, title, "hero-bg", eager=True, ed=_ei(ctx, "image"))
+        chip = "" if bg else _photo_chip(ctx, "image", "+ Add a background photo")
         return (f'<section class="hero hero-{layout} {"has-img" if bg else "no-img"}"{aid}>{bg}'
-                f'<div class="hero-shade"></div><div class="wrap hero-in">{copy_html}</div></section>')
-    media = _img(site, img_id, title, "hero-img", eager=True) or _ph(ctx, "Add a photo in Big welcome", "ph-hero")
+                f'<div class="hero-shade"></div>{chip}<div class="wrap hero-in">{copy_html}</div></section>')
+    media = (_img(site, img_id, title, "hero-img", eager=True, ed=_ei(ctx, "image"))
+             or _ph(ctx, "Add a photo in Big welcome", "ph-hero", _ei(ctx, "image")))
     grid = "hero-grid" if media else "hero-grid no-media"
     media_html = f'<div class="hero-media">{media}</div>' if media else ""
     return (f'<section class="sec hero hero-{layout} bg-{e(p.get("bg", "page"))}"{aid}><div class="wrap">'
@@ -287,19 +332,22 @@ def s_hero(p: dict, ctx: Ctx, anchor: str | None) -> str:
 
 
 def s_announcement(p: dict, ctx: Ctx, anchor: str | None) -> str:
-    if not p.get("text"):
+    if not p.get("text") and not ctx.edit:
         return ""
-    return f'<div class="announce bg-{e(p.get("bg", "accent"))}"><div class="wrap">{e(p["text"])}</div></div>'
+    text = _txt(ctx, p, "text", "span", "", "Write an announcement, e.g. Now open for brunch on Sundays")
+    return f'<div class="announce bg-{e(p.get("bg", "accent"))}"><div class="wrap">{text}</div></div>'
 
 
 def s_features(p: dict, ctx: Ctx, anchor: str | None) -> str:
-    rows = [r for r in p.get("items") or [] if r.get("title") or r.get("text")]
+    rows = [(i, r) for i, r in enumerate(p.get("items") or []) if ctx.edit or r.get("title") or r.get("text")]
     if not rows:
         return ""
     layout = p.get("layout", "icons")
-    cells = "".join(f'<div class="feat-item"><span class="feat-ic">{svg(r.get("icon") or "star")}</span>'
-                    f'<div><h3>{e(r.get("title"))}</h3><p>{e(r.get("text"))}</p></div></div>' for r in rows)
-    head = _head(p)
+    cells = "".join(
+        f'<div class="feat-item"><span class="feat-ic">{svg(r.get("icon") or "star")}</span><div>'
+        f'{_txt(ctx, r, "title", "h3", "", "Title", f"items.{i}.title")}'
+        f'{_txt(ctx, r, "text", "p", "", "A short line", f"items.{i}.text")}</div></div>' for i, r in rows)
+    head = _head(p, ctx=ctx) if (p.get("eyebrow") or p.get("heading")) else ""
     return _sec("features", p, f'{head}<div class="feat feat-{layout}">{cells}</div>', anchor,
                 "has-head" if head else "")
 
@@ -311,21 +359,33 @@ def _badge(text: str, uid: str) -> str:
             f'textLength="280" lengthAdjust="spacing">{e(ring)}</textPath></text></svg>{svg("utensils")}</div>')
 
 
+def _body(ctx: Ctx, p: dict, field: str, cls: str, ph: str, tag: str = "div") -> str:
+    """Paragraphs (a blank line between them). Edited as one block in the editor."""
+    paras = _paragraphs(p.get(field))
+    if ctx.edit:
+        empty = "" if paras else " edit-empty"
+        return f'<{tag} class="{cls}{empty}"{_ed(ctx, field, multiline=True)} data-ph="{e(ph)}">{paras}</{tag}>'
+    return f'<{tag} class="{cls}">{paras}</{tag}>' if paras else ""
+
+
 def s_about(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
     site = ctx.site
     if not (p.get("body") or p.get("image") or site.preview):
         return ""
-    main = _img(site, p.get("image"), p.get("heading") or site.name, "about-img")
-    second = _img(site, p.get("image2"), site.name, "about-img2") if main else ""
+    main = _img(site, p.get("image"), p.get("heading") or site.name, "about-img", ed=_ei(ctx, "image"))
+    second = _img(site, p.get("image2"), site.name, "about-img2", ed=_ei(ctx, "image2")) if main else ""
     badge = _badge(p["badge"], uid) if p.get("badge") and main else ""
     if not main:
-        main = _ph(ctx, "Add photos in Our story", "ph-about")
+        main = _ph(ctx, "Add photos in Our story", "ph-about", _ei(ctx, "image"))
     media = (f'<div class="about-media {"pair" if second else "single"}">{main}{second}{badge}</div>'
              if main else "")
-    signoff = f'<p class="signoff">{e(p.get("signoff"))}</p>' if p.get("signoff") else ""
-    body = _paragraphs(p.get("body")) or ('<p class="ph-text">Tell guests who you are: add your story in '
-                                          'Sections → Our story.</p>' if site.preview else "")
-    copy_html = (f'<div class="about-copy">{_head(p, "left")}{body}{signoff}'
+    signoff = _txt(ctx, p, "signoff", "p", "signoff", "Add a handwritten line, e.g. Come hungry, leave happy!")
+    if ctx.edit:
+        body = _body(ctx, p, "body", "about-body", "Tell guests your story: who you are and what you cook")
+    else:
+        body = _paragraphs(p.get("body")) or ('<p class="ph-text">Tell guests who you are: add your story in '
+                                              'Sections → Our story.</p>' if site.preview else "")
+    copy_html = (f'<div class="about-copy">{_head(p, "left", ctx=ctx)}{body}{signoff}'
                  f'{_actions(_button(p.get("button", "none"), ctx))}</div>')
     layout = e(p.get("layout", "images-right"))
     return _sec("about", p, f'<div class="about-grid {layout} {"" if media else "no-media"}">{media}{copy_html}</div>',
@@ -334,18 +394,20 @@ def s_about(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
 
 def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
     site = ctx.site
-    chosen = []
-    for row in p.get("items") or []:
+    chosen = []  # (item, photo, label, index in the owner's list or None for best sellers)
+    for i, row in enumerate(p.get("items") or []):
         it = site.item(row.get("item"))
         if it:
-            chosen.append((it, row.get("image"), row.get("label")))
+            chosen.append((it, row.get("image"), row.get("label"), i))
     if not chosen:  # nothing picked yet: the best sellers
-        chosen = [(it, None, "") for it in (site.item(i) for i in site.best_sellers[:4]) if it]
+        chosen = [(it, None, "", None) for it in (site.item(i) for i in site.best_sellers[:4]) if it]
     if not chosen:
         return ""
     cards = []
-    for it, img, label in chosen:
-        media = _img(site, img, it.name) or f'<div class="mono"><span>{e(it.name[:1].upper())}</span></div>'
+    for it, img, label, idx in chosen:
+        ed = _ei(ctx, f"items.{idx}.image") if idx is not None else ""
+        media = (_img(site, img, it.name, ed=ed)
+                 or f'<div class="mono"{ed}><span>{e(it.name[:1].upper())}</span></div>')
         tag = f'<span class="dish-label">{e(label)}</span>' if label else ""
         desc = f'<p class="dish-desc">{e(it.description)}</p>' if it.description else ""
         cards.append(f'<article class="dish-card"><div class="dish-media">{media}{tag}</div><div class="dish-body">'
@@ -357,7 +419,7 @@ def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
     elif p.get("button") == "order" and site.order_url:
         link = f'<a class="link-arrow" href="{e(site.order_url)}">Order online {svg("arrow")}</a>'
     layout = e(p.get("layout", "cards"))
-    return _sec("dishes", p, f'{_head(p, "split", extra=link)}<div class="dish-grid dishes-{layout}">'
+    return _sec("dishes", p, f'{_head(p, "split", extra=link, ctx=ctx)}<div class="dish-grid dishes-{layout}">'
                 f'{"".join(cards)}</div>', anchor)
 
 
@@ -380,31 +442,34 @@ def s_menu(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
         blocks = "".join(f'<div class="menu-cat"><h3>{e(c)}</h3><ul>{_dish_rows(items, p)}</ul></div>'
                          for c, items in cats)
         body = f'<div class="menu-grid menu-{e(layout)}">{blocks}</div>'
-    return _sec("menu", p, f"{_head(p)}{body}{foot}", anchor)
+    return _sec("menu", p, f"{_head(p, ctx=ctx)}{body}{foot}", anchor)
 
 
-def _band_image(site: SiteData, p: dict) -> str:
-    img = _img(site, p.get("image"), "", "band-bg")
-    return f'{img}<div class="band-shade"></div>' if img else ""
+def _band_image(ctx: Ctx, p: dict) -> str:
+    img = _img(ctx.site, p.get("image"), "", "band-bg", ed=_ei(ctx, "image"))
+    if img:
+        return f'{img}<div class="band-shade"></div>'
+    return _photo_chip(ctx, "image", "+ Add a background photo")
 
 
 def s_occasions(p: dict, ctx: Ctx, anchor: str | None) -> str:
-    rows = [r for r in p.get("items") or [] if r.get("title")]
-    if not (rows or p.get("heading")):
+    rows = [(i, r) for i, r in enumerate(p.get("items") or []) if ctx.edit or r.get("title")]
+    if not (rows or p.get("heading") or ctx.edit):
         return ""
-    bg = _band_image(ctx.site, p)
-    cells = "".join(f'<div class="occ-item">{svg(r.get("icon") or "star")}<span>{e(r.get("title"))}</span></div>'
-                    for r in rows)
-    text = f'<p class="muted">{e(p.get("text"))}</p>' if p.get("text") else ""
-    inner = (f'<div class="occ-grid"><div class="occ-copy">{_head(p, "left")}{text}'
+    bg = _band_image(ctx, p)
+    has_img = bool(p.get("image"))
+    cells = "".join(f'<div class="occ-item">{svg(r.get("icon") or "star")}'
+                    f'{_txt(ctx, r, "title", "span", "", "Occasion", f"items.{i}.title")}</div>' for i, r in rows)
+    text = _txt(ctx, p, "text", "p", "muted", "Add a sentence about the occasions you host")
+    inner = (f'<div class="occ-grid"><div class="occ-copy">{_head(p, "left", ctx=ctx)}{text}'
              f'{_actions(_button(p.get("button", "none"), ctx))}</div>'
              f'{f"<div class=occ-items>{cells}</div>" if cells else ""}</div>')
-    return _sec("occasions", p, inner, anchor, "has-img" if bg else "", pre=bg)
+    return _sec("occasions", p, inner, anchor, "has-img" if has_img else "", pre=bg)
 
 
 def s_reserve(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
     site = ctx.site
-    text = f'<p class="muted">{e(p.get("text"))}</p>' if p.get("text") else ""
+    text = _txt(ctx, p, "text", "p", "muted", "Add a line, e.g. We'll confirm by text within the hour")
     if site.book_form_url:
         times = _time_options(site.hours)
         default = "19:00" if "19:00" in times else times[len(times) // 2]
@@ -421,11 +486,11 @@ def s_reserve(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
         form = _actions(_button("call", ctx))
     else:
         return ""
-    card = f'<div class="res-card">{_head(p, "left")}{text}{form}</div>'
+    card = f'<div class="res-card">{_head(p, "left", ctx=ctx)}{text}{form}</div>'
     reviews = _good_reviews(site, p.get("min_rating", 4), 6) if p.get("show_reviews", True) else []
     side = ""
     if reviews:
-        eb = f'<p class="eyebrow">{e(p.get("reviews_heading"))}</p>' if p.get("reviews_heading") else ""
+        eb = _txt(ctx, p, "reviews_heading", "p", "eyebrow", "Add a small heading")
         side = f'<div class="res-reviews">{eb}{svg("quote", "quote-ic", 44)}{_slider(f"rs-{uid}", reviews)}</div>'
     return _sec("reserve", p, f'<div class="res-grid {"" if side else "single"}">{card}{side}</div>', anchor)
 
@@ -434,24 +499,34 @@ def s_chef(p: dict, ctx: Ctx, anchor: str | None) -> str:
     site = ctx.site
     if not (p.get("name") or p.get("body") or p.get("image") or site.preview):
         return ""
-    img = _img(site, p.get("image"), p.get("name") or "Our chef") or _ph(ctx, "Add a portrait in Meet the chef", "ph-chef")
+    img = (_img(site, p.get("image"), p.get("name") or "Our chef", ed=_ei(ctx, "image"))
+           or _ph(ctx, "Add a portrait in Meet the chef", "ph-chef", _ei(ctx, "image")))
     media = f'<div class="chef-media">{img}</div>' if img else ""
-    role = f'<p class="chef-role">{e(p.get("role"))}</p>' if p.get("role") else ""
-    body = (f'<blockquote class="chef-quote">{_paragraphs(p.get("body"))}</blockquote>' if p.get("body") else
-            '<p class="ph-text">Add a few words from your chef.</p>' if site.preview else "")
-    head = _head({"eyebrow": p.get("eyebrow"), "heading": p.get("name") or ("Your chef" if site.preview else "")},
-                 "left")
+    role = _txt(ctx, p, "role", "p", "chef-role", "Role, e.g. Head chef and owner")
+    if ctx.edit:
+        body = _body(ctx, p, "body", "chef-quote", "Add a few words from your chef", "blockquote")
+        head = (f'<div class="sec-head left">{_txt(ctx, p, "eyebrow", "p", "eyebrow", "Add a small line")}'
+                f'{_txt(ctx, p, "name", "h2", "", "Your chef’s name")}</div>')
+    else:
+        body = (f'<blockquote class="chef-quote">{_paragraphs(p.get("body"))}</blockquote>' if p.get("body") else
+                '<p class="ph-text">Add a few words from your chef.</p>' if site.preview else "")
+        head = _head({"eyebrow": p.get("eyebrow"), "heading": p.get("name") or ("Your chef" if site.preview else "")},
+                     "left")
     return _sec("chef", p, f'<div class="chef-grid {e(p.get("layout", "image-left"))} {"" if media else "no-media"}">'
                 f'{media}<div class="chef-copy">{head}{role}{body}</div></div>', anchor)
 
 
 def s_gallery(p: dict, ctx: Ctx, anchor: str | None) -> str:
     imgs = p.get("images") or []
+    pick = f' data-imgs="{e(ctx.sid)}:images"' if ctx.edit else ""
     if not imgs:
-        return _sec("gallery", p, _head(p) + _ph(ctx, "Add photos in Photo gallery", "ph-wide"), anchor) \
-            if ctx.site.preview else ""
+        if not ctx.site.preview:
+            return ""
+        label = "Click to add photos to your gallery" if ctx.edit else "Add photos in Photo gallery"
+        return _sec("gallery", p, f'{_head(p, ctx=ctx)}<div class="ph ph-wide"{pick}>{e(label)}</div>', anchor)
     tiles = "".join(f"<figure>{_img(ctx.site, i, ctx.site.name + ' photo')}</figure>" for i in imgs)
-    return _sec("gallery", p, f'{_head(p)}<div class="gal gal-{e(p.get("layout", "grid"))}">{tiles}</div>', anchor)
+    return _sec("gallery", p, f'{_head(p, ctx=ctx)}<div class="gal gal-{e(p.get("layout", "grid"))}"{pick}>{tiles}</div>',
+                anchor)
 
 
 def s_reviews(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
@@ -463,10 +538,10 @@ def s_reviews(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
            if site.rating else "")
     if p.get("layout") == "slider":
         body = f'{svg("quote", "quote-ic", 44)}{_slider(f"rv-{uid}", good)}'
-        return _sec("reviews", p, f'{_head(p, extra=avg)}<div class="reviews-slider">{body}</div>', anchor)
+        return _sec("reviews", p, f'{_head(p, extra=avg, ctx=ctx)}<div class="reviews-slider">{body}</div>', anchor)
     cards = "".join(f'<blockquote class="review">{_stars(r["rating"])}<p>“{e(r["text"][:400])}”</p>'
                     f'<cite>{e(r.get("author") or "Guest")}</cite></blockquote>' for r in good)
-    return _sec("reviews", p, f'{_head(p, extra=avg)}<div class="review-grid">{cards}</div>', anchor)
+    return _sec("reviews", p, f'{_head(p, extra=avg, ctx=ctx)}<div class="review-grid">{cards}</div>', anchor)
 
 
 def s_visit(p: dict, ctx: Ctx, anchor: str | None) -> str:
@@ -488,18 +563,27 @@ def s_visit(p: dict, ctx: Ctx, anchor: str | None) -> str:
                     f'bbox={quote(bbox)}&amp;layer=mapnik&amp;marker={site.lat},{site.lng}"></iframe>')
     if not (hours or contact or map_html):
         return ""
-    return _sec("visit", p, f'<div class="visit-grid {"" if map_html else "no-map"}"><div>{_head(p, "left")}{hours}'
-                f'{"".join(contact)}</div>{map_html}</div>', anchor)
+    return _sec("visit", p, f'<div class="visit-grid {"" if map_html else "no-map"}"><div>{_head(p, "left", ctx=ctx)}'
+                f'{hours}{"".join(contact)}</div>{map_html}</div>', anchor)
 
 
 def s_cta(p: dict, ctx: Ctx, anchor: str | None) -> str:
     btn = _actions(_button(p.get("button", "order"), ctx))
-    if not btn and not p.get("text"):
+    if not btn and not p.get("text") and not ctx.edit:
         return ""
-    bg = _band_image(ctx.site, p)
-    text = f'<p class="muted">{e(p.get("text"))}</p>' if p.get("text") else ""
-    return _sec("cta", p, f"{_head(p)}{text}{btn}", anchor, "has-img" if bg else "", pre=bg)
+    bg = _band_image(ctx, p)
+    text = _txt(ctx, p, "text", "p", "muted", "Add a short line")
+    return _sec("cta", p, f"{_head(p, ctx=ctx)}{text}{btn}", anchor, "has-img" if p.get("image") else "", pre=bg)
 
+
+BLANK_REASONS = {
+    "menu": "shows your menu once it comes in from your POS",
+    "dishes": "shows your dishes once your menu comes in from your POS",
+    "reviews": "shows your Google reviews once you have some (connect Google in Settings)",
+    "visit": "shows your hours and address (add them in Settings)",
+    "reserve": "turn on bookings or add a phone number in Settings",
+    "features": "add highlights in this section's settings",
+}
 
 RENDERERS = {"hero": s_hero, "announcement": s_announcement, "features": s_features, "about": s_about,
              "dishes": s_dishes, "menu": s_menu, "occasions": s_occasions, "reserve": s_reserve, "chef": s_chef,
@@ -794,6 +878,30 @@ flex-wrap:wrap;color:var(--c-muted);font-size:.82rem}
 """
 
 
+# Only in the visual editor: what can be clicked, typed into, or added.
+EDIT_CSS = """
+[data-e]{cursor:text;border-radius:4px;transition:box-shadow .12s,background .12s}
+[data-e]:hover{box-shadow:0 0 0 2px rgba(124,92,255,.55)}
+[data-e]:focus,[data-e].editing{outline:none;box-shadow:0 0 0 2px #7c5cff;background:rgba(124,92,255,.08)}
+.edit-empty{min-height:1.2em;min-width:6em}span.edit-empty{display:inline-block}
+.edit-empty:empty::before{content:attr(data-ph);opacity:.45;font-style:italic}
+[data-img],[data-imgs]{cursor:pointer}
+[data-img]:hover,[data-imgs]:hover{outline:3px solid #7c5cff;outline-offset:-3px}
+.edit-chip{position:absolute;top:18px;right:18px;z-index:6;background:#fff;color:#2b2140;border:0;border-radius:999px;
+padding:10px 16px;font:600 14px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.25);cursor:pointer}
+.edit-chip:hover{background:#f1eeff}
+.edit-bar{padding:16px 20px;text-align:center;font:600 14px/1.4 system-ui,sans-serif;color:#5b5470;cursor:pointer;
+background:repeating-linear-gradient(45deg,#f7f5fc 0 12px,#efecf7 12px 24px);border-top:2px dashed #cbc2e8;
+border-bottom:2px dashed #cbc2e8}
+.edit-hidden{color:#8b84a0}
+.edit-add{margin:28px auto;max-width:1152px;width:calc(100% - 48px);padding:30px;text-align:center;
+border:2px dashed #b9aef0;border-radius:14px;color:#6a55e0;font:600 16px system-ui,sans-serif;cursor:pointer;background:#faf9ff}
+.edit-add:hover{background:#f1eeff}
+.edit-sec{position:relative}
+.badge .ring{animation:none}
+"""
+
+
 def _nth_rules() -> str:
     """Tabs and slider: which panel/slide shows for each checked radio (CSS only)."""
     out = []
@@ -914,8 +1022,8 @@ def _social_links(links: dict, cls: str = "social") -> str:
 
 def _header(content: dict, ctx: Ctx, nav: list[tuple[str, str]], over: bool) -> str:
     site, lay = ctx.site, content["layout"]
-    logo_img = _img(site, lay.get("logo"), site.name, eager=True)
-    sub = f'<span class="logo-sub">{e(lay.get("logo_sub"))}</span>' if lay.get("logo_sub") and not logo_img else ""
+    logo_img = _img(site, lay.get("logo"), site.name, eager=True, ed=_ei(ctx, "layout:logo"))
+    sub = "" if logo_img else _txt(ctx, lay, "logo_sub", "span", "logo-sub", "Add a small line", "layout:logo_sub")
     logo = f'<a class="logo" href="#top">{logo_img or f"<span class=logo-name>{e(site.name)}</span>"}{sub}</a>'
     links = "".join(f'<a href="#{a}">{e(label)}</a>' for a, label in nav)
     kind = lay.get("header_button", "order")
@@ -928,7 +1036,8 @@ def _header(content: dict, ctx: Ctx, nav: list[tuple[str, str]], over: bool) -> 
               f'<div class="mnav-panel bg-page">{links}{btn}</div></details>') if (links or btn) else ""
     style = "dark" if lay.get("header") == "dark" else "page"
     head_cls = "" if over else f"bg-{style}"
-    header = f'<header class="site-head {head_cls}"><div class="wrap hd">{logo}<nav class="nav">{links}</nav>{btn}{mobile}</div></header>'
+    zone = ' data-zone="header"' if ctx.edit else ""
+    header = f'<header class="site-head {head_cls}"{zone}><div class="wrap hd">{logo}<nav class="nav">{links}</nav>{btn}{mobile}</div></header>'
     info = ""
     if lay.get("info_bar"):
         parts = []
@@ -940,7 +1049,7 @@ def _header(content: dict, ctx: Ctx, nav: list[tuple[str, str]], over: bool) -> 
             parts.append(f'<span class="ib-hide">{svg("clock")}{e(_hours_short(site.hours))}</span>')
         social = _social_links(content.get("links") or {}, "ib-social")
         if parts or social:
-            info = f'<div class="infobar {"" if over else "bg-dark"}"><div class="wrap ib">{"".join(parts)}{social}</div></div>'
+            info = f'<div class="infobar {"" if over else "bg-dark"}"{zone}><div class="wrap ib">{"".join(parts)}{social}</div></div>'
     if over:
         return f'<div class="top-over">{info}{header}</div>'
     return info + header
@@ -950,10 +1059,11 @@ def _footer(content: dict, ctx: Ctx, nav: list[tuple[str, str]]) -> str:
     site, lay = ctx.site, content["layout"]
     social = _social_links(content.get("links") or {})
     year = (site.today or "")[:4]
+    zone = ' data-zone="footer"' if ctx.edit else ""
+    blurb = _txt(ctx, lay, "footer_text", "p", "", "Add a short line about your restaurant", "layout:footer_text")
     if lay.get("footer") != "columns":
-        return (f'<footer class="foot foot-simple bg-page"><div class="wrap">{social}<p>© {e(year)} {e(site.name)}'
-                f'{(" · " + e(site.address)) if site.address else ""}</p></div></footer>')
-    blurb = f"<p>{e(lay['footer_text'])}</p>" if lay.get("footer_text") else ""
+        return (f'<footer class="foot foot-simple bg-page"{zone}><div class="wrap">{social}{blurb}<p>© {e(year)} '
+                f'{e(site.name)}{(" · " + e(site.address)) if site.address else ""}</p></div></footer>')
     about = f'<div class="foot-about"><span class="logo-name">{e(site.name)}</span>{blurb}{social}</div>'
     cols = [about]
     if nav:
@@ -970,7 +1080,7 @@ def _footer(content: dict, ctx: Ctx, nav: list[tuple[str, str]]) -> str:
     contact += [f"<li>{e(d)}: {e(h)}</li>" for d, h in hours_groups(site.hours)] if site.hours else []
     if contact:
         cols.append(f'<div><h4>Visit us</h4><ul>{"".join(contact)}</ul></div>')
-    return (f'<footer class="foot foot-cols bg-dark"><div class="wrap"><div class="foot-grid">{"".join(cols)}</div>'
+    return (f'<footer class="foot foot-cols bg-dark"{zone}><div class="wrap"><div class="foot-grid">{"".join(cols)}</div>'
             f'<div class="foot-bottom"><span>© {e(year)} {e(site.name)}. All rights reserved.</span>'
             f'<span>{e(site.cuisine or "")}</span></div></div></footer>')
 
@@ -985,20 +1095,34 @@ def render(content: dict, site: SiteData, page_url: str = "") -> str:
         a = ANCHORS.get(s["type"])
         if a and _has_content(s["type"], s["props"], site):
             anchors.add(a)
-    ctx = Ctx(site=site, template=template, anchors=anchors)
+    edit = site.edit and site.preview
+    ctx = Ctx(site=site, template=template, anchors=anchors, edit=edit)
     used: set[str] = set()
     parts, first = [], None
-    for s in visible:
-        a = ANCHORS.get(s["type"])
+    for s in content["sections"] if edit else visible:
+        sid, kind = s["id"], s["type"]
+        label = e(SECTIONS[kind]["label"])
+        if not s.get("visible"):  # editor only: hidden sections stay findable
+            parts.append(f'<div class="edit-bar edit-hidden" data-sid="{e(sid)}" data-type="{kind}">'
+                         f'<span>Hidden: {label}</span></div>')
+            continue
+        a = ANCHORS.get(kind)
         anchor = a if a in anchors and a not in used else None
         if anchor:
             used.add(anchor)
-        fn = RENDERERS[s["type"]]
-        uid = s["id"].split("-")[-1]
-        html = fn(s["props"], ctx, anchor, uid) if s["type"] in NEEDS_UID else fn(s["props"], ctx, anchor)
+        fn = RENDERERS[kind]
+        ctx.sid = sid
+        uid = sid.split("-")[-1]
+        html = fn(s["props"], ctx, anchor, uid) if kind in NEEDS_UID else fn(s["props"], ctx, anchor)
         if html and first is None:
             first = s
+        if edit:
+            html = (f'<div class="edit-sec" data-sid="{e(sid)}" data-type="{kind}">{html}</div>' if html else
+                    f'<div class="edit-bar edit-blank" data-sid="{e(sid)}" data-type="{kind}"><span>{label}: '
+                    f'{e(BLANK_REASONS.get(kind, "nothing to show yet"))}</span></div>')
         parts.append(html)
+    if edit:
+        parts.append('<div class="edit-add" data-add="end"><span>+ Add a section</span></div>')
     body = "".join(parts)
     nav = [(a, label) for a, label in NAV if a in anchors]
     if "menu" not in anchors and "dishes" in anchors:
@@ -1010,17 +1134,19 @@ def render(content: dict, site: SiteData, page_url: str = "") -> str:
     seo = content.get("seo") or {}
     title = seo.get("title") or site.name
     desc = seo.get("description") or ""
-    flag = '<div class="preview-flag">Preview: only you can see this until you publish</div>' if site.preview else ""
+    flag = ('<div class="preview-flag">Preview: only you can see this until you publish</div>'
+            if site.preview and not edit else "")
     robots = '<meta name="robots" content="noindex">' if site.preview else ""
     canonical = f'<link rel="canonical" href="{e(page_url)}">' if page_url and not site.preview else ""
-    body_cls = f"t-{e(template)} eb-{e(th.get('eyebrow', 'caps'))}{' is-preview' if site.preview else ''}"
+    body_cls = (f"t-{e(template)} eb-{e(th.get('eyebrow', 'caps'))}{' is-preview' if site.preview and not edit else ''}"
+                f"{' is-editing' if edit else ''}")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title><meta name="description" content="{e(desc)}">{robots}{canonical}
 <meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(desc)}">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?{fonts}&display=swap" rel="stylesheet">
-<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{TEMPLATE_CSS.get(template, "")}</style></head>
+<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>
 <body class="{body_cls}">{flag}<div class="page {"has-over" if over else ""}">
 {_header(content, ctx, nav, over)}
 <main>{body}</main>
