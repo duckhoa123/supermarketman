@@ -1,5 +1,6 @@
 """FastAPI application."""
 
+import json
 import logging
 
 from fastapi import FastAPI
@@ -22,6 +23,37 @@ from app.api import (
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
+
+
+class ErrorsAsJson:
+    """Turn an unhandled error into a JSON 500 (logged with its traceback) instead of a dropped response."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        started = False
+
+        async def tracked(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracked)
+        except Exception:
+            log.exception("Unhandled error on %s %s", scope.get("method"), scope.get("path"))
+            if started:
+                raise
+            body = json.dumps({"detail": "Something went wrong on the server. Please try again; if it keeps "
+                                         "happening, tell us what you were doing."}).encode()
+            await send({"type": "http.response.start", "status": 500,
+                        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
 
 
 def create_app() -> FastAPI:
@@ -32,6 +64,9 @@ def create_app() -> FastAPI:
         docs_url=None if settings.is_production else "/docs",
         redoc_url=None,
     )
+    # Added before CORS so CORS wraps it: even an unexpected crash reaches the browser as a readable error
+    # (without CORS headers the browser only says "Failed to fetch").
+    app.add_middleware(ErrorsAsJson)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

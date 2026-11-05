@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthUser, current_user
 from app.config import get_settings
+from app.crypto import KeyMissing
 from app.db import get_session
 from app.integrations.pos.base import POSAuthError, TokenSet
 from app.integrations.pos.registry import POS_PROVIDERS, get_adapter
@@ -176,8 +177,11 @@ async def clover_test_token(body: TestTokenIn, location: Location = Depends(requ
         Integration.location_id != location.id, Integration.status != "disconnected"))
     if clash:
         raise HTTPException(409, "That Clover merchant is already connected to another restaurant.")
-    integ = await save_tokens(session, location, "clover", TokenSet(access_token=token, refresh_token=None,
-                                                                    access_expires_at=None, external_id=merchant))
+    try:
+        integ = await save_tokens(session, location, "clover", TokenSet(access_token=token, refresh_token=None,
+                                                                        access_expires_at=None, external_id=merchant))
+    except KeyMissing as exc:
+        raise HTTPException(503, str(exc)) from exc
     integ.refresh_token_enc = None
     integ.meta = {**(integ.meta or {}), "test_token": True, "merchant_name": name}
     await enqueue(session, "sync_pos", {"integration_id": integ.id, "full": True}, dedupe_key=f"sync_pos:{integ.id}")

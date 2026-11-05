@@ -82,3 +82,53 @@ async def test_test_tokens_are_refused_outside_the_sandbox(client, demo_location
                           json={"merchant_id": "PF2YPSMFAZYV1", "token": "good-token-123"})
     assert r.status_code == 403
     assert (await client.get("/integrations/options", headers=OWNER)).json() == {"clover_test_token": False}
+
+
+async def test_missing_encryption_key_is_explained_not_dropped(client, demo_location_id, monkeypatch):
+    """Without TOKEN_ENCRYPTION_KEY in production the token can't be stored: say so, with CORS headers."""
+    from app import crypto
+    from app.integrations.pos.clover import CloverAdapter
+    from tests.conftest import OWNER
+
+    async def fake_name(self, token, merchant_id):
+        return "Test Merchant"
+
+    monkeypatch.setattr(CloverAdapter, "merchant_name", fake_name)
+    from types import SimpleNamespace
+
+    # Production settings for the encryption key only (production also turns off the test sign-in).
+    monkeypatch.setattr(crypto, "get_settings", lambda: SimpleNamespace(token_encryption_key="", is_production=True))
+    crypto._fernet.cache_clear()
+    try:
+        r = await client.post(f"/locations/{demo_location_id}/integrations/clover/test-token",
+                              headers={**OWNER, "Origin": "http://localhost:5173"},
+                              json={"merchant_id": "PF2YPSMFAZYV1", "token": "good-token-123"})
+        assert r.status_code == 503 and "TOKEN_ENCRYPTION_KEY" in r.json()["detail"]
+        assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
+        monkeypatch.setattr(crypto, "get_settings",
+                            lambda: SimpleNamespace(token_encryption_key="not-a-key", is_production=True))
+        crypto._fernet.cache_clear()
+        r = await client.post(f"/locations/{demo_location_id}/integrations/clover/test-token", headers=OWNER,
+                              json={"merchant_id": "PF2YPSMFAZYV1", "token": "good-token-123"})
+        assert r.status_code == 503 and "isn't a valid key" in r.json()["detail"]
+    finally:
+        crypto._fernet.cache_clear()
+
+
+async def test_unexpected_errors_still_reach_the_browser():
+    """A crash comes back as a JSON 500 with CORS headers, so the app can show it (not "Failed to fetch")."""
+    import httpx
+
+    from app.main import create_app
+
+    app = create_app()
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("kaboom")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                                 base_url="http://test") as c:
+        r = await c.get("/boom", headers={"Origin": "http://localhost:5173"})
+    assert r.status_code == 500 and "went wrong" in r.json()["detail"]
+    assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
