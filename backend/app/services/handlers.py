@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.crypto import KeyMissing, TokenUnreadable
 from app.integrations.pos.base import POSAuthError
 from app.integrations.pos.registry import POS_PROVIDERS
 from app.models import Integration, Location, Review, WebhookEvent, utcnow
@@ -32,6 +33,12 @@ async def handle_sync_pos(session: AsyncSession, payload: dict) -> None:
         await sync.sync_pos(session, integ, full=bool(payload.get("full")))
     except POSAuthError:
         return  # integration already marked broken and the owner alerted
+    except (KeyMissing, TokenUnreadable) as exc:
+        # A server setup problem: retrying won't help, so show it to the owner in Settings instead.
+        await session.rollback()
+        integ = await session.get(Integration, payload["integration_id"])
+        integ.last_error = str(exc)
+        await session.commit()
 
 
 @handler("poll_reviews")

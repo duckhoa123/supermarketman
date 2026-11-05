@@ -41,5 +41,10 @@ def decrypt(value: str | None) -> str | None:
         return None
     try:
         return _fernet().decrypt(value.encode()).decode()
-    except InvalidToken as exc:  # key rotated or data corrupted
-        raise RuntimeError("Could not decrypt stored token; reconnect the integration") from exc
+    except InvalidToken as exc:  # key rotated, data corrupted, or the api and worker have different keys
+        raise TokenUnreadable("This connection's saved token can't be read with this server's TOKEN_ENCRYPTION_KEY. "
+                              "Make sure the api and worker services use exactly the same key, or connect again.") from exc
+
+
+class TokenUnreadable(RuntimeError):
+    """A stored token was encrypted with a different key."""

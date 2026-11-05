@@ -132,3 +132,36 @@ async def test_unexpected_errors_still_reach_the_browser():
         r = await c.get("/boom", headers={"Origin": "http://localhost:5173"})
     assert r.status_code == 500 and "went wrong" in r.json()["detail"]
     assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+async def test_worker_with_a_different_key_says_so_in_settings(client, session, demo_location_id, monkeypatch):
+    """The api saved the token with one key, the worker has another: the owner sees why syncing stopped."""
+    from types import SimpleNamespace
+
+    from cryptography.fernet import Fernet
+    from sqlalchemy import select
+
+    from app import crypto
+    from app.integrations.pos.clover import CloverAdapter
+    from app.services.handlers import handle_sync_pos
+    from tests.conftest import OWNER
+
+    async def fake_name(self, token, merchant_id):
+        return "Test Merchant"
+
+    monkeypatch.setattr(CloverAdapter, "merchant_name", fake_name)
+    r = await client.post(f"/locations/{demo_location_id}/integrations/clover/test-token", headers=OWNER,
+                          json={"merchant_id": "PF2YPSMFAZYV1", "token": "good-token-123"})
+    assert r.status_code == 200
+    other = Fernet.generate_key().decode()
+    monkeypatch.setattr(crypto, "get_settings", lambda: SimpleNamespace(token_encryption_key=other, is_production=True))
+    crypto._fernet.cache_clear()
+    try:
+        integ = await session.scalar(select(Integration).where(Integration.location_id == demo_location_id,
+                                                               Integration.provider == "clover"))
+        await handle_sync_pos(session, {"integration_id": integ.id})
+    finally:
+        crypto._fernet.cache_clear()
+    rows = (await client.get(f"/locations/{demo_location_id}/integrations", headers=OWNER)).json()
+    clover = next(r for r in rows if r["provider"] == "clover")
+    assert "same key" in clover["last_error"]
