@@ -189,8 +189,9 @@ export default function Settings() {
                         </button>
                       </div>
                     ) : (
-                      <button className="btn small primary" disabled={p.soon} onClick={() => void connect(p.id)}>
-                        {p.soon ? "Coming soon" : `Connect ${p.name}`}
+                      <button className={`btn small ${p.id === "clover" && options.data?.clover_test_token ? "" : "primary"}`}
+                        disabled={p.soon} onClick={() => void connect(p.id)}>
+                        {p.soon ? "Coming soon" : p.id === "clover" && options.data?.clover_test_token ? "Sign in with Clover" : `Connect ${p.name}`}
                       </button>
                     )}
                   </div>
@@ -300,7 +301,7 @@ export default function Settings() {
 
 /** Sandbox only: connect with a merchant test API token instead of Clover's sign-in. */
 function CloverTestToken({ locationId, onConnected }: { locationId: string; onConnected: (name: string) => void }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [merchant, setMerchant] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -333,11 +334,21 @@ function CloverTestToken({ locationId, onConnected }: { locationId: string; onCo
   }
   return (
     <form className="stack test-token" style={{ gap: 8 }} onSubmit={submit}>
-      <p className="small muted">
-        In the test merchant's dashboard, open <strong>Account &amp; Setup → API Tokens</strong>, create a token with
-        Merchant, Inventory, Orders and Employees (read), and copy it. The merchant ID is the 13 characters after
-        <code> /m/ </code> in that dashboard's address. Sandbox only: real restaurants use Connect Clover.
+      <p className="small">
+        <strong>Connecting a Clover test merchant (sandbox)</strong>
       </p>
+      <p className="small muted">
+        Clover's sandbox sign-in page doesn't accept new global developer accounts, so for testing Clover asks you to
+        use a test API token instead:
+      </p>
+      <ol className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
+        <li>In your Clover Global Developer Dashboard (sandbox on), open <strong>Test Merchants</strong> and open the
+          test merchant's dashboard.</li>
+        <li>Go to <strong>Account &amp; Setup → API Tokens</strong>, create a token with Merchant, Inventory, Orders and
+          Employees (read), and copy it.</li>
+        <li>The merchant ID is the 13 characters after <code>/m/</code> in that dashboard's address.</li>
+      </ol>
+      <p className="small muted">Real restaurants will use “Sign in with Clover” once the app is live.</p>
       <div className="row">
         <input className="input" style={{ flex: 1, minWidth: 160 }} placeholder="Merchant ID, e.g. PF2YPSMFAZYV1" required
           value={merchant} onChange={(e) => setMerchant(e.target.value)} autoComplete="off" />
