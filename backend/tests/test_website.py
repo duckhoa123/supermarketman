@@ -306,3 +306,108 @@ async def test_preview_with_edit_markers(client, demo_location_id):
     plain = (await client.get(f"{base}/preview", headers=OWNER)).text
     edit = (await client.get(f"{base}/preview?edit=1", headers=OWNER)).text
     assert "data-e=" not in plain and "data-e=" in edit and "is-editing" in edit
+
+
+# --- The separate menu page ------------------------------------------------------------------------------------
+
+HOME = "https://api.example/sites/demo"
+
+
+def _with_menu_page(template: str = "gourmet", **props) -> dict:
+    content = st.clean_content(st.starter_content(template, "Demo", "Italian"))
+    content["menu_page"].update({"enabled": True, **props})
+    return st.clean_content(content)
+
+
+def test_menu_page_settings_are_checked():
+    out = st.clean_content({"template": "bistro", "menu_page": {
+        "enabled": "yes", "heading": "", "intro": "<b>Fresh</b>" * 50, "layout": "carousel", "bg": "neon",
+        "categories": ["Mains", 7, ""], "price_override": {"Steak Frites": 1}}})
+    mp = out["menu_page"]
+    assert mp["enabled"] is False and mp["heading"] == "Our menu"  # not a real yes; empty heading falls back
+    assert len(mp["intro"]) == 300 and mp["layout"] == "columns" and mp["bg"] == "alt"
+    assert mp["categories"] == ["Mains", "7"] and "price_override" not in mp  # only display settings are kept
+    assert st.clean_content({"template": "bistro"})["menu_page"]["enabled"] is False  # old sites: off
+    assert st.starter_content("bistro", "Demo")["menu_page"]["enabled"] is False
+
+
+def test_menu_page_shows_the_live_menu_and_links_back_home():
+    html = site_render.render(_with_menu_page(intro="Made fresh daily."), _demo_site(), HOME, page="menu")
+    assert "<h1>Our menu</h1>" in html and "Made fresh daily." in html
+    assert "Steak Frites" in html and "$34.00" in html and "Tiramisu" in html  # dishes and prices from the POS
+    assert 'id="cat-mains"' in html and 'href="#cat-desserts"' in html  # jump links to each category
+    assert f'<link rel="canonical" href="{HOME}/menu">' in html and "<title>Our menu | Demo</title>" in html
+    assert f'href="{HOME}#visit"' in html and f'href="{HOME}#reserve"' in html  # back to the home page
+    assert f'class="logo" href="{HOME}"' in html
+    assert f'href="{HOME}/menu" aria-current=page>Menu</a>' in html
+    assert "?order=L" in html and "data-e=" not in html and "edit-note" not in html
+    assert "application/ld+json" not in html  # business details for Google are on the SEO plan
+    pro = site_render.render(_with_menu_page(), _demo_site(seo_pro=True), HOME, page="menu")
+    assert f'"url":"{HOME}/menu","hasMenuSection"' in pro and f'"url":"{HOME}",' in pro  # the menu; the restaurant
+
+
+def test_home_page_links_to_the_menu_page_when_it_is_on():
+    off = site_render.render(st.clean_content(st.starter_content("gourmet", "Demo")), _demo_site(), HOME)
+    assert f"{HOME}/menu" not in off and 'href="#menu"' in off
+    on = site_render.render(_with_menu_page(), _demo_site(), HOME)
+    assert f'href="{HOME}/menu">Menu</a>' in on  # header
+    assert f'href="{HOME}/menu">View the menu</a>' in on or f'href="{HOME}/menu">View full menu' in on
+    assert f'href="{HOME}/menu#cat-mains">Mains</a>' in on  # footer
+    assert 'id="menu"' in on  # the Menu section on the home page stays if the owner keeps it
+    # A page with no Menu section still gets a "Menu" link when the menu page is on.
+    content = _with_menu_page("minimal")
+    content["sections"] = [s for s in content["sections"] if s["type"] != "menu"]
+    assert f'href="{HOME}/menu">Menu</a>' in site_render.render(content, _demo_site(), HOME)
+
+
+def test_menu_page_layouts_filters_and_editor_markers():
+    tabs = site_render.render(_with_menu_page(layout="tabs"), _demo_site(), HOME, page="menu")
+    assert 'class="tabs"' in tabs and 'class="mp-jump"' not in tabs  # tabs already list the categories
+    only = site_render.render(_with_menu_page(categories=["Desserts"], show_prices=False), _demo_site(), HOME,
+                              page="menu")
+    assert "Tiramisu" in only and "Steak Frites" not in only and "$12.00" not in only
+    edit = site_render.render(_with_menu_page(), _demo_site(preview=True, edit=True), HOME, page="menu")
+    assert 'data-zone="menupage"' in edit and 'data-e="menu_page:heading"' in edit
+    assert "edit the item in Stock" in edit  # tells the owner where dishes and prices are changed
+    no_menu = _demo_site()
+    no_menu.menu = []
+    empty = site_render.render(_with_menu_page(), no_menu, HOME, page="menu")
+    assert "Our menu will be here soon" in empty and "tel:+16045550100" in empty
+
+
+async def test_menu_page_through_the_api(client, session, demo_location_id):
+    base = f"/locations/{demo_location_id}/website"
+    site = (await client.get(base, headers=OWNER)).json()
+    assert {f["name"] for f in site["menu_page_fields"]} >= {"enabled", "heading", "layout", "categories"}
+    # The owner can preview it before turning it on; visitors can't see it until it's on and published.
+    preview = await client.get(f"{base}/preview?page=menu&edit=1", headers=OWNER)
+    assert preview.status_code == 200 and "Spaghetti Carbonara" in preview.text and "menu_page:heading" in preview.text
+    assert (await client.get(f"{base}/preview?page=admin", headers=OWNER)).status_code == 422
+    await client.post(f"{base}/publish", headers=OWNER)
+    off = await client.get("/sites/demo-bistro/menu", follow_redirects=False)
+    assert off.status_code == 302 and off.headers["location"].endswith("/sites/demo-bistro")
+
+    draft = site["draft"]
+    draft["menu_page"] = {**draft.get("menu_page", {}), "enabled": True, "intro": "Pasta made every morning."}
+    saved = (await client.put(f"{base}/draft", headers=OWNER, json={"content": draft})).json()
+    assert saved["draft"]["menu_page"]["enabled"] is True and saved["has_unpublished_changes"]
+    assert (await client.get("/sites/demo-bistro/menu", follow_redirects=False)).status_code == 302  # not yet live
+    await client.post(f"{base}/publish", headers=OWNER)
+    live = await client.get("/sites/demo-bistro/menu")
+    assert live.status_code == 200 and "Pasta made every morning." in live.text and "Spaghetti Carbonara" in live.text
+    assert "/sites/demo-bistro/menu" in (await client.get("/sites/demo-bistro")).text  # the home page links to it
+    assert "/sites/demo-bistro/menu" in (await client.get("/sites/demo-bistro/sitemap.xml")).text
+
+    # Option 1: the menu itself is changed in the POS / Stock, and the page shows it without republishing.
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                   Item.name == "Spaghetti Carbonara"))
+    item.price_cents = 2950
+    await session.commit()
+    assert "$29.50" in (await client.get("/sites/demo-bistro/menu")).text
+
+    # On the restaurant's own domain it's at /menu; unknown hosts and slugs get nothing.
+    await client.put(f"{base}/settings", headers=OWNER, json={"custom_domain": "www.demobistro.ca"})
+    own = await client.get("/menu", headers={"host": "www.demobistro.ca"})
+    assert own.status_code == 200 and "https://www.demobistro.ca/menu" in own.text
+    assert (await client.get("/menu", headers={"host": "unknown.example"})).status_code == 404
+    assert (await client.get("/sites/nobody-here/menu")).status_code == 404

@@ -556,6 +556,8 @@ export type SiteContent = {
   seo: SiteSeo;
   links: { instagram: string; facebook: string; tiktok: string };
   sections: SiteSection[];
+  /** The separate menu page: how it looks only. Dishes and prices always come from the POS. */
+  menu_page?: Record<string, unknown>;
 };
 /** Search settings. Title and description are on every site; the rest is used on the SEO plan. */
 export type SiteSeo = {
@@ -625,6 +627,7 @@ export type SiteEditor = SiteState & {
   templates: SiteTemplate[];
   sections: { type: string; label: string; icon: string; help: string; ai: boolean; fields: SiteField[] }[];
   layout_fields: SiteField[];
+  menu_page_fields: SiteField[];
   theme_fields: SiteField[];
   fonts: string[];
   script_fonts: string[];

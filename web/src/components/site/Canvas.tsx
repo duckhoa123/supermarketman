@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 export type Device = "desktop" | "tablet" | "phone";
-export type Selection = { kind: "section"; sid: string } | { kind: "header" } | { kind: "footer" } | null;
+export type Selection = { kind: "section"; sid: string } | { kind: "header" } | { kind: "footer" } | { kind: "menupage" } | null;
 export type Box = { x: number; y: number; w: number; h: number };
 export type Geometry = { selected: Box | null; hover: Box | null; hoverLabel: Selection; canvas: { w: number; h: number } };
 
@@ -18,7 +18,8 @@ function selectionOf(el: Element | null): Selection {
   if (!host) return null;
   const sid = host.getAttribute("data-sid");
   if (sid) return { kind: "section", sid };
-  return host.getAttribute("data-zone") === "footer" ? { kind: "footer" } : { kind: "header" };
+  const zone = host.getAttribute("data-zone");
+  return zone === "footer" ? { kind: "footer" } : zone === "menupage" ? { kind: "menupage" } : { kind: "header" };
 }
 
 /** The page being built, drawn at a real screen width and scaled to fit. Text is typed straight onto it; clicks on

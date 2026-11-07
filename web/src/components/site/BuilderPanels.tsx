@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, uploadFile, type SiteContent, type SiteEditor, type SiteTemplate } from "../../lib/api";
 import { prepareUpload } from "../../lib/image";
 import SectionEditor from "./SectionEditor";
-import { type FieldContext, FieldList } from "./SiteFields";
+import { defaults, type FieldContext, FieldList } from "./SiteFields";
 import Ico from "./Ico";
 
 export type Change = (next: SiteContent, opts?: { rerender?: boolean }) => void;
@@ -159,6 +159,40 @@ export function ZonePanel({ zone, site, draft, change, fieldCtx }: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The separate menu page. Only how it looks is set here: dishes, prices and descriptions come from the POS,
+ * so they're changed in Stock (or the POS itself), never in the website editor. */
+export function MenuPagePanel({ site, draft, change, fieldCtx, onStock }: {
+  site: SiteEditor; draft: SiteContent; change: Change; fieldCtx: FieldContext; onStock: () => void;
+}) {
+  const values = draft.menu_page ?? defaults(site.menu_page_fields);
+  const on = values.enabled === true;
+  const set = (v: Record<string, unknown>) => change({ ...draft, menu_page: v });
+  const live = `${site.url}/menu`;
+  return (
+    <div className="stack">
+      <label className="check">
+        <input type="checkbox" checked={on} onChange={(e) => set({ ...values, enabled: e.target.checked })} />
+        <strong>Show a separate menu page</strong>
+      </label>
+      <p className="small muted">
+        {on
+          ? <>The “Menu” link in your header and the “View the menu” buttons open this page. It goes live at <strong>{live}</strong> when you publish.</>
+          : "Turn it on to give your full menu its own page. Until then, this is only a preview for you."}
+      </p>
+      <div className="sb-callout">
+        <strong>Changing dishes or prices?</strong>
+        <span className="small">
+          This page shows your menu straight from your POS. Edit a dish in Stock (or in your POS) and the page updates
+          within a minute, with no need to publish.
+        </span>
+        <button className="btn small" style={{ alignSelf: "start" }} onClick={onStock}>Open Stock</button>
+      </div>
+      <h3>How it looks</h3>
+      <FieldList fields={site.menu_page_fields} skip={["enabled"]} values={values} ctx={fieldCtx} onChange={set} />
     </div>
   );
 }

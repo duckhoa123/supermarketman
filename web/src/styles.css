@@ -659,3 +659,12 @@ button.sb-photo { cursor: pointer; }
 .pos-line-name { flex: 1; min-width: 0; }
 .pos-qty { display: inline-flex; align-items: center; gap: 6px; }
 .pos-qty button { width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font: inherit; font-weight: 700; color: var(--ink); }
+
+/* Website builder: the page switcher (home / menu page) and notes in panels */
+.sb-center { margin: 0 auto; display: flex; align-items: center; gap: 8px; }
+.sb-center .sb-devices { margin: 0; }
+.sb-pages button { padding: 6px 12px; }
+.sb-callout { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 10px; background: #f1eeff; color: #2b2140; }
+@media (max-width: 760px) {
+  .sb-center { order: 3; margin: 0; flex-wrap: wrap; }
+}

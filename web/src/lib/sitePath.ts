@@ -1,6 +1,7 @@
 import type { SiteContent, SiteEditor, SiteField } from "./api";
 
-/** What a click on the page points at: "<section id>:<field path>" or "layout:<field>" (header and footer). */
+/** What a click on the page points at: "<section id>:<field path>", "layout:<field>" (header and footer) or
+ * "menu_page:<field>" (the separate menu page). */
 export type Target = { where: string; path: string[] };
 
 export function parseTarget(raw: string): Target {
@@ -26,11 +27,13 @@ function setDeep(obj: unknown, path: string[], value: unknown): unknown {
 
 export function readTarget(content: SiteContent, t: Target): unknown {
   if (t.where === "layout") return getDeep(content.layout, t.path);
+  if (t.where === "menu_page") return getDeep(content.menu_page, t.path);
   return getDeep(content.sections.find((s) => s.id === t.where)?.props, t.path);
 }
 
 export function writeTarget(content: SiteContent, t: Target, value: unknown): SiteContent {
   if (t.where === "layout") return { ...content, layout: setDeep(content.layout, t.path, value) as SiteContent["layout"] };
+  if (t.where === "menu_page") return { ...content, menu_page: setDeep(content.menu_page, t.path, value) as Record<string, unknown> };
   return {
     ...content,
     sections: content.sections.map((s) =>
@@ -42,6 +45,7 @@ export function writeTarget(content: SiteContent, t: Target, value: unknown): Si
 export function fieldFor(site: SiteEditor, content: SiteContent, t: Target): SiteField | undefined {
   let fields: SiteField[] | undefined;
   if (t.where === "layout") fields = site.layout_fields;
+  else if (t.where === "menu_page") fields = site.menu_page_fields;
   else {
     const type = content.sections.find((s) => s.id === t.where)?.type;
     fields = site.sections.find((x) => x.type === type)?.fields;

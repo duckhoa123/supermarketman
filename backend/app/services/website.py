@@ -73,6 +73,7 @@ def catalog() -> dict:
         "sections": [{"type": k, "label": v["label"], "icon": v["icon"], "help": v.get("help", ""),
                       "ai": v.get("ai", False), "fields": _fields(v["fields"])} for k, v in st.SECTIONS.items()],
         "layout_fields": _fields(st.LAYOUT_FIELDS),
+        "menu_page_fields": _fields(st.MENU_PAGE_FIELDS),
         "theme_fields": _fields(st.THEME_FIELDS),
         "fonts": [f for f in st.FONTS if f not in st.SCRIPT_FONTS],
         "script_fonts": st.SCRIPT_FONTS,
@@ -193,13 +194,18 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
     )
 
 
-async def render_page(session: AsyncSession, site: Website, preview: bool, edit: bool = False) -> str | None:
+async def render_page(session: AsyncSession, site: Website, preview: bool, edit: bool = False,
+                      page: str = "home") -> str | None:
+    """page: "home", or "menu" for the separate menu page (live only once the owner turns it on and publishes;
+    the preview always shows it, so the owner can see it first)."""
     content = site.draft if preview else site.published
     if not content:
         return None
+    if page == "menu" and not preview and not st.menu_page_on(content):
+        return None
     location = await session.get(Location, site.location_id)
     data = await site_data(session, location, site, preview, edit)
-    return site_render.render(content, data, public_url(site))
+    return site_render.render(content, data, public_url(site), page=page)
 
 
 # --- Images ---------------------------------------------------------------------------------------------------
