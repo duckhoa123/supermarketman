@@ -165,7 +165,8 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         menu.setdefault(it.category or "Menu", []).append(site_render.MenuItem(
             name=it.name, price=fmt_money(it.price_cents, location.currency), description=it.description,
             tags=list(it.tags or []), id=it.id,
-            price_value=f"{it.price_cents / 100:.2f}" if it.price_cents is not None else ""))
+            price_value=f"{it.price_cents / 100:.2f}" if it.price_cents is not None else "",
+            sold_out=it.stock_qty is not None and it.stock_qty <= 0))
     ordered = sorted(menu.items(), key=lambda kv: -(popularity.get(kv[0]) or 0))
     # Best sellers over the last 90 days, for "Signature dishes" until the owner picks their own.
     since = date.today() - timedelta(days=90)
@@ -186,6 +187,7 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         rating=round(float(avg), 1) if avg is not None else None,
         best_sellers=best,
         order_url=f"{web}/?order={location.id}" if location.listed and location.accepts_orders else None,
+        order_form_url=f"{web}/" if location.listed and location.accepts_orders else None,
         book_url=f"{web}/?book={location.id}" if location.listed and location.accepts_bookings else None,
         book_form_url=f"{web}/" if location.listed and location.accepts_bookings else None,
         location_id=location.id, today=datetime.now(_tz(location.timezone)).date().isoformat(),

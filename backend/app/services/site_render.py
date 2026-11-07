@@ -35,6 +35,7 @@ class MenuItem:
     tags: list[str] = field(default_factory=list)
     id: str = ""
     price_value: str = ""  # "12.50", for search engines
+    sold_out: bool = False  # out of stock in the POS: shown, but it can't be added to an order
 
 
 @dataclass
@@ -54,6 +55,7 @@ class SiteData:
     order_url: str | None = None
     book_url: str | None = None
     book_form_url: str | None = None  # where the booking form sends date, time and party size
+    order_form_url: str | None = None  # where "Review order" sends the dishes added on the menu (the customer app)
     location_id: str = ""
     today: str = ""  # YYYY-MM-DD at the restaurant
     asset_base: str = ""  # images are served at {asset_base}/{asset_id}
@@ -296,15 +298,54 @@ def _tags(it: MenuItem, show: bool = True) -> str:
                    for t in it.tags if t in TAG_LABELS)
 
 
-def _dish_rows(items: list[MenuItem], p: dict) -> str:
+MAX_QTY = 9  # per dish on the website; guests can go higher in the app's cart
+
+
+def qty_key(item_id: str) -> str:
+    """The short name a dish's quantity is sent under (q.<first 8 characters of its id>), so the link to the app
+    stays short even for a long menu. The app matches it back to the dish."""
+    return f"q.{item_id[:8]}"
+
+
+def _add_button(it: MenuItem, form_id: str | None) -> str:
+    """"+ Add", then "− 2 +", next to a dish, with no JavaScript: one radio button per quantity (0 to MAX_QTY),
+    tied to the menu's order form. − and + are labels for the quantity below and above the one picked, and CSS
+    shows only those two (see _qty_rules). The quantities go to the customer app's cart on "Review order"."""
+    if not form_id or not it.id:
+        return ""
+    if it.sold_out:
+        return '<span class="add add-out">Sold out</span>'
+    key, base = qty_key(it.id), f"{form_id}-{it.id[:8]}"
+    name = e(it.name)
+    radios = "".join(f'<input type="radio" class="q" name="{e(key)}" value="{n}" id="{e(base)}-{n}" form="{e(form_id)}"'
+                     f' aria-label="{name}: {n}"{" checked" if n == 0 else ""}>' for n in range(MAX_QTY + 1))
+    minus = "".join(f'<label for="{e(base)}-{n - 1}" title="One less">−</label>' for n in range(1, MAX_QTY + 1))
+    count = "".join(f"<span>{n}</span>" for n in range(1, MAX_QTY + 1))
+    plus = "".join(f'<label for="{e(base)}-{n}" title="{"Add to your order" if n == 1 else "One more"}">'
+                   f'{"+ Add" if n == 1 else "+"}</label>' for n in range(1, MAX_QTY + 1))
+    return (f'<span class="qty">{radios}<span class="q-minus" aria-hidden="true">{minus}</span>'
+            f'<span class="q-n" aria-hidden="true">{count}</span><span class="q-plus" aria-hidden="true">{plus}</span>'
+            "</span>")
+
+
+def _dish_rows(items: list[MenuItem], p: dict, form_id: str | None = None) -> str:
     rows = []
     for it in items:
         price = (f'<span class="leader"></span><span class="price">{e(it.price)}</span>'
-                 if p.get("show_prices", True) else "")
+                 if p.get("show_prices", True) else ('<span class="leader no-line"></span>' if form_id else ""))
         desc = f'<p class="desc">{e(it.description)}</p>' if p.get("show_descriptions", True) and it.description else ""
         rows.append(f'<li class="dish"><div class="dish-line"><span class="dish-name">{e(it.name)}</span>'
-                    f'{_tags(it, p.get("show_dietary", True))}{price}</div>{desc}</li>')
+                    f'{_tags(it, p.get("show_dietary", True))}{price}{_add_button(it, form_id)}</div>{desc}</li>')
     return "".join(rows)
+
+
+def _order_form_id(p: dict, ctx: "Ctx", uid: str) -> str | None:
+    """The id of a menu's order form, when guests can add dishes from it (ordering is on and the owner kept the
+    "Add" buttons)."""
+    site = ctx.site
+    if p.get("order_buttons", True) and site.order_form_url and site.location_id:
+        return f"order-{uid}"
+    return None
 
 
 def _has_content(kind: str, p: dict, site: SiteData) -> bool:
@@ -460,16 +501,29 @@ def s_menu(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
     cats = [(c, items) for c, items in ctx.site.menu if not wanted or c in wanted]
     if not cats:
         return ""
-    body = _menu_body(cats, p, uid)
-    return _sec("menu", p, f"{_head(p, ctx=ctx)}{body}{_menu_foot(p, ctx)}", anchor)
+    form_id = _order_form_id(p, ctx, uid)
+    body = _menu_body(cats, p, uid, form_id=form_id)
+    return _sec("menu", p, f"{_head(p, ctx=ctx)}{body}{_menu_foot(p, ctx, form_id)}", anchor,
+                "orderable" if form_id else "")
 
 
-def _menu_foot(p: dict, ctx: Ctx) -> str:
+def _menu_foot(p: dict, ctx: Ctx, form_id: str | None = None) -> str:
     note = " V vegetarian · VG vegan · GF gluten free" if p.get("show_dietary", True) else ""
-    return f'<p class="menu-note">Prices before tax.{note}</p>{_actions(_button("order", ctx))}'
+    if not form_id:
+        return f'<p class="menu-note">Prices before tax.{note}</p>{_actions(_button("order", ctx))}'
+    # The order bar: shows once a dish is added (the count is plain CSS), and sends the dishes to the customer
+    # app, where the guest picks pickup or delivery and pays.
+    site = ctx.site
+    return (f'<p class="menu-note">Prices before tax.{note}</p>'
+            f'<p class="order-hint">Tap <strong>+ Add</strong> next to a dish to start your order.</p>'
+            f'<form id="{e(form_id)}" class="order-bar" method="get" action="{e(site.order_form_url)}">'
+            f'<input type="hidden" name="order" value="{e(site.location_id)}">'
+            f'<span class="order-count">Your order<b class="co-n"></b></span>'
+            f'<button class="btn btn-main" type="submit">Review order<span class="co-long"> and pay</span></button></form>')
 
 
-def _menu_body(cats: list[tuple[str, list[MenuItem]]], p: dict, uid: str, ids: bool = False) -> str:
+def _menu_body(cats: list[tuple[str, list[MenuItem]]], p: dict, uid: str, ids: bool = False,
+               form_id: str | None = None) -> str:
     """The dishes, by category: tabs, columns or cards. ids=True gives each category an id to link to."""
     layout = p.get("layout", "columns")
     if layout == "tabs" and len(cats) > 1:
@@ -477,12 +531,12 @@ def _menu_body(cats: list[tuple[str, list[MenuItem]]], p: dict, uid: str, ids: b
         radios = "".join(f'<input type="radio" name="{name}" id="{name}-{i}" aria-label="{e(c)}"'
                          f'{" checked" if i == 0 else ""}>' for i, (c, _) in enumerate(cats))
         labels = "".join(f'<label for="{name}-{i}">{e(c)}</label>' for i, (c, _) in enumerate(cats))
-        panels = "".join(f'<ul class="tp">{_dish_rows(items, p)}</ul>' for _, items in cats)
+        panels = "".join(f'<ul class="tp">{_dish_rows(items, p, form_id)}</ul>' for _, items in cats)
         return f'<div class="tabs">{radios}<div class="tab-labels">{labels}</div><div class="tab-panels">{panels}</div></div>'
     blocks = []
     for c, items in cats:
         aid = f' id="{cat_id(c)}"' if ids else ""
-        blocks.append(f'<div class="menu-cat"{aid}><h3>{e(c)}</h3><ul>{_dish_rows(items, p)}</ul></div>')
+        blocks.append(f'<div class="menu-cat"{aid}><h3>{e(c)}</h3><ul>{_dish_rows(items, p, form_id)}</ul></div>')
     return f'<div class="menu-grid menu-{e(layout)}">{"".join(blocks)}</div>'
 
 
@@ -508,14 +562,17 @@ def menu_page(p: dict, ctx: Ctx) -> str:
     head = (f'<section class="sec mp-head bg-{e(p.get("bg", "alt"))}"{zone}><div class="wrap">'
             f'<div class="sec-head center">{eb}{h1}{intro}</div>{jump}</div></section>')
     note = f'<p class="edit-note">{e(MENU_PAGE_NOTE)}</p>' if ctx.edit else ""
+    form_id = _order_form_id(p, ctx, "page")
     if cats:
-        inner = _menu_body(cats, p, "page", ids=True) + _menu_foot(p, ctx)
+        inner = _menu_body(cats, p, "page", ids=True, form_id=form_id) + _menu_foot(p, ctx, form_id)
     else:
         call = f' Call us at <a href="tel:{e(site.phone)}">{e(site.phone)}</a>.' if site.phone else ""
         inner = f'<p class="mp-empty muted">Our menu will be here soon.{call}</p>'
         if ctx.edit:
             note = f'<p class="edit-note">Your menu shows here once it comes in from your POS. {e(MENU_PAGE_NOTE)}</p>'
-    return f'{head}<section class="sec sec-menu mp-list bg-page"{zone}><div class="wrap">{note}{inner}</div></section>'
+    cls = " orderable" if form_id and cats else ""
+    return (f'{head}<section class="sec sec-menu mp-list bg-page{cls}"{zone}><div class="wrap">{note}{inner}</div>'
+            f'</section>')
 
 
 def _band_image(ctx: Ctx, p: dict) -> str:
@@ -869,6 +926,30 @@ letter-spacing:.08em;text-transform:uppercase;padding:7px 10px;border-radius:var
 .sec .mp-jump a:hover{border-color:var(--a);color:var(--a)}
 .mp-list{padding-top:clamp(40px,6vw,72px)}.menu-cat[id]{scroll-margin-top:96px}.mp-empty{text-align:center}
 .nav a[aria-current]{border-color:var(--a)}
+/* Ordering straight from the menu: "+ Add" checkboxes and an order bar, no JavaScript */
+.orderable{counter-reset:cart}.sec.orderable{overflow:clip}.leader.no-line{border-bottom:0}
+.qty{position:relative;display:inline-flex;align-items:center;flex:none;margin-left:6px;user-select:none;transform:translateY(-2px)}
+.qty>.q{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.q-minus>*,.q-plus>*,.q-n>*{display:none}
+.q-minus label,.q-plus label{cursor:pointer;place-items:center;min-width:28px;height:28px;padding:0 8px;border:1.5px solid var(--a);
+color:var(--a);border-radius:var(--rb);font-size:.8rem;font-weight:700;line-height:1;white-space:nowrap}
+.q-minus label:hover,.q-plus label:hover{background:var(--a);color:var(--on-a)}
+.q-plus label:not(:first-child),.q-minus label{padding:0;font-size:1rem}
+.q-n>*{min-width:26px;text-align:center;font-weight:700}
+.qty:has(.q:focus-visible){outline:2px solid var(--a);outline-offset:3px;border-radius:var(--rb)}
+.qty:has(.q:not(:first-child):checked) .q-plus label{background:var(--a);color:var(--on-a)}
+.add{display:inline-flex;flex:none;margin-left:6px;font-size:.78rem;line-height:1;white-space:nowrap;border-radius:var(--rb);padding:6px 10px}
+.add-out{border:1.5px solid var(--c-line);color:var(--c-muted);font-weight:600;transform:translateY(-2px)}
+.order-hint{text-align:center;color:var(--c-muted);font-size:.92rem;margin:10px 0 0}
+.order-bar{position:sticky;bottom:16px;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;
+max-width:620px;margin:22px auto 0;padding:10px 10px 10px 22px;border-radius:var(--rl);background:var(--c-text);color:var(--c-bg);
+box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.order-bar .btn{gap:0}.order-count{font-weight:700;white-space:nowrap}.co-n::after{content:" · " counter(cart);font-weight:500}
+.orderable:has(.tabs) .co-n{display:none}
+@supports selector(:has(a)){.orderable:not(:has(.q:not(:first-child):checked)) .order-bar{display:none}
+.orderable:has(.q:not(:first-child):checked) .order-hint{display:none}}
+@media (max-width:560px){.add{padding:6px 8px}.q-minus label,.q-plus label{min-width:32px;height:32px}.order-bar{padding:8px 8px 8px 16px;gap:10px}.order-bar .btn{padding:12px 14px;font-size:.8rem}
+.co-long{display:none}}
 /* Events */
 .has-img{--c-text:#fff;--c-muted:rgba(255,255,255,.8);--c-line:rgba(255,255,255,.28);--a:var(--accent);--on-a:var(--on-accent);color:#fff}
 .band-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
@@ -1002,6 +1083,23 @@ def _nth_rules() -> str:
 
 
 NTH_CSS = _nth_rules()
+
+
+def _qty_rules() -> str:
+    """The quantity stepper: with quantity n picked, show "−" (to n-1), the number n and "+" (to n+1, or "+ Add"
+    when n is 0), and add n to the order bar's count. Radio n is the (n+1)th input in .qty."""
+    out = []
+    for n in range(MAX_QTY + 1):
+        on = f".qty>.q:nth-of-type({n + 1}):checked"
+        if n < MAX_QTY:
+            out.append(f"{on}~.q-plus>:nth-child({n + 1}){{display:inline-grid}}")
+        if n:
+            out.append(f"{on}~.q-minus>:nth-child({n}){{display:inline-grid}}{on}~.q-n>:nth-child({n}){{display:inline-block}}"
+                       f"{on}{{counter-increment:cart {n}}}")
+    return "".join(out)
+
+
+QTY_CSS = _qty_rules()
 
 TEMPLATE_CSS = {
     "gourmet": """
@@ -1268,7 +1366,7 @@ def _document(content: dict, site: SiteData, ctx: Ctx, nav: list[tuple[str, str]
 <title>{e(title)}</title><meta name="description" content="{e(desc)}">{meta}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?{fonts}&display=swap" rel="stylesheet">
-<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>
+<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{QTY_CSS if 'class="qty"' in body else ""}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>
 <body class="{body_cls}">{flag}<div class="page {"has-over" if over else ""}">
 {_header(content, ctx, nav, over)}
 <main>{body}</main>

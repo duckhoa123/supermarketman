@@ -411,3 +411,74 @@ async def test_menu_page_through_the_api(client, session, demo_location_id):
     assert own.status_code == 200 and "https://www.demobistro.ca/menu" in own.text
     assert (await client.get("/menu", headers={"host": "unknown.example"})).status_code == 404
     assert (await client.get("/sites/nobody-here/menu")).status_code == 404
+
+
+# --- Ordering straight from the menu ------------------------------------------------------------------------------
+
+
+def _ordering_site(**kw) -> site_render.SiteData:
+    site = _demo_site(**kw)
+    site.order_form_url = "https://app.example/"
+    return site
+
+
+def test_add_buttons_next_to_each_dish_send_the_order_to_the_app():
+    site = _ordering_site()
+    site.menu[1][1][0].sold_out = True  # Tiramisu is out of stock in the POS
+    html = site_render.render(_with_menu_page(), site, HOME, page="menu")
+    form = 'form id="order-page" class="order-bar" method="get" action="https://app.example/"'
+    assert form in html and '<input type="hidden" name="order" value="L">' in html
+    # Steak Frites: a quantity from 0 (picked to start) to 9, sent as q.<first 8 characters of its id>.
+    steak = 'type="radio" class="q" name="q.11111111"'
+    assert html.count(steak) == site_render.MAX_QTY + 1
+    assert f'{steak} value="0" id="order-page-11111111-0" form="order-page" aria-label="Steak Frites: 0" checked>' in html
+    assert '<label for="order-page-11111111-1" title="Add to your order">+ Add</label>' in html
+    assert '<label for="order-page-11111111-2" title="One more">+</label>' in html  # 1 → 2
+    assert '<label for="order-page-11111111-0" title="One less">−</label>' in html  # 1 → 0
+    assert 'name="q.33333333"' not in html and '<span class="add add-out">Sold out</span>' in html
+    # The CSS shows − n + for the quantity picked and adds it to the order bar's count.
+    assert ".qty>.q:nth-of-type(3):checked~.q-plus>:nth-child(3){display:inline-grid}" in html
+    assert ".qty>.q:nth-of-type(3):checked{counter-increment:cart 2}" in html
+    assert 'Review order<span class="co-long"> and pay</span>' in html
+    assert "<script" not in html.lower()  # still no JavaScript
+    assert 'class="sec sec-menu mp-list bg-page orderable"' in html  # where the CSS counts what's added
+    # The home page's Menu section gets them too, with its own form.
+    home = site_render.render(_with_menu_page(), _ordering_site(), HOME)
+    assert 'class="order-bar"' in home and 'name="q.22222222"' in home and 'form="order-' in home
+
+
+def test_add_buttons_only_when_ordering_is_on_and_the_owner_wants_them():
+    no_orders = site_render.render(_with_menu_page(), _demo_site(), HOME, page="menu")
+    assert 'class="qty"' not in no_orders and "order-bar" not in no_orders.split("<body")[1]
+    assert "counter-increment:cart 1" not in no_orders  # nor the stepper's rules
+    assert "?order=L" in no_orders  # the plain "Order online" button stays
+    off = site_render.render(_with_menu_page(order_buttons=False), _ordering_site(), HOME, page="menu")
+    assert 'class="qty"' not in off
+    tabs = site_render.render(_with_menu_page(layout="tabs"), _ordering_site(), HOME, page="menu")
+    assert tabs.count('class="qty"') == 3 and 'name="mt-page"' in tabs
+    order_form = tabs.split('<form id="order-page"')[1].split("</form>")[0]
+    assert "radio" not in order_form  # the tabs' radio buttons aren't sent with the order
+
+
+async def test_menu_link_to_the_app_carries_the_order(client, session, demo_location_id):
+    from app.models import Location
+
+    loc = await session.get(Location, demo_location_id)
+    loc.listed, loc.accepts_orders = True, True
+    await session.commit()
+    base = f"/locations/{demo_location_id}/website"
+    site = (await client.get(base, headers=OWNER)).json()
+    draft = site["draft"]
+    draft["menu_page"] = {**draft["menu_page"], "enabled": True}
+    await client.put(f"{base}/draft", headers=OWNER, json={"content": draft})
+    await client.post(f"{base}/publish", headers=OWNER)
+    carbonara = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                        Item.name == "Spaghetti Carbonara"))
+    html = (await client.get("/sites/demo-bistro/menu")).text
+    assert f'name="q.{carbonara.id[:8]}" value="2" id="order-page-{carbonara.id[:8]}-2" form="order-page"' in html
+    assert f'name="order" value="{demo_location_id}"' in html
+    # Out of stock in the POS: shown as sold out, without a button.
+    carbonara.stock_qty = 0
+    await session.commit()
+    html = (await client.get("/sites/demo-bistro/menu")).text
+    assert f'name="q.{carbonara.id[:8]}"' not in html and "Sold out" in html

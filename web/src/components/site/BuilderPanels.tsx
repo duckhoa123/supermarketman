@@ -193,6 +193,10 @@ export function MenuPagePanel({ site, draft, change, fieldCtx, onStock }: {
       </div>
       <h3>How it looks</h3>
       <FieldList fields={site.menu_page_fields} skip={["enabled"]} values={values} ctx={fieldCtx} onChange={set} />
+      <p className="small muted">
+        The “Add” buttons show once online ordering is on (Settings → Customer app). Guests add dishes here, then
+        choose pickup or delivery and pay in the Pass app, with their dishes already in the cart.
+      </p>
     </div>
   );
 }
