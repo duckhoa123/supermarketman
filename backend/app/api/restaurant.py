@@ -9,9 +9,9 @@ from app.db import get_session
 from app.integrations.pos.base import POSAuthError
 from app.integrations.reviews.google import get_google_client
 from app.models import Alert, AlertRule, DiningTable, Item, Location, Review, utcnow
-from app.services import analytics
+from app.services import analytics, demo_data
 from app.services.integration_store import access_token, get_integration
-from app.tenancy import require_location, require_manager
+from app.tenancy import require_location, require_manager, require_owner
 
 router = APIRouter(prefix="/locations/{location_id}", tags=["restaurant"])
 
@@ -244,3 +244,15 @@ async def upsert_rule(body: RuleIn, location: Location = Depends(require_manager
     rule.channels, rule.params, rule.enabled = channels, body.params, body.enabled
     await session.commit()
     return {"id": rule.id}
+
+
+@router.get("/demo-data")
+async def demo_data_counts(location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
+    """How much sample menu and sales data is left from the demo."""
+    return await demo_data.counts(session, location)
+
+
+@router.post("/demo-data/clear")
+async def clear_demo_data(location: Location = Depends(require_owner), session: AsyncSession = Depends(get_session)):
+    """Remove the demo menu items and sales, keeping everything from the POS."""
+    return await demo_data.clear(session, location)

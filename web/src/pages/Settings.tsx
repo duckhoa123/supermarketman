@@ -58,6 +58,8 @@ export default function Settings() {
   const integrations = useApi<IntegrationRow[]>(`/locations/${location.id}/integrations`);
   const rules = useApi<Rule[]>(`/locations/${location.id}/alert-rules`);
   const options = useApi<{ clover_test_token: boolean }>("/integrations/options");
+  const demo = useApi<{ items: number; orders: number }>(`/locations/${location.id}/demo-data`);
+  const [clearing, setClearing] = useState(false);
   const [phone, setPhone] = useState(me.phone ?? "");
   const [channels, setChannels] = useState(me.channels);
   const [notice, setNotice] = useState("");
@@ -83,6 +85,20 @@ export default function Settings() {
       window.location.href = url;
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Couldn't start the connection.");
+    }
+  }
+
+  async function clearDemo() {
+    if (!window.confirm("Remove the demo menu items and demo sales? Your Clover items and sales stay. This can't be undone.")) return;
+    setClearing(true);
+    try {
+      const r = await api<{ items: number; orders: number }>(`/locations/${location.id}/demo-data/clear`, { method: "POST" });
+      setNotice(`Removed ${r.items} demo items and ${r.orders} demo orders. Only your real data is left.`);
+      void demo.reload();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Couldn't remove the demo data.");
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -223,6 +239,19 @@ export default function Settings() {
             })}
           </ul>
         </section>
+
+        {demo.data && demo.data.items + demo.data.orders > 0 && (
+          <section className="panel stack">
+            <h2>Demo data</h2>
+            <p className="small muted">
+              Your restaurant still has the sample menu ({demo.data.items} items) and sample sales ({demo.data.orders} orders)
+              it started with. Remove them so Stock, Orders and reports show only what comes from your POS.
+            </p>
+            <button className="btn danger" style={{ alignSelf: "start" }} disabled={clearing} onClick={() => void clearDemo()}>
+              {clearing ? "Removing…" : "Remove demo items and sales"}
+            </button>
+          </section>
+        )}
 
         <section className="panel">
           <h2>Tell me when…</h2>
