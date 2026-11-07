@@ -156,6 +156,7 @@ class Ctx:
     page: str = "home"
     home: str = ""  # prefix for links to parts of the home page: "" on the home page, its address elsewhere
     menu_url: str | None = None  # the separate menu page, when it's turned on
+    order_form: str | None = None  # this page's menu order form: "Order online" buttons send what's been added
 
 
 def _home(ctx: Ctx, anchor: str) -> str:
@@ -237,6 +238,9 @@ def _book_href(ctx: Ctx) -> str | None:
 def _button(kind: str, ctx: Ctx, style: str = "main") -> str:
     site = ctx.site
     cls = f"btn btn-{style}"
+    if kind == "order" and ctx.order_form:
+        # The page's menu has "+ Add" buttons: submit its order form, so dishes picked there aren't lost.
+        return f'<button class="{cls}" type="submit" form="{e(ctx.order_form)}">Order online</button>'
     if kind == "order" and site.order_url:
         return f'<a class="{cls}" href="{e(site.order_url)}">Order online</a>'
     if kind == "book" and _book_href(ctx):
@@ -340,11 +344,29 @@ def _dish_rows(items: list[MenuItem], p: dict, form_id: str | None = None) -> st
 
 
 def _order_form_id(p: dict, ctx: "Ctx", uid: str) -> str | None:
-    """The id of a menu's order form, when guests can add dishes from it (ordering is on and the owner kept the
-    "Add" buttons)."""
+    """The id of a menu's order form, when guests can add dishes from it (ordering is on and the owner turned on
+    the "Add" buttons)."""
     site = ctx.site
-    if p.get("order_buttons", True) and site.order_form_url and site.location_id:
+    if p.get("order_buttons", False) and site.order_form_url and site.location_id:
         return f"order-{uid}"
+    return None
+
+
+def _shown_categories(p: dict, site: "SiteData") -> list[tuple[str, list[MenuItem]]]:
+    wanted = set(p.get("categories") or [])
+    return [(c, items) for c, items in site.menu if not wanted or c in wanted]
+
+
+def _page_order_form(content: dict, ctx: "Ctx") -> str | None:
+    """The order form on this page, if its menu has "+ Add" buttons (the first such Menu section on the home page)."""
+    if ctx.page == "menu":
+        p = content["menu_page"]
+        return _order_form_id(p, ctx, "page") if _shown_categories(p, ctx.site) else None
+    for s in content["sections"]:
+        if s.get("visible") and s["type"] == "menu" and _shown_categories(s["props"], ctx.site):
+            form = _order_form_id(s["props"], ctx, s["id"].split("-")[-1])
+            if form:
+                return form
     return None
 
 
@@ -489,6 +511,9 @@ def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
     link = ""
     if p.get("button") == "menu" and _menu_href(ctx):
         link = f'<a class="link-arrow" href="{e(_menu_href(ctx))}">View full menu {svg("arrow")}</a>'
+    elif p.get("button") == "order" and ctx.order_form:
+        link = (f'<button class="link-arrow" type="submit" form="{e(ctx.order_form)}">Order online {svg("arrow")}'
+                "</button>")
     elif p.get("button") == "order" and site.order_url:
         link = f'<a class="link-arrow" href="{e(site.order_url)}">Order online {svg("arrow")}</a>'
     layout = e(p.get("layout", "cards"))
@@ -497,8 +522,7 @@ def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
 
 
 def s_menu(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
-    wanted = set(p.get("categories") or [])
-    cats = [(c, items) for c, items in ctx.site.menu if not wanted or c in wanted]
+    cats = _shown_categories(p, ctx.site)
     if not cats:
         return ""
     form_id = _order_form_id(p, ctx, uid)
@@ -548,8 +572,7 @@ def menu_page(p: dict, ctx: Ctx) -> str:
     """The separate menu page: a heading, links to each category, the whole menu and an order button. Only the look
     is the owner's to set here; every dish and price is read live from the POS."""
     site = ctx.site
-    wanted = set(p.get("categories") or [])
-    cats = [(c, items) for c, items in site.menu if not wanted or c in wanted]
+    cats = _shown_categories(p, site)
     zone = ' data-zone="menupage"' if ctx.edit else ""
     eb = _txt(ctx, p, "eyebrow", "p", "eyebrow", "Add a small line above the heading", "menu_page:eyebrow")
     h1 = _txt(ctx, p, "heading", "h1", "", "Add a heading", "menu_page:heading")
@@ -807,6 +830,7 @@ text-decoration:none;border:1.5px solid var(--a);cursor:pointer;transition:trans
 .btn-light{background:transparent;color:#fff;border-color:rgba(255,255,255,.8)}
 .actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px}
 .link-arrow{display:inline-flex;align-items:center;gap:8px;font-weight:700;text-decoration:none;font-size:.95rem}
+button.link-arrow{background:none;border:0;padding:0;font-family:inherit;color:var(--a);cursor:pointer}
 .link-arrow .ic{width:18px;transition:transform .2s}.link-arrow:hover .ic{transform:translateX(4px)}
 .ph{display:grid;place-items:center;border:2px dashed var(--c-line);border-radius:var(--rl);color:var(--c-muted);
 font:600 .9rem/1.4 var(--body),sans-serif;aspect-ratio:4/3;background:var(--c-card);text-align:center;padding:16px;width:100%}
@@ -1293,6 +1317,7 @@ def render(content: dict, site: SiteData, page_url: str = "", page: str = "home"
     ctx = Ctx(site=site, template=template, anchors=anchors, edit=edit, page=page,
               home=(page_url or "") if page == "menu" else "",
               menu_url=menu_page_url(page_url) if has_menu_page else None)
+    ctx.order_form = _page_order_form(content, ctx)
     if page == "menu":
         return _render_menu_page(content, site, ctx, page_url)
     used: set[str] = set()

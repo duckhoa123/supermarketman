@@ -174,7 +174,8 @@ SECTIONS: dict[str, dict] = {
     "menu": {"label": "Menu", "icon": "🍽",
              "help": "Dishes, prices and descriptions come from your POS automatically. To change them, edit the "
                      "item in Stock (or in your POS); the site updates within a minute, no need to publish. "
-                     "The “Add” buttons show once online ordering is on (Settings → Customer app).",
+                     "Turn on the “Add” buttons below to let guests pick dishes and quantities here; they need "
+                     "online ordering on (Settings → Customer app).",
              "fields": {
                  "eyebrow": eyebrow(),
                  "heading": text("Heading", 80, "Menu", fallback=True),
@@ -183,7 +184,7 @@ SECTIONS: dict[str, dict] = {
                  "show_prices": flag("Show prices", True),
                  "show_descriptions": flag("Show descriptions", True),
                  "show_dietary": flag("Show dietary labels (V, VG, GF)", True),
-                 "order_buttons": flag("“Add” button next to each dish, to order online", True),
+                 "order_buttons": flag("“Add” button next to each dish, to order online", False),
                  "layout": choice("Layout", [("columns", "Columns with price lines"),
                                              ("tabs", "A tab for each category"),
                                              ("cards", "A card for each category")], "columns"),

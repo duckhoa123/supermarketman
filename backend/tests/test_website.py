@@ -425,7 +425,7 @@ def _ordering_site(**kw) -> site_render.SiteData:
 def test_add_buttons_next_to_each_dish_send_the_order_to_the_app():
     site = _ordering_site()
     site.menu[1][1][0].sold_out = True  # Tiramisu is out of stock in the POS
-    html = site_render.render(_with_menu_page(), site, HOME, page="menu")
+    html = site_render.render(_with_menu_page(order_buttons=True), site, HOME, page="menu")
     form = 'form id="order-page" class="order-bar" method="get" action="https://app.example/"'
     assert form in html and '<input type="hidden" name="order" value="L">' in html
     # Steak Frites: a quantity from 0 (picked to start) to 9, sent as q.<first 8 characters of its id>.
@@ -443,18 +443,28 @@ def test_add_buttons_next_to_each_dish_send_the_order_to_the_app():
     assert "<script" not in html.lower()  # still no JavaScript
     assert 'class="sec sec-menu mp-list bg-page orderable"' in html  # where the CSS counts what's added
     # The home page's Menu section gets them too, with its own form.
-    home = site_render.render(_with_menu_page(), _ordering_site(), HOME)
-    assert 'class="order-bar"' in home and 'name="q.22222222"' in home and 'form="order-' in home
+    content = _with_menu_page()
+    menu = next(s for s in content["sections"] if s["type"] == "menu")
+    menu["props"]["order_buttons"] = True
+    home = site_render.render(content, _ordering_site(), HOME)
+    form = f'order-{menu["id"].split("-")[-1]}'
+    assert f'<form id="{form}" class="order-bar"' in home and f'name="q.22222222" value="0" id="{form}-' in home
 
 
 def test_add_buttons_only_when_ordering_is_on_and_the_owner_wants_them():
-    no_orders = site_render.render(_with_menu_page(), _demo_site(), HOME, page="menu")
+    # They start off, on new sites and on sites saved before they existed: the owner turns them on.
+    assert st.clean_content({"template": "bistro"})["menu_page"]["order_buttons"] is False
+    starter = st.clean_content(st.starter_content("gourmet", "Demo"))
+    assert next(s for s in starter["sections"] if s["type"] == "menu")["props"]["order_buttons"] is False
+    default = site_render.render(_with_menu_page(), _ordering_site(), HOME, page="menu")
+    assert 'class="qty"' not in default and "?order=L" in default
+    no_orders = site_render.render(_with_menu_page(order_buttons=True), _demo_site(), HOME, page="menu")
     assert 'class="qty"' not in no_orders and "order-bar" not in no_orders.split("<body")[1]
     assert "counter-increment:cart 1" not in no_orders  # nor the stepper's rules
     assert "?order=L" in no_orders  # the plain "Order online" button stays
     off = site_render.render(_with_menu_page(order_buttons=False), _ordering_site(), HOME, page="menu")
     assert 'class="qty"' not in off
-    tabs = site_render.render(_with_menu_page(layout="tabs"), _ordering_site(), HOME, page="menu")
+    tabs = site_render.render(_with_menu_page(layout="tabs", order_buttons=True), _ordering_site(), HOME, page="menu")
     assert tabs.count('class="qty"') == 3 and 'name="mt-page"' in tabs
     order_form = tabs.split('<form id="order-page"')[1].split("</form>")[0]
     assert "radio" not in order_form  # the tabs' radio buttons aren't sent with the order
@@ -469,7 +479,7 @@ async def test_menu_link_to_the_app_carries_the_order(client, session, demo_loca
     base = f"/locations/{demo_location_id}/website"
     site = (await client.get(base, headers=OWNER)).json()
     draft = site["draft"]
-    draft["menu_page"] = {**draft["menu_page"], "enabled": True}
+    draft["menu_page"] = {**draft["menu_page"], "enabled": True, "order_buttons": True}
     await client.put(f"{base}/draft", headers=OWNER, json={"content": draft})
     await client.post(f"{base}/publish", headers=OWNER)
     carbonara = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
@@ -482,3 +492,41 @@ async def test_menu_link_to_the_app_carries_the_order(client, session, demo_loca
     await session.commit()
     html = (await client.get("/sites/demo-bistro/menu")).text
     assert f'name="q.{carbonara.id[:8]}"' not in html and "Sold out" in html
+
+
+def test_order_online_buttons_carry_the_dishes_picked_on_the_menu():
+    """With "+ Add" on the page, every "Order online" button submits the menu's order form instead of linking to an
+    empty cart, so nothing the guest picked is lost."""
+    content = _with_menu_page("smokehouse", order_buttons=True)  # header button: "Order online"
+    page = site_render.render(content, _ordering_site(), HOME, page="menu")
+    head = page.split("<main>")[0]
+    assert '<button class="btn btn-main" type="submit" form="order-page">Order online</button>' in head
+    assert "?order=L" not in page  # no plain link that would drop the picks
+    # The home page: the hero, header and "Fan favourites" link submit the Menu section's form.
+    menu = next(s for s in content["sections"] if s["type"] == "menu")
+    menu["props"]["order_buttons"] = True
+    home = site_render.render(content, _ordering_site(), HOME)
+    form = f'form="order-{menu["id"].split("-")[-1]}"'
+    assert home.count(f'type="submit" {form}>Order online') >= 3 and "?order=L" not in home
+    assert f'<button class="link-arrow" type="submit" {form}>Order online' in home
+    # Without the buttons (or with the Menu section hidden) they stay plain links.
+    menu["props"]["order_buttons"] = False
+    assert "?order=L" in site_render.render(content, _ordering_site(), HOME)
+    menu["props"]["order_buttons"], menu["visible"] = True, False
+    hidden = site_render.render(content, _ordering_site(), HOME)
+    assert "?order=L" in hidden and 'type="submit" form="order-' not in hidden
+
+
+async def test_pages_are_compressed_but_chat_streams_are_not(client, demo_location_id, fake_llm):
+    from tests.conftest import text_result
+
+    base = f"/locations/{demo_location_id}/website"
+    await client.get(base, headers=OWNER)
+    await client.post(f"{base}/publish", headers=OWNER)
+    page = await client.get("/sites/demo-bistro", headers={"Accept-Encoding": "gzip"})
+    assert page.headers["content-encoding"] == "gzip" and "Spaghetti Carbonara" in page.text
+    # The assistant's replies stream word by word: compressing them would hold the words back.
+    fake_llm([text_result("Busy night ahead.")])
+    chat = await client.post(f"/locations/{demo_location_id}/chat", headers={**OWNER, "Accept-Encoding": "gzip"},
+                             json={"message": "How's tonight looking?"})
+    assert chat.status_code == 200 and "content-encoding" not in chat.headers and "Busy night ahead." in chat.text
