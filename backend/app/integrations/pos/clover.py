@@ -6,6 +6,9 @@ Endpoints (docs.clover.com):
 - Refresh:    POST {api_base}/oauth/v2/refresh     {client_id, refresh_token}  (refresh tokens are single use)
 - Orders:     GET  {api_base}/v3/merchants/{mId}/orders
 - Items:      GET  {api_base}/v3/merchants/{mId}/items  (limit max 1000)
+- Writes (need the Inventory / Orders *write* permissions):
+  POST /v3/merchants/{mId}/items, /items/{id}, /categories, /category_items, /item_stocks/{itemId};
+  POST /v3/merchants/{mId}/orders, /orders/{id}/line_items, /orders/{id} (total)
 
 Hosts: sandbox apisandbox.dev.clover.com; production api.clover.com (North America: US and Canada),
 api.eu.clover.com, api.la.clover.com.
@@ -22,14 +25,19 @@ from app.integrations.pos import clover_parse
 from app.integrations.pos.base import (
     NormalizedItem,
     NormalizedOrder,
+    OutLine,
     POSAuthError,
     POSRateLimited,
+    POSWriteError,
     TokenSet,
     WebhookChange,
 )
 from app.money import dt_to_ms
 
 PAGE_SIZE = 100
+MAX_LINES = 200  # Clover has no quantity on a line: each unit is its own line item
+PERMISSION_HELP = ("Clover didn't allow Pass to make this change. In Clover, give the app (or your test API token) "
+                   "{perm} permission, then connect again in Pass Settings.")
 ORDER_EXPAND = "lineItems,lineItems.modifications,employee,payments"
 USER_AGENT = "RestaurantAI/0.1"
 
@@ -162,3 +170,88 @@ class CloverAdapter:
 
     def parse_webhook(self, body: dict) -> list[WebhookChange]:
         return clover_parse.parse_webhook(body)
+
+    # --- Writes ---------------------------------------------------------------------------------------
+
+    async def _send(self, token: str, path: str, body: dict | None, perm: str, method: str = "POST",
+                    params: dict | None = None) -> dict:
+        url = f"{self.settings.clover_api_base}{path}"
+        headers = {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT, "Accept": "application/json"}
+        for attempt in range(4):
+            resp = await self._http().request(method, url, json=body, params=params, headers=headers)
+            if resp.status_code == 429 and attempt < 3:
+                await asyncio.sleep(min(float(resp.headers.get("Retry-After", 2 ** (attempt + 1))), 10))
+                continue
+            if resp.status_code in (401, 403):
+                # Not POSAuthError: reading may still work, so the connection stays as it is.
+                raise POSWriteError(PERMISSION_HELP.format(perm=perm))
+            if resp.status_code >= 400:
+                try:
+                    detail = resp.json().get("message") or resp.text
+                except ValueError:
+                    detail = resp.text
+                raise POSWriteError(f"Clover said: {str(detail)[:300]}")
+            return resp.json() if resp.content else {}
+        raise POSRateLimited()
+
+    async def _category_id(self, token: str, merchant_id: str, name: str) -> str:
+        cats = await self._paged(token, f"/v3/merchants/{merchant_id}/categories", {})
+        for c in cats:
+            if (c.get("name") or "").strip().lower() == name.strip().lower():
+                return c["id"]
+        made = await self._send(token, f"/v3/merchants/{merchant_id}/categories", {"name": name}, "Inventory write")
+        return made["id"]
+
+    async def _set_category(self, token: str, merchant_id: str, item_id: str, category: str | None,
+                            old: str | None = None) -> None:
+        if old and (old or "").lower() != (category or "").lower():
+            old_id = await self._category_id(token, merchant_id, old)
+            await self._send(token, f"/v3/merchants/{merchant_id}/category_items",
+                             {"elements": [{"category": {"id": old_id}, "item": {"id": item_id}}]},
+                             "Inventory write", params={"delete": "true"})
+        if category and (old or "").lower() != category.lower():
+            cat_id = await self._category_id(token, merchant_id, category)
+            await self._send(token, f"/v3/merchants/{merchant_id}/category_items",
+                             {"elements": [{"category": {"id": cat_id}, "item": {"id": item_id}}]}, "Inventory write")
+
+    async def create_item(self, access_token: str, merchant_id: str, *, name: str, price_cents: int,
+                          category: str | None = None, stock_qty: float | None = None) -> NormalizedItem:
+        made = await self._send(access_token, f"/v3/merchants/{merchant_id}/items",
+                                {"name": name, "price": price_cents, "priceType": "FIXED"}, "Inventory write")
+        item_id = made["id"]
+        await self._set_category(access_token, merchant_id, item_id, category)
+        if stock_qty is not None:
+            await self._send(access_token, f"/v3/merchants/{merchant_id}/item_stocks/{item_id}",
+                             {"quantity": stock_qty}, "Inventory write")
+        return NormalizedItem(external_id=item_id, name=name, category=category, price_cents=price_cents,
+                              stock_qty=stock_qty)
+
+    async def update_item(self, access_token: str, merchant_id: str, item_id: str, *, name: str, price_cents: int,
+                          category: str | None, old_category: str | None, stock_qty: float | None,
+                          stock_changed: bool) -> None:
+        await self._send(access_token, f"/v3/merchants/{merchant_id}/items/{item_id}",
+                         {"name": name, "price": price_cents}, "Inventory write")
+        await self._set_category(access_token, merchant_id, item_id, category, old_category)
+        if stock_changed and stock_qty is not None:
+            await self._send(access_token, f"/v3/merchants/{merchant_id}/item_stocks/{item_id}",
+                             {"quantity": stock_qty}, "Inventory write")
+
+    async def create_order(self, access_token: str, merchant_id: str, lines: list[OutLine], *, title: str,
+                           note: str | None = None) -> str:
+        """An open order with these lines (taken and paid for at the Clover device, like a phone order)."""
+        units = [ln for ln in lines for _ in range(max(1, ln.qty))]
+        if not units or len(units) > MAX_LINES:
+            raise POSWriteError(f"An order needs 1 to {MAX_LINES} items")
+        body = {"state": "open", "title": title[:127]}
+        if note:
+            body["note"] = note[:500]
+        order = await self._send(access_token, f"/v3/merchants/{merchant_id}/orders", body, "Orders write")
+        oid = order["id"]
+        for ln in units:
+            line = {"item": {"id": ln.item_external_id}} if ln.item_external_id else {
+                "name": ln.name[:127], "price": ln.unit_price_cents}
+            await self._send(access_token, f"/v3/merchants/{merchant_id}/orders/{oid}/line_items", line, "Orders write")
+        total = sum(ln.unit_price_cents for ln in units)
+        await self._send(access_token, f"/v3/merchants/{merchant_id}/orders/{oid}", {"total": total}, "Orders write")
+        return oid
+

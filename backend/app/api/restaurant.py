@@ -9,7 +9,7 @@ from app.db import get_session
 from app.integrations.pos.base import POSAuthError
 from app.integrations.reviews.google import get_google_client
 from app.models import Alert, AlertRule, DiningTable, Item, Location, Review, utcnow
-from app.services import analytics, demo_data
+from app.services import analytics, demo_data, pos_write
 from app.services.integration_store import access_token, get_integration
 from app.tenancy import require_location, require_manager, require_owner
 
@@ -88,6 +88,86 @@ async def patch_item(item_id: str, body: ItemPatch, location: Location = Depends
         setattr(item, key, value)
     await session.commit()
     return {"ok": True}
+
+
+class ItemIn(BaseModel):
+    name: str = Field(min_length=1, max_length=127)
+    price_cents: int = Field(ge=0, le=10_000_000)
+    category: str | None = Field(default=None, max_length=100)
+    stock_qty: float | None = Field(default=None, ge=0, le=1_000_000)
+
+
+@router.post("/items")
+async def add_item(body: ItemIn, location: Location = Depends(require_manager),
+                   session: AsyncSession = Depends(get_session)):
+    """A new menu item. With Clover connected it's created in Clover first."""
+    try:
+        item = await pos_write.add_item(session, location, name=body.name.strip(), price_cents=body.price_cents,
+                                        category=(body.category or "").strip() or None, stock_qty=body.stock_qty)
+    except pos_write.PosError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"id": item.id, "provider": item.provider}
+
+
+class ItemEdit(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=127)
+    price_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    category: str | None = Field(default=None, max_length=100)
+    stock_qty: float | None = Field(default=None, ge=0, le=1_000_000)
+
+
+@router.put("/items/{item_id}/details")
+async def edit_item(item_id: str, body: ItemEdit, location: Location = Depends(require_manager),
+                    session: AsyncSession = Depends(get_session)):
+    """Name, price, category and stock. Clover items are changed in Clover too."""
+    item = await session.get(Item, item_id)
+    if item is None or item.location_id != location.id:
+        raise HTTPException(404, "Item not found")
+    changes = body.model_dump(exclude_unset=True)
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+    if "category" in changes:
+        changes["category"] = (changes["category"] or "").strip() or None
+    try:
+        await pos_write.edit_item(session, location, item, changes)
+    except pos_write.PosError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True}
+
+
+class PosLineIn(BaseModel):
+    item_id: str | None = None
+    name: str | None = Field(default=None, max_length=127)
+    unit_price_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    qty: int = Field(default=1, ge=1, le=99)
+
+
+class PosOrderIn(BaseModel):
+    lines: list[PosLineIn] = Field(min_length=1, max_length=50)
+    note: str | None = Field(default=None, max_length=500)
+    title: str | None = Field(default=None, max_length=60)
+
+
+@router.get("/pos-write")
+async def pos_write_status(location: Location = Depends(require_location),
+                           session: AsyncSession = Depends(get_session)):
+    """Whether items and orders made in Pass go to a POS (and which)."""
+    return await pos_write.status(session, location)
+
+
+@router.post("/pos-orders")
+async def send_pos_order(body: PosOrderIn, location: Location = Depends(require_manager),
+                         session: AsyncSession = Depends(get_session)):
+    """Ring up an order in Pass: it's created in Clover as an open order, to be paid at the Clover device."""
+    for ln in body.lines:
+        if not ln.item_id and not (ln.name and ln.unit_price_cents is not None):
+            raise HTTPException(422, "Each line needs a menu item, or a name and a price")
+    try:
+        order = await pos_write.send_order(session, location, [ln.model_dump() for ln in body.lines],
+                                           title=(body.title or "Order from Pass").strip(), note=body.note)
+    except pos_write.PosError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"id": order.id, "pos_order_id": order.external_id, "total_cents": order.total_cents}
 
 
 @router.get("/orders")

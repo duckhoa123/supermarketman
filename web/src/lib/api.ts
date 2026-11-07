@@ -187,6 +187,8 @@ export type InventoryItem = {
   low_stock_threshold: number | null;
   low: boolean;
   price: string;
+  price_cents: number;
+  provider: string;
   supplier_id: string | null;
   reorder_qty: number | null;
 };
@@ -344,6 +346,8 @@ export type AppOrder = {
   notes: string | null;
   restaurant?: string;
   platform_fee?: string;
+  pos_order_id?: string | null;
+  pos_error?: string | null;
   delivery_address?: string | null;
   delivery?: { status: string; driver_assigned: boolean; eta_at: string | null };
   tip_suggestions?: { pct: number; cents: number; label: string }[];

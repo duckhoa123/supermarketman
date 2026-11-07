@@ -41,6 +41,16 @@ async def handle_sync_pos(session: AsyncSession, payload: dict) -> None:
         await session.commit()
 
 
+@handler("push_order_to_pos")
+async def handle_push_order_to_pos(session: AsyncSession, payload: dict) -> None:
+    from app.models import CustomerOrder
+    from app.services.pos_write import push_customer_order
+
+    order = await session.get(CustomerOrder, payload["customer_order_id"])
+    if order is not None and order.status != "cancelled":
+        await push_customer_order(session, order)
+
+
 @handler("poll_reviews")
 async def handle_poll_reviews(session: AsyncSession, payload: dict) -> None:
     integ = await session.get(Integration, payload["integration_id"])

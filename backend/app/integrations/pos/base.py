@@ -91,3 +91,16 @@ class POSRateLimited(Exception):
     def __init__(self, retry_after: float = 30.0):
         super().__init__(f"rate limited, retry after {retry_after}s")
         self.retry_after = retry_after
+
+
+@dataclass
+class OutLine:
+    """A line to send to the POS: one of the POS's own items (by its id), or a custom line by name and price."""
+    name: str
+    unit_price_cents: int
+    qty: int = 1
+    item_external_id: str | None = None
+
+
+class POSWriteError(Exception):
+    """The POS refused a change (missing write permission, bad data). The message is meant for the owner."""

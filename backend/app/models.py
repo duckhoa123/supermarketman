@@ -547,6 +547,8 @@ class CustomerOrder(TimestampMixin, Base):
     ready_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     eta_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    pos_order_id: Mapped[str | None] = mapped_column(String(100))  # the same order in Clover, once accepted
+    pos_error: Mapped[str | None] = mapped_column(Text)  # why it couldn't be sent to the POS
 
 
 class NutritionEntry(Base):

@@ -204,6 +204,7 @@ async def inventory(
                 and i.stock_qty <= i.low_stock_threshold,
                 "price": fmt_money(i.price_cents, location.currency),
                 "price_cents": i.price_cents,
+                "provider": i.provider,
                 "cost_cents": i.cost_cents,
                 "supplier_id": i.supplier_id,
                 "reorder_qty": i.reorder_qty,

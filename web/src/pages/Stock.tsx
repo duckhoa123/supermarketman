@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
+import { ItemDialog } from "../components/PosDialogs";
 import { api, type InventoryItem, type Supplier } from "../lib/api";
 
 export default function Stock() {
@@ -10,6 +11,10 @@ export default function Stock() {
   const query = `/locations/${location.id}/inventory?low_stock_only=${lowOnly}${search ? `&search=${encodeURIComponent(search)}` : ""}`;
   const { data, error, reload } = useApi<{ items: InventoryItem[]; items_with_stock_tracking: number }>(query);
   const suppliers = useApi<Supplier[]>(`/locations/${location.id}/suppliers`);
+  const pos = useApi<{ pos: string | null }>(`/locations/${location.id}/pos-write`);
+  const [editing, setEditing] = useState<InventoryItem | "new" | null>(null);
+  const [notice, setNotice] = useState("");
+  const categories = Array.from(new Set((data?.items ?? []).map((i) => i.category).filter(Boolean) as string[])).sort();
 
   async function patch(item: InventoryItem, body: Record<string, unknown>) {
     await api(`/locations/${location.id}/items/${item.id}`, { method: "PATCH", body });
@@ -52,9 +57,16 @@ export default function Stock() {
             <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} />
             Low only
           </label>
+          <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>
         </div>
       </div>
+      {notice && <p className="notice">{notice}</p>}
       {error && <p className="error">{error}</p>}
+      {editing && (
+        <ItemDialog locationId={location.id} item={editing === "new" ? null : editing} categories={categories}
+          pos={pos.data?.pos ?? null} onClose={() => setEditing(null)}
+          onDone={(m) => { setEditing(null); setNotice(m); void reload(); }} />
+      )}
       {data && data.items_with_stock_tracking === 0 && (
         <p className="panel muted">
           None of your items have stock tracking turned on in your POS yet. Turn it on in Clover's Inventory app to see
@@ -78,7 +90,7 @@ export default function Stock() {
             <tbody>
               {data.items.map((i) => (
                 <tr key={i.id}>
-                  <td>{i.name}</td>
+                  <td>{i.name}{i.provider === "clover" && <span className="pill" style={{ marginLeft: 6 }}>Clover</span>}</td>
                   <td className="muted">{i.category ?? "–"}</td>
                   <td className="num">
                     {i.stock_qty === null ? (
@@ -104,6 +116,7 @@ export default function Stock() {
                   <td className="num">{i.price}</td>
                   <td className="num">
                     <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
+                      <button className="btn small" onClick={() => setEditing(i)}>Edit</button>
                       <button className="btn small" onClick={() => void setThreshold(i)}>
                         Set alert
                       </button>

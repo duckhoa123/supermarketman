@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
+import { NewOrderDialog } from "../components/PosDialogs";
 import { PERIODS } from "../lib/format";
 
 type OrderRow = {
@@ -17,7 +18,10 @@ export default function Orders() {
   const { location } = useApp();
   const [period, setPeriod] = useState("today");
   const [status, setStatus] = useState("");
-  const { data, error } = useApi<{ total_matching: number; orders: OrderRow[] }>(
+  const pos = useApi<{ pos: string | null }>(`/locations/${location.id}/pos-write`);
+  const [ordering, setOrdering] = useState(false);
+  const [notice, setNotice] = useState("");
+  const { data, error, reload } = useApi<{ total_matching: number; orders: OrderRow[] }>(
     `/locations/${location.id}/orders?period=${period}&limit=50${status ? `&status=${status}` : ""}`
   );
 
@@ -43,9 +47,18 @@ export default function Orders() {
             <option value="refunded">Refunded</option>
             <option value="void">Void</option>
           </select>
+          <button className="btn primary" onClick={() => (pos.data?.pos ? setOrdering(true)
+            : setNotice("Connect Clover in Settings first: orders you make here are sent to Clover."))}>
+            + New order
+          </button>
         </div>
       </div>
+      {notice && <p className="notice">{notice}</p>}
       {error && <p className="error">{error}</p>}
+      {ordering && pos.data?.pos && (
+        <NewOrderDialog locationId={location.id} pos={pos.data.pos} onClose={() => setOrdering(false)}
+          onDone={(m) => { setOrdering(false); setNotice(m); if (period !== "today") setPeriod("today"); else void reload(); }} />
+      )}
       {data && (
         <div className="panel table-wrap">
           <table className="data">

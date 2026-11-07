@@ -173,6 +173,7 @@ def order_out(o: CustomerOrder, currency: str, *, restaurant: str | None = None,
         out["restaurant"] = restaurant
     if for_restaurant:
         out["platform_fee"] = fmt_money(o.restaurant_fee_cents, currency)
+        out["pos_order_id"], out["pos_error"] = o.pos_order_id, o.pos_error
         out["delivery_address"] = o.delivery_address if o.fulfilment == "delivery" else None
     else:
         out["delivery_address"] = o.delivery_address
@@ -204,6 +205,11 @@ async def set_status(session: AsyncSession, order: CustomerOrder, new: str, acto
     delivery = await session.scalar(select(Delivery).where(Delivery.customer_order_id == order.id))
     if new == "accepted":
         order.eta_at = max(order.eta_at or now, now + timedelta(minutes=PREP_MINUTES))
+        # Into the POS too, so the kitchen sees it with the in-house orders (done by the worker, with retries).
+        from app.services.jobs import enqueue
+
+        await enqueue(session, "push_order_to_pos", {"customer_order_id": order.id},
+                      dedupe_key=f"push_order_to_pos:{order.id}")
     elif new == "ready":
         order.ready_at = now
     elif new in ("delivered", "picked_up", "cancelled"):

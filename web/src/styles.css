@@ -647,3 +647,15 @@ button.sb-photo { cursor: pointer; }
   .seo-where .yes { background: #1d3328; color: #8fd3ae; }
   .seo-done-toggle { color: #8fd3ae; }
 }
+
+/* --- New order (sent to the POS) ---------------------------------------------------------------- */
+.pos-order { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; }
+@media (max-width: 700px) { .pos-order { grid-template-columns: 1fr; } }
+.pos-menu { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; max-height: 340px; overflow-y: auto; }
+.pos-menu-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); cursor: pointer; font: inherit; color: var(--ink); }
+.pos-menu-item:hover { border-color: var(--basil); background: var(--basil-tint); }
+.pos-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pos-lines li { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
+.pos-line-name { flex: 1; min-width: 0; }
+.pos-qty { display: inline-flex; align-items: center; gap: 6px; }
+.pos-qty button { width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font: inherit; font-weight: 700; color: var(--ink); }

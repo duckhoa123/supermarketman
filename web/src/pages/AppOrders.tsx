@@ -63,6 +63,8 @@ export default function AppOrders() {
             {o.notes && <p className="small">Note: {o.notes}</p>}
             <div className="small muted">
               Placed {timeAgo(o.placed_at)} · fee {o.platform_fee}
+              {o.pos_order_id && <span className="pill good" style={{ marginLeft: 6 }}>In Clover</span>}
+              {o.pos_error && <span className="pill low" style={{ marginLeft: 6 }} title={o.pos_error}>Not sent to Clover</span>}
               {o.delivery && ` · driver ${o.delivery.driver_assigned ? "on the way" : "not assigned yet"}`}
             </div>
             <div className="row">
