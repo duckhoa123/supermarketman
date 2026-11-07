@@ -5,7 +5,9 @@ import Shell, { type NavItem } from "./components/Shell";
 import { AppContext, MeContext } from "./context";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
-import { captureCloverLaunch, captureWebsiteLink, initialMode, pendingCloverLaunch, storeMode, takeWebsiteLink } from "./lib/mode";
+import {
+  captureCloverLaunch, captureWebsiteLink, cartToParam, initialMode, pendingCloverLaunch, storeMode, takeWebsiteLink,
+} from "./lib/mode";
 import Agents from "./pages/Agents";
 import Alerts from "./pages/Alerts";
 import AppOrders from "./pages/AppOrders";
@@ -84,6 +86,7 @@ export default function App() {
         if (fromSite.date) q.set("date", fromSite.date);
         if (fromSite.time) q.set("time", fromSite.time);
         if (fromSite.party) q.set("party", String(fromSite.party));
+        if (fromSite.items) q.set("cart", cartToParam(fromSite.items));
         navigate(`/?${q.toString()}`, { replace: true });
       } else {
         setModeState((current) => (current && data.agents.some((a) => a.agent === current) ? current : initialMode(data)));

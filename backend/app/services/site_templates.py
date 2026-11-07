@@ -171,7 +171,11 @@ SECTIONS: dict[str, dict] = {
                    "layout": choice("Layout", [("cards", "Cards"), ("overlay", "Text over the photo")], "cards"),
                    "bg": bg(),
                }},
-    "menu": {"label": "Menu", "icon": "🍽", "help": "Dishes and prices come from your menu automatically.",
+    "menu": {"label": "Menu", "icon": "🍽",
+             "help": "Dishes, prices and descriptions come from your POS automatically. To change them, edit the "
+                     "item in Stock (or in your POS); the site updates within a minute, no need to publish. "
+                     "Turn on the “Add” buttons below to let guests pick dishes and quantities here; they need "
+                     "online ordering on (Settings → Customer app).",
              "fields": {
                  "eyebrow": eyebrow(),
                  "heading": text("Heading", 80, "Menu", fallback=True),
@@ -180,6 +184,7 @@ SECTIONS: dict[str, dict] = {
                  "show_prices": flag("Show prices", True),
                  "show_descriptions": flag("Show descriptions", True),
                  "show_dietary": flag("Show dietary labels (V, VG, GF)", True),
+                 "order_buttons": flag("“Add” button next to each dish, to order online", False),
                  "layout": choice("Layout", [("columns", "Columns with price lines"),
                                              ("tabs", "A tab for each category"),
                                              ("cards", "A card for each category")], "columns"),
@@ -271,6 +276,30 @@ LAYOUT_FIELDS = {
                      "columns"),
     "footer_text": text("Footer text", 200),
 }
+
+# The separate menu page (/menu). Like the Menu section, it only decides how the menu looks: dishes, prices,
+# descriptions and dietary labels always come from the POS (or Stock in Pass), read live when the page is served.
+_MENU = SECTIONS["menu"]["fields"]
+MENU_PAGE_FIELDS = {
+    "enabled": flag("Show a separate menu page", False),
+    "eyebrow": eyebrow(),
+    "heading": text("Heading", 80, "Our menu", fallback=True),
+    "intro": text("Short line under the heading (optional)", 300,
+                  placeholder="Everything is made fresh in our kitchen."),
+    "categories": copy.deepcopy(_MENU["categories"]),
+    "jump_links": flag("Category links at the top", True),
+    "show_prices": copy.deepcopy(_MENU["show_prices"]),
+    "show_descriptions": copy.deepcopy(_MENU["show_descriptions"]),
+    "show_dietary": copy.deepcopy(_MENU["show_dietary"]),
+    "order_buttons": copy.deepcopy(_MENU["order_buttons"]),
+    "layout": choice("Layout", [("columns", "Columns with price lines"), ("cards", "A card for each category"),
+                                ("tabs", "A tab for each category")], "columns"),
+    "bg": choice("Heading background", BACKGROUNDS, "alt"),
+}
+
+
+def menu_page_on(content: dict | None) -> bool:
+    return bool(((content or {}).get("menu_page") or {}).get("enabled") is True)
 
 
 # --- Templates ------------------------------------------------------------------------------------------------
@@ -577,6 +606,7 @@ def starter_content(template: str, name: str, cuisine: str | None = None) -> dic
                 "description": f"{name}: {cuisine or 'restaurant'}. Menu, hours, online ordering and bookings."},
         "links": {"instagram": "", "facebook": "", "tiktok": ""},
         "sections": [new_section(k, name, cuisine, ov) for k, ov in t["sections"]],
+        "menu_page": {k: copy.deepcopy(f["default"]) for k, f in MENU_PAGE_FIELDS.items()},
     }
 
 
@@ -704,6 +734,7 @@ def clean_content(raw: dict) -> dict:
     styles = _template_styles(template)
     seo_in = raw.get("seo") if isinstance(raw.get("seo"), dict) else {}
     links_in = raw.get("links") if isinstance(raw.get("links"), dict) else {}
+    menu_page_in = raw.get("menu_page") if isinstance(raw.get("menu_page"), dict) else {}
     sections = []
     for s in (raw.get("sections") or [])[:MAX_SECTIONS]:
         if not isinstance(s, dict) or s.get("type") not in SECTIONS:
@@ -720,6 +751,7 @@ def clean_content(raw: dict) -> dict:
         "seo": clean_seo(seo_in),
         "links": {k: _url(links_in.get(k)) for k in ("instagram", "facebook", "tiktok")},
         "sections": sections,
+        "menu_page": _clean_fields(MENU_PAGE_FIELDS, menu_page_in, {}),
     }
 
 

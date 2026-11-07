@@ -2,6 +2,23 @@ import type { AgentKind, Me } from "./api";
 
 const KEY = "pass.agent";
 const PENDING = "pass.fromWebsite";
+const ITEM_KEY = /^[0-9a-f-]{8,36}$/; // a dish's id, or its first 8 characters
+const MAX_LINKED_ITEMS = 30;
+
+/** A cart in a link: "<item id or its first 8 characters>:<qty>,…". */
+export function cartToParam(items: Record<string, number>): string {
+  return Object.entries(items).map(([id, n]) => `${id}:${n}`).join(",");
+}
+
+export function cartFromParam(raw: string | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const part of (raw ?? "").split(",").slice(0, MAX_LINKED_ITEMS)) {
+    const [id, n] = part.split(":");
+    const qty = Math.floor(Number(n));
+    if (ITEM_KEY.test(id ?? "") && qty >= 1) out[id] = Math.min(20, qty);
+  }
+  return out;
+}
 
 /** A restaurant website's "Order online" / "Book a table" link: /?order=<id> or /?book=<id>. Kept until used,
  * so it survives signing in. */
@@ -14,9 +31,24 @@ export function captureWebsiteLink(): void {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(params.get("date") ?? "") ? params.get("date") : null;
   const time = /^\d{2}:\d{2}$/.test(params.get("time") ?? "") ? params.get("time") : null;
   const party = Number(params.get("party"));
+  // Dishes added on the website's menu: ?q.<first 8 characters of the dish's id>=<quantity> (0 for the rest of
+  // the menu). Older pages sent ?add=<item id> once per dish. The menu in the app matches them to dishes.
+  const items: Record<string, number> = {};
+  const put = (key: string, qty: number) => {
+    if (!ITEM_KEY.test(key) || !(qty >= 1)) return;
+    if (!(key in items) && Object.keys(items).length >= MAX_LINKED_ITEMS) return;
+    items[key] = Math.min(20, (items[key] ?? 0) + Math.floor(qty));
+  };
+  if (order) {
+    params.forEach((value, name) => {
+      if (name.startsWith("q.")) put(name.slice(2), Number(value));
+    });
+    for (const id of params.getAll("add")) put(id, 1);
+  }
   try {
     window.localStorage.setItem(PENDING, JSON.stringify({
       restaurant: order || book, book: Boolean(book), date, time, party: party >= 1 && party <= 20 ? party : null,
+      items: Object.keys(items).length ? items : null,
     }));
   } catch {
     /* ignore */
@@ -48,7 +80,10 @@ export function pendingCloverLaunch(clear = false): string | null {
   }
 }
 
-export type WebsiteLink = { restaurant: string; book: boolean; date?: string | null; time?: string | null; party?: number | null };
+export type WebsiteLink = {
+  restaurant: string; book: boolean; date?: string | null; time?: string | null; party?: number | null;
+  items?: Record<string, number> | null; // dishes added on the website's menu
+};
 
 export function takeWebsiteLink(): WebsiteLink | null {
   try {

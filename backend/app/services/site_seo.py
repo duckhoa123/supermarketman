@@ -73,13 +73,15 @@ def opening_hours(hours: dict) -> list[dict]:
     return out
 
 
-def structured_data(content: dict, site, page_url: str, anchors: set[str]) -> dict:
-    """schema.org Restaurant, built only from what the page itself shows (Google's rule for structured data)."""
+def structured_data(content: dict, site, page_url: str, anchors: set[str], menu_url: str | None = None,
+                    home_url: str | None = None) -> dict:
+    """schema.org Restaurant, built only from what the page itself shows (Google's rule for structured data).
+    menu_url: the separate menu page, when there is one (the menu then lives there, not at #menu)."""
     seo = content.get("seo") or {}
     links = [v for v in (content.get("links") or {}).values() if v]
     data: dict = {"@context": "https://schema.org", "@type": "Restaurant", "name": site.name}
-    if page_url:
-        data["url"] = page_url
+    if home_url or page_url:
+        data["url"] = home_url or page_url
     if seo.get("description"):
         data["description"] = seo["description"]
     if site.cuisine:
@@ -105,7 +107,7 @@ def structured_data(content: dict, site, page_url: str, anchors: set[str]) -> di
         data["logo"] = _abs(site, logo)
     if links:
         data["sameAs"] = links
-    if "menu" in anchors and site.menu:
+    if ("menu" in anchors or menu_url) and site.menu:
         sections, n = [], 0
         for cat, items in site.menu:
             rows = []
@@ -124,7 +126,7 @@ def structured_data(content: dict, site, page_url: str, anchors: set[str]) -> di
                 rows.append(row)
             if rows:
                 sections.append({"@type": "MenuSection", "name": cat, "hasMenuItem": rows})
-        data["hasMenu"] = {"@type": "Menu", "url": f"{page_url}#menu" if page_url else "#menu",
+        data["hasMenu"] = {"@type": "Menu", "url": menu_url or (f"{page_url}#menu" if page_url else "#menu"),
                            "hasMenuSection": sections}
     data["acceptsReservations"] = bool(site.book_url)
     actions = []
@@ -143,8 +145,9 @@ def _json_script(data: dict) -> str:
     return f'<script type="application/ld+json">{body}</script>'
 
 
-def head_tags(content: dict, site, page_url: str, anchors: set[str], title: str, desc: str) -> str:
-    """Everything search engines and social apps read from the <head>."""
+def head_tags(content: dict, site, page_url: str, anchors: set[str], title: str, desc: str,
+              menu_url: str | None = None, home_url: str | None = None) -> str:
+    """Everything search engines and social apps read from the <head>. page_url: this page's address."""
     seo = content.get("seo") or {}
     tags = []
     if site.preview or not seo.get("index", True):
@@ -169,7 +172,7 @@ def head_tags(content: dict, site, page_url: str, anchors: set[str], title: str,
             tags.append(f'<meta name="google-site-verification" content="{e(seo["google_verify"])}">')
         if seo.get("bing_verify"):
             tags.append(f'<meta name="msvalidate.01" content="{e(seo["bing_verify"])}">')
-    tags.append(_json_script(structured_data(content, site, page_url, anchors)))
+    tags.append(_json_script(structured_data(content, site, page_url, anchors, menu_url, home_url)))
     if seo.get("ga_id") and not site.preview:  # the only script a site can have, and only when the owner asks
         ga = e(seo["ga_id"])
         tags.append(f'<script async src="https://www.googletagmanager.com/gtag/js?id={ga}"></script><script>'
@@ -375,7 +378,7 @@ def audit(content: dict, site, facts: Facts) -> dict:
                          None if site.hours else "restaurant", 1))
 
     items = sum(len(i) for _, i in site.menu)
-    if "menu" in vis and items:
+    if ("menu" in vis or (content.get("menu_page") or {}).get("enabled") is True) and items:
         checks.append(_check("menu", "Menu Google can read", "good", f"{items} dishes listed as text.", None, 2))
     else:
         checks.append(_check("menu", "Menu Google can read", "warn",

@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../../hooks";
 import { api, type Menu, type Quote, type RestaurantHit } from "../../lib/api";
+import { cartFromParam } from "../../lib/mode";
 
 type Cart = Record<string, number>;
 
@@ -17,19 +18,47 @@ export default function Discover() {
   const [params] = useSearchParams();
   const [restaurant, setRestaurant] = useState<string | null>(params.get("restaurant"));
   const [booking, setBooking] = useState(params.get("book") === "1");
+  const menu = useApi<Menu>(restaurant ? `/customer/restaurants/${restaurant}/menu` : null);
+  const [cart, setCart] = useState<Cart>({});
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [message, setMessage] = useState("");
+  const [shareContact, setShareContact] = useState(false);
+  // Dishes the guest added on the restaurant's website, waiting for the menu to load to be checked.
+  const [linkedCart, setLinkedCart] = useState<Cart | null>(null);
+  const orderPanel = useRef<HTMLDivElement>(null);
   // A link from a restaurant's website can arrive after this page is already open.
   useEffect(() => {
     const linked = params.get("restaurant");
     if (linked) {
       setRestaurant(linked);
       setBooking(params.get("book") === "1");
+      const fromSite = cartFromParam(params.get("cart"));
+      if (Object.keys(fromSite).length) setLinkedCart(fromSite);
     }
   }, [params]);
-  const menu = useApi<Menu>(restaurant ? `/customer/restaurants/${restaurant}/menu` : null);
-  const [cart, setCart] = useState<Cart>({});
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [message, setMessage] = useState("");
-  const [shareContact, setShareContact] = useState(false);
+  // Put the website's dishes in the cart, leaving out any that are gone or sold out since.
+  useEffect(() => {
+    const data = menu.data;
+    if (!linkedCart || !data || data.restaurant.id !== restaurant) return;
+    const kept: Cart = {};
+    let dropped = 0;
+    for (const [key, qty] of Object.entries(linkedCart)) {
+      // The website sends each dish's id, or just its first characters: it must match exactly one dish.
+      const found = data.items.filter((i) => i.id === key || i.id.startsWith(key));
+      const it = found.length === 1 ? found[0] : undefined;
+      if (it && !it.sold_out) kept[it.id] = Math.min(20, (kept[it.id] ?? 0) + qty);
+      else dropped += 1;
+    }
+    setLinkedCart(null);
+    setCart(kept);
+    setQuote(null);
+    const n = Object.values(kept).reduce((a, b) => a + b, 0);
+    const gone = dropped === 1 ? " One dish isn't available right now, so it was left out."
+      : dropped > 1 ? ` ${dropped} dishes aren't available right now, so they were left out.` : "";
+    setMessage(n ? `Your ${n === 1 ? "dish is" : `${n} dishes are`} in your order. Choose pickup or delivery, then see the total.${gone}`
+      : "The dishes you picked aren't available right now. Have a look at the menu.");
+    window.setTimeout(() => orderPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }, [linkedCart, menu.data, restaurant]);
 
   function search(e: FormEvent) {
     e.preventDefault();
@@ -124,7 +153,7 @@ export default function Discover() {
               initial={{ date: params.get("date"), time: params.get("time"), party: Number(params.get("party")) || null }} /> : (
               <button className="btn" onClick={() => setBooking(true)}>Book a table</button>
             ))}
-            <div className="panel stack">
+            <div className="panel stack" ref={orderPanel}>
             <h2>Your order</h2>
             <div className="seg">
               {(["pickup", "delivery"] as const)
@@ -136,6 +165,14 @@ export default function Discover() {
                 ))}
             </div>
             {items.length === 0 && <p className="muted">Add something from the menu.</p>}
+            {!quote && items.length > 0 && (
+              <ul className="list small">
+                {items.map((l) => {
+                  const it = menu.data!.items.find((x) => x.id === l.item_id);
+                  return <li key={l.item_id} className="spread"><span>{l.qty}× {it?.name ?? "Dish"}</span><span className="muted">{it?.price}</span></li>;
+                })}
+              </ul>
+            )}
             {quote && (
               <div className="stack small" style={{ gap: 4 }}>
                 {quote.lines.map((l) => (

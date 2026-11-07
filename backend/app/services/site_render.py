@@ -1,10 +1,14 @@
-"""Render a restaurant website to a single HTML page. Pure functions, no database.
+"""Render a restaurant website page to HTML. Pure functions, no database.
+
+A site has a home page (the owner's sections) and, if the owner turns it on, a separate menu page (/menu).
 
 Every value from the owner or the database is HTML-escaped. Styles come only from the template and the
 validated theme (hex colours, whitelisted fonts), so a site can't carry scripts or arbitrary CSS. The page
 uses no JavaScript at all: menu tabs, the review slider and the phone menu are plain HTML and CSS.
 """
 
+import re
+import zlib
 from dataclasses import dataclass, field
 from html import escape
 from urllib.parse import quote
@@ -12,7 +16,9 @@ from urllib.parse import quote
 from app.services.geo import WEEKDAY_KEYS
 from app.services.site_icons import svg
 from app.services.site_seo import head_tags
-from app.services.site_templates import FONTS, SECTIONS, clean_content
+from app.services.site_templates import FONTS, SECTIONS, clean_content, menu_page_on
+
+PAGES = ("home", "menu")
 
 DAY_NAMES = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
              "sat": "Saturday", "sun": "Sunday"}
@@ -29,6 +35,7 @@ class MenuItem:
     tags: list[str] = field(default_factory=list)
     id: str = ""
     price_value: str = ""  # "12.50", for search engines
+    sold_out: bool = False  # out of stock in the POS: shown, but it can't be added to an order
 
 
 @dataclass
@@ -48,6 +55,7 @@ class SiteData:
     order_url: str | None = None
     book_url: str | None = None
     book_form_url: str | None = None  # where the booking form sends date, time and party size
+    order_form_url: str | None = None  # where "Review order" sends the dishes added on the menu (the customer app)
     location_id: str = ""
     today: str = ""  # YYYY-MM-DD at the restaurant
     asset_base: str = ""  # images are served at {asset_base}/{asset_id}
@@ -145,6 +153,27 @@ class Ctx:
     anchors: set[str]
     edit: bool = False  # the owner's editor: mark what can be clicked and edited
     sid: str = ""  # the section being rendered
+    page: str = "home"
+    home: str = ""  # prefix for links to parts of the home page: "" on the home page, its address elsewhere
+    menu_url: str | None = None  # the separate menu page, when it's turned on
+    order_form: str | None = None  # this page's menu order form: "Order online" buttons send what's been added
+
+
+def _home(ctx: Ctx, anchor: str) -> str:
+    return f"{ctx.home}#{anchor}"
+
+
+def _menu_href(ctx: Ctx) -> str | None:
+    """Where "View the menu" goes: the menu page if there is one, else the Menu section on the home page."""
+    if ctx.menu_url:
+        return ctx.menu_url
+    return _home(ctx, "menu") if "menu" in ctx.anchors else None
+
+
+def cat_id(category: str) -> str:
+    """A stable id for a menu category, so the jump links and the footer can link straight to it."""
+    slug = re.sub(r"[^a-z0-9]+", "-", category.lower()).strip("-")[:40]
+    return f"cat-{slug}" if slug else f"cat-{zlib.crc32(category.encode()):x}"
 
 
 # --- Edit-mode markers (only in the editor's preview; never on the public site) ---------------------------------
@@ -203,20 +232,23 @@ def _ph(ctx: Ctx, label: str, cls: str = "", ed: str = "") -> str:
 def _book_href(ctx: Ctx) -> str | None:
     if not ctx.site.book_url:
         return None
-    return "#reserve" if "reserve" in ctx.anchors and ctx.site.book_form_url else ctx.site.book_url
+    return _home(ctx, "reserve") if "reserve" in ctx.anchors and ctx.site.book_form_url else ctx.site.book_url
 
 
 def _button(kind: str, ctx: Ctx, style: str = "main") -> str:
     site = ctx.site
     cls = f"btn btn-{style}"
+    if kind == "order" and ctx.order_form:
+        # The page's menu has "+ Add" buttons: submit its order form, so dishes picked there aren't lost.
+        return f'<button class="{cls}" type="submit" form="{e(ctx.order_form)}">Order online</button>'
     if kind == "order" and site.order_url:
         return f'<a class="{cls}" href="{e(site.order_url)}">Order online</a>'
     if kind == "book" and _book_href(ctx):
         return f'<a class="{cls}" href="{e(_book_href(ctx))}">{svg("calendar")}Book a table</a>'
     if kind == "call" and site.phone:
         return f'<a class="{cls}" href="tel:{e(site.phone)}">{svg("phone")}Call {e(site.phone)}</a>'
-    if kind == "menu" and "menu" in ctx.anchors:
-        return f'<a class="{cls}" href="#menu">View the menu</a>'
+    if kind == "menu" and _menu_href(ctx):
+        return f'<a class="{cls}" href="{e(_menu_href(ctx))}">View the menu</a>'
     return ""
 
 
@@ -270,15 +302,72 @@ def _tags(it: MenuItem, show: bool = True) -> str:
                    for t in it.tags if t in TAG_LABELS)
 
 
-def _dish_rows(items: list[MenuItem], p: dict) -> str:
+MAX_QTY = 9  # per dish on the website; guests can go higher in the app's cart
+
+
+def qty_key(item_id: str) -> str:
+    """The short name a dish's quantity is sent under (q.<first 8 characters of its id>), so the link to the app
+    stays short even for a long menu. The app matches it back to the dish."""
+    return f"q.{item_id[:8]}"
+
+
+def _add_button(it: MenuItem, form_id: str | None) -> str:
+    """"+ Add", then "− 2 +", next to a dish, with no JavaScript: one radio button per quantity (0 to MAX_QTY),
+    tied to the menu's order form. − and + are labels for the quantity below and above the one picked, and CSS
+    shows only those two (see _qty_rules). The quantities go to the customer app's cart on "Review order"."""
+    if not form_id or not it.id:
+        return ""
+    if it.sold_out:
+        return '<span class="add add-out">Sold out</span>'
+    key, base = qty_key(it.id), f"{form_id}-{it.id[:8]}"
+    name = e(it.name)
+    radios = "".join(f'<input type="radio" class="q" name="{e(key)}" value="{n}" id="{e(base)}-{n}" form="{e(form_id)}"'
+                     f' aria-label="{name}: {n}"{" checked" if n == 0 else ""}>' for n in range(MAX_QTY + 1))
+    minus = "".join(f'<label for="{e(base)}-{n - 1}" title="One less">−</label>' for n in range(1, MAX_QTY + 1))
+    count = "".join(f"<span>{n}</span>" for n in range(1, MAX_QTY + 1))
+    plus = "".join(f'<label for="{e(base)}-{n}" title="{"Add to your order" if n == 1 else "One more"}">'
+                   f'{"+ Add" if n == 1 else "+"}</label>' for n in range(1, MAX_QTY + 1))
+    return (f'<span class="qty">{radios}<span class="q-minus" aria-hidden="true">{minus}</span>'
+            f'<span class="q-n" aria-hidden="true">{count}</span><span class="q-plus" aria-hidden="true">{plus}</span>'
+            "</span>")
+
+
+def _dish_rows(items: list[MenuItem], p: dict, form_id: str | None = None) -> str:
     rows = []
     for it in items:
         price = (f'<span class="leader"></span><span class="price">{e(it.price)}</span>'
-                 if p.get("show_prices", True) else "")
+                 if p.get("show_prices", True) else ('<span class="leader no-line"></span>' if form_id else ""))
         desc = f'<p class="desc">{e(it.description)}</p>' if p.get("show_descriptions", True) and it.description else ""
         rows.append(f'<li class="dish"><div class="dish-line"><span class="dish-name">{e(it.name)}</span>'
-                    f'{_tags(it, p.get("show_dietary", True))}{price}</div>{desc}</li>')
+                    f'{_tags(it, p.get("show_dietary", True))}{price}{_add_button(it, form_id)}</div>{desc}</li>')
     return "".join(rows)
+
+
+def _order_form_id(p: dict, ctx: "Ctx", uid: str) -> str | None:
+    """The id of a menu's order form, when guests can add dishes from it (ordering is on and the owner turned on
+    the "Add" buttons)."""
+    site = ctx.site
+    if p.get("order_buttons", False) and site.order_form_url and site.location_id:
+        return f"order-{uid}"
+    return None
+
+
+def _shown_categories(p: dict, site: "SiteData") -> list[tuple[str, list[MenuItem]]]:
+    wanted = set(p.get("categories") or [])
+    return [(c, items) for c, items in site.menu if not wanted or c in wanted]
+
+
+def _page_order_form(content: dict, ctx: "Ctx") -> str | None:
+    """The order form on this page, if its menu has "+ Add" buttons (the first such Menu section on the home page)."""
+    if ctx.page == "menu":
+        p = content["menu_page"]
+        return _order_form_id(p, ctx, "page") if _shown_categories(p, ctx.site) else None
+    for s in content["sections"]:
+        if s.get("visible") and s["type"] == "menu" and _shown_categories(s["props"], ctx.site):
+            form = _order_form_id(s["props"], ctx, s["id"].split("-")[-1])
+            if form:
+                return form
+    return None
 
 
 def _has_content(kind: str, p: dict, site: SiteData) -> bool:
@@ -420,8 +509,11 @@ def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
                      f'<h3>{e(it.name)}</h3>{desc}<div class="dish-foot"><span class="dish-price">{e(it.price)}</span>'
                      f'{_tags(it)}</div></div></article>')
     link = ""
-    if p.get("button") == "menu" and "menu" in ctx.anchors:
-        link = f'<a class="link-arrow" href="#menu">View full menu {svg("arrow")}</a>'
+    if p.get("button") == "menu" and _menu_href(ctx):
+        link = f'<a class="link-arrow" href="{e(_menu_href(ctx))}">View full menu {svg("arrow")}</a>'
+    elif p.get("button") == "order" and ctx.order_form:
+        link = (f'<button class="link-arrow" type="submit" form="{e(ctx.order_form)}">Order online {svg("arrow")}'
+                "</button>")
     elif p.get("button") == "order" and site.order_url:
         link = f'<a class="link-arrow" href="{e(site.order_url)}">Order online {svg("arrow")}</a>'
     layout = e(p.get("layout", "cards"))
@@ -430,25 +522,80 @@ def s_dishes(p: dict, ctx: Ctx, anchor: str | None) -> str:
 
 
 def s_menu(p: dict, ctx: Ctx, anchor: str | None, uid: str = "") -> str:
-    wanted = set(p.get("categories") or [])
-    cats = [(c, items) for c, items in ctx.site.menu if not wanted or c in wanted]
+    cats = _shown_categories(p, ctx.site)
     if not cats:
         return ""
-    layout = p.get("layout", "columns")
+    form_id = _order_form_id(p, ctx, uid)
+    body = _menu_body(cats, p, uid, form_id=form_id)
+    return _sec("menu", p, f"{_head(p, ctx=ctx)}{body}{_menu_foot(p, ctx, form_id)}", anchor,
+                "orderable" if form_id else "")
+
+
+def _menu_foot(p: dict, ctx: Ctx, form_id: str | None = None) -> str:
     note = " V vegetarian · VG vegan · GF gluten free" if p.get("show_dietary", True) else ""
-    foot = f'<p class="menu-note">Prices before tax.{note}</p>{_actions(_button("order", ctx))}'
+    if not form_id:
+        return f'<p class="menu-note">Prices before tax.{note}</p>{_actions(_button("order", ctx))}'
+    # The order bar: shows once a dish is added (the count is plain CSS), and sends the dishes to the customer
+    # app, where the guest picks pickup or delivery and pays.
+    site = ctx.site
+    return (f'<p class="menu-note">Prices before tax.{note}</p>'
+            f'<p class="order-hint">Tap <strong>+ Add</strong> next to a dish to start your order.</p>'
+            f'<form id="{e(form_id)}" class="order-bar" method="get" action="{e(site.order_form_url)}">'
+            f'<input type="hidden" name="order" value="{e(site.location_id)}">'
+            f'<span class="order-count">Your order<b class="co-n"></b></span>'
+            f'<button class="btn btn-main" type="submit">Review order<span class="co-long"> and pay</span></button></form>')
+
+
+def _menu_body(cats: list[tuple[str, list[MenuItem]]], p: dict, uid: str, ids: bool = False,
+               form_id: str | None = None) -> str:
+    """The dishes, by category: tabs, columns or cards. ids=True gives each category an id to link to."""
+    layout = p.get("layout", "columns")
     if layout == "tabs" and len(cats) > 1:
         name = f"mt-{uid}"
         radios = "".join(f'<input type="radio" name="{name}" id="{name}-{i}" aria-label="{e(c)}"'
                          f'{" checked" if i == 0 else ""}>' for i, (c, _) in enumerate(cats))
         labels = "".join(f'<label for="{name}-{i}">{e(c)}</label>' for i, (c, _) in enumerate(cats))
-        panels = "".join(f'<ul class="tp">{_dish_rows(items, p)}</ul>' for _, items in cats)
-        body = f'<div class="tabs">{radios}<div class="tab-labels">{labels}</div><div class="tab-panels">{panels}</div></div>'
+        panels = "".join(f'<ul class="tp">{_dish_rows(items, p, form_id)}</ul>' for _, items in cats)
+        return f'<div class="tabs">{radios}<div class="tab-labels">{labels}</div><div class="tab-panels">{panels}</div></div>'
+    blocks = []
+    for c, items in cats:
+        aid = f' id="{cat_id(c)}"' if ids else ""
+        blocks.append(f'<div class="menu-cat"{aid}><h3>{e(c)}</h3><ul>{_dish_rows(items, p, form_id)}</ul></div>')
+    return f'<div class="menu-grid menu-{e(layout)}">{"".join(blocks)}</div>'
+
+
+MENU_PAGE_NOTE = ("Dishes, prices and descriptions come from your POS. To change them, edit the item in Stock in "
+                  "Pass (or in your POS): this page updates within a minute, no need to publish.")
+
+
+def menu_page(p: dict, ctx: Ctx) -> str:
+    """The separate menu page: a heading, links to each category, the whole menu and an order button. Only the look
+    is the owner's to set here; every dish and price is read live from the POS."""
+    site = ctx.site
+    cats = _shown_categories(p, site)
+    zone = ' data-zone="menupage"' if ctx.edit else ""
+    eb = _txt(ctx, p, "eyebrow", "p", "eyebrow", "Add a small line above the heading", "menu_page:eyebrow")
+    h1 = _txt(ctx, p, "heading", "h1", "", "Add a heading", "menu_page:heading")
+    intro = _txt(ctx, p, "intro", "p", "muted mp-intro", "Add a short line about your menu", "menu_page:intro")
+    tabs = p.get("layout") == "tabs" and len(cats) > 1
+    jump = ""
+    if p.get("jump_links", True) and not tabs and len(cats) > 1:
+        jump = ('<nav class="mp-jump" aria-label="Menu categories">'
+                + "".join(f'<a href="#{cat_id(c)}">{e(c)}</a>' for c, _ in cats) + "</nav>")
+    head = (f'<section class="sec mp-head bg-{e(p.get("bg", "alt"))}"{zone}><div class="wrap">'
+            f'<div class="sec-head center">{eb}{h1}{intro}</div>{jump}</div></section>')
+    note = f'<p class="edit-note">{e(MENU_PAGE_NOTE)}</p>' if ctx.edit else ""
+    form_id = _order_form_id(p, ctx, "page")
+    if cats:
+        inner = _menu_body(cats, p, "page", ids=True, form_id=form_id) + _menu_foot(p, ctx, form_id)
     else:
-        blocks = "".join(f'<div class="menu-cat"><h3>{e(c)}</h3><ul>{_dish_rows(items, p)}</ul></div>'
-                         for c, items in cats)
-        body = f'<div class="menu-grid menu-{e(layout)}">{blocks}</div>'
-    return _sec("menu", p, f"{_head(p, ctx=ctx)}{body}{foot}", anchor)
+        call = f' Call us at <a href="tel:{e(site.phone)}">{e(site.phone)}</a>.' if site.phone else ""
+        inner = f'<p class="mp-empty muted">Our menu will be here soon.{call}</p>'
+        if ctx.edit:
+            note = f'<p class="edit-note">Your menu shows here once it comes in from your POS. {e(MENU_PAGE_NOTE)}</p>'
+    cls = " orderable" if form_id and cats else ""
+    return (f'{head}<section class="sec sec-menu mp-list bg-page{cls}"{zone}><div class="wrap">{note}{inner}</div>'
+            f'</section>')
 
 
 def _band_image(ctx: Ctx, p: dict) -> str:
@@ -683,6 +830,7 @@ text-decoration:none;border:1.5px solid var(--a);cursor:pointer;transition:trans
 .btn-light{background:transparent;color:#fff;border-color:rgba(255,255,255,.8)}
 .actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px}
 .link-arrow{display:inline-flex;align-items:center;gap:8px;font-weight:700;text-decoration:none;font-size:.95rem}
+button.link-arrow{background:none;border:0;padding:0;font-family:inherit;color:var(--a);cursor:pointer}
 .link-arrow .ic{width:18px;transition:transform .2s}.link-arrow:hover .ic{transform:translateX(4px)}
 .ph{display:grid;place-items:center;border:2px dashed var(--c-line);border-radius:var(--rl);color:var(--c-muted);
 font:600 .9rem/1.4 var(--body),sans-serif;aspect-ratio:4/3;background:var(--c-card);text-align:center;padding:16px;width:100%}
@@ -794,6 +942,38 @@ letter-spacing:.08em;text-transform:uppercase;padding:7px 10px;border-radius:var
 .tab-labels{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:36px}
 .tab-labels label{cursor:pointer;padding:10px 20px;border:1.5px solid var(--c-line);border-radius:var(--rb);font-weight:600;font-size:.9rem}
 .tp{display:none;grid-template-columns:1fr 1fr;gap:4px 56px;max-width:980px;margin:0 auto}
+/* Menu page */
+.mp-head{padding:clamp(48px,7vw,88px) 0 clamp(36px,5vw,56px)}.mp-head .sec-head{margin-bottom:0}
+.mp-head h1{margin:0;font-size:clamp(2.2rem,5vw,3.6rem);line-height:1.1}.mp-intro{margin:14px auto 0;max-width:620px}
+.mp-jump{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:28px}
+.sec .mp-jump a{color:var(--c-text);text-decoration:none;padding:8px 16px;border:1.5px solid var(--c-line);border-radius:var(--rb);font-weight:600;font-size:.88rem}
+.sec .mp-jump a:hover{border-color:var(--a);color:var(--a)}
+.mp-list{padding-top:clamp(40px,6vw,72px)}.menu-cat[id]{scroll-margin-top:96px}.mp-empty{text-align:center}
+.nav a[aria-current]{border-color:var(--a)}
+/* Ordering straight from the menu: "+ Add" checkboxes and an order bar, no JavaScript */
+.orderable{counter-reset:cart}.sec.orderable{overflow:clip}.leader.no-line{border-bottom:0}
+.qty{position:relative;display:inline-flex;align-items:center;flex:none;margin-left:6px;user-select:none;transform:translateY(-2px)}
+.qty>.q{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.q-minus>*,.q-plus>*,.q-n>*{display:none}
+.q-minus label,.q-plus label{cursor:pointer;place-items:center;min-width:28px;height:28px;padding:0 8px;border:1.5px solid var(--a);
+color:var(--a);border-radius:var(--rb);font-size:.8rem;font-weight:700;line-height:1;white-space:nowrap}
+.q-minus label:hover,.q-plus label:hover{background:var(--a);color:var(--on-a)}
+.q-plus label:not(:first-child),.q-minus label{padding:0;font-size:1rem}
+.q-n>*{min-width:26px;text-align:center;font-weight:700}
+.qty:has(.q:focus-visible){outline:2px solid var(--a);outline-offset:3px;border-radius:var(--rb)}
+.qty:has(.q:not(:first-child):checked) .q-plus label{background:var(--a);color:var(--on-a)}
+.add{display:inline-flex;flex:none;margin-left:6px;font-size:.78rem;line-height:1;white-space:nowrap;border-radius:var(--rb);padding:6px 10px}
+.add-out{border:1.5px solid var(--c-line);color:var(--c-muted);font-weight:600;transform:translateY(-2px)}
+.order-hint{text-align:center;color:var(--c-muted);font-size:.92rem;margin:10px 0 0}
+.order-bar{position:sticky;bottom:16px;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;
+max-width:620px;margin:22px auto 0;padding:10px 10px 10px 22px;border-radius:var(--rl);background:var(--c-text);color:var(--c-bg);
+box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.order-bar .btn{gap:0}.order-count{font-weight:700;white-space:nowrap}.co-n::after{content:" · " counter(cart);font-weight:500}
+.orderable:has(.tabs) .co-n{display:none}
+@supports selector(:has(a)){.orderable:not(:has(.q:not(:first-child):checked)) .order-bar{display:none}
+.orderable:has(.q:not(:first-child):checked) .order-hint{display:none}}
+@media (max-width:560px){.add{padding:6px 8px}.q-minus label,.q-plus label{min-width:32px;height:32px}.order-bar{padding:8px 8px 8px 16px;gap:10px}.order-bar .btn{padding:12px 14px;font-size:.8rem}
+.co-long{display:none}}
 /* Events */
 .has-img{--c-text:#fff;--c-muted:rgba(255,255,255,.8);--c-line:rgba(255,255,255,.28);--a:var(--accent);--on-a:var(--on-accent);color:#fff}
 .band-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
@@ -905,6 +1085,8 @@ border:2px dashed #b9aef0;border-radius:14px;color:#6a55e0;font:600 16px system-
 .edit-add:hover{background:#f1eeff}
 .edit-sec{position:relative}
 .badge .ring{animation:none}
+.edit-note{margin:0 auto 32px;max-width:760px;padding:12px 18px;border-radius:10px;background:#f1eeff;color:#3b2f73;
+font:500 14px/1.45 system-ui,sans-serif;text-align:center}
 """
 
 
@@ -925,6 +1107,23 @@ def _nth_rules() -> str:
 
 
 NTH_CSS = _nth_rules()
+
+
+def _qty_rules() -> str:
+    """The quantity stepper: with quantity n picked, show "−" (to n-1), the number n and "+" (to n+1, or "+ Add"
+    when n is 0), and add n to the order bar's count. Radio n is the (n+1)th input in .qty."""
+    out = []
+    for n in range(MAX_QTY + 1):
+        on = f".qty>.q:nth-of-type({n + 1}):checked"
+        if n < MAX_QTY:
+            out.append(f"{on}~.q-plus>:nth-child({n + 1}){{display:inline-grid}}")
+        if n:
+            out.append(f"{on}~.q-minus>:nth-child({n}){{display:inline-grid}}{on}~.q-n>:nth-child({n}){{display:inline-block}}"
+                       f"{on}{{counter-increment:cart {n}}}")
+    return "".join(out)
+
+
+QTY_CSS = _qty_rules()
 
 TEMPLATE_CSS = {
     "gourmet": """
@@ -1030,8 +1229,11 @@ def _header(content: dict, ctx: Ctx, nav: list[tuple[str, str]], over: bool) -> 
     site, lay = ctx.site, content["layout"]
     logo_img = _img(site, lay.get("logo"), site.name, eager=True, ed=_ei(ctx, "layout:logo"))
     sub = "" if logo_img else _txt(ctx, lay, "logo_sub", "span", "logo-sub", "Add a small line", "layout:logo_sub")
-    logo = f'<a class="logo" href="#top">{logo_img or f"<span class=logo-name>{e(site.name)}</span>"}{sub}</a>'
-    links = "".join(f'<a href="#{a}">{e(label)}</a>' for a, label in nav)
+    logo = (f'<a class="logo" href="{e(ctx.home or "#top")}">'
+            f'{logo_img or f"<span class=logo-name>{e(site.name)}</span>"}{sub}</a>')
+    current = ctx.menu_url if ctx.page == "menu" else None
+    links = "".join(f'<a href="{e(href)}"{" aria-current=page" if href == current else ""}>{e(label)}</a>'
+                    for href, label in nav)
     kind = lay.get("header_button", "order")
     btn = ""
     if kind != "none":
@@ -1073,10 +1275,12 @@ def _footer(content: dict, ctx: Ctx, nav: list[tuple[str, str]]) -> str:
     about = f'<div class="foot-about"><span class="logo-name">{e(site.name)}</span>{blurb}{social}</div>'
     cols = [about]
     if nav:
-        cols.append("<div><h4>Explore</h4><ul>" + "".join(f'<li><a href="#{a}">{e(label)}</a></li>' for a, label in nav)
-                    + "</ul></div>")
-    if "menu" in ctx.anchors:
-        cols.append("<div><h4>Our menu</h4><ul>" + "".join(f'<li><a href="#menu">{e(c)}</a></li>'
+        cols.append("<div><h4>Explore</h4><ul>" + "".join(f'<li><a href="{e(href)}">{e(label)}</a></li>'
+                                                          for href, label in nav) + "</ul></div>")
+    if site.menu and _menu_href(ctx):
+        def cat_href(c: str) -> str:
+            return f"{ctx.menu_url}#{cat_id(c)}" if ctx.menu_url else _home(ctx, "menu")
+        cols.append("<div><h4>Our menu</h4><ul>" + "".join(f'<li><a href="{e(cat_href(c))}">{e(c)}</a></li>'
                                                           for c, _ in site.menu[:6]) + "</ul></div>")
     contact = []
     if site.address:
@@ -1091,11 +1295,16 @@ def _footer(content: dict, ctx: Ctx, nav: list[tuple[str, str]]) -> str:
             f'<span>{e(site.cuisine or "")}</span></div></div></footer>')
 
 
-def render(content: dict, site: SiteData, page_url: str = "") -> str:
+def menu_page_url(page_url: str) -> str:
+    return f"{page_url.rstrip('/')}/menu" if page_url else "menu"
+
+
+def render(content: dict, site: SiteData, page_url: str = "", page: str = "home") -> str:
+    """page_url: the home page's address. page: "home", or "menu" for the separate menu page."""
     content = clean_content(content)
+    page = page if page in PAGES else "home"
     site.alts = content["seo"]["alts"]
     template = content["template"]
-    th = content["theme"]
     visible = [s for s in content["sections"] if s.get("visible")]
     anchors: set[str] = set()
     for s in visible:
@@ -1103,7 +1312,14 @@ def render(content: dict, site: SiteData, page_url: str = "") -> str:
         if a and _has_content(s["type"], s["props"], site):
             anchors.add(a)
     edit = site.edit and site.preview
-    ctx = Ctx(site=site, template=template, anchors=anchors, edit=edit)
+    # The menu page always works in the owner's preview, so they can see it before turning it on.
+    has_menu_page = menu_page_on(content) or (page == "menu" and site.preview)
+    ctx = Ctx(site=site, template=template, anchors=anchors, edit=edit, page=page,
+              home=(page_url or "") if page == "menu" else "",
+              menu_url=menu_page_url(page_url) if has_menu_page else None)
+    ctx.order_form = _page_order_form(content, ctx)
+    if page == "menu":
+        return _render_menu_page(content, site, ctx, page_url)
     used: set[str] = set()
     parts, first = [], None
     for s in content["sections"] if edit else visible:
@@ -1131,27 +1347,51 @@ def render(content: dict, site: SiteData, page_url: str = "") -> str:
     if edit:
         parts.append('<div class="edit-add" data-add="end"><span>+ Add a section</span></div>')
     body = "".join(parts)
-    nav = [(a, label) for a, label in NAV if a in anchors]
-    if "menu" not in anchors and "dishes" in anchors:
-        nav.insert(1 if nav and nav[0][0] == "about" else 0, ("dishes", "Menu"))
-    nav = nav[:6]
     over = (content["layout"].get("header") == "transparent" and first is not None and first["type"] == "hero"
             and first["props"].get("layout") in ("overlay", "centered"))
-    fonts = "&".join(f"family={FONTS[f]}" for f in dict.fromkeys([th["heading_font"], th["body_font"], th["script_font"]]))
     seo = content.get("seo") or {}
     title = seo.get("title") or site.name
     desc = seo.get("description") or ""
+    meta = head_tags(content, site, page_url, anchors, title, desc, menu_url=ctx.menu_url)
+    return _document(content, site, ctx, _nav(ctx), body, over, title, desc, meta)
+
+
+def _nav(ctx: Ctx) -> list[tuple[str, str]]:
+    """The header and footer links, as (address, label). With a menu page, "Menu" opens it."""
+    nav = [(a, label) for a, label in NAV if a in ctx.anchors]
+    if ctx.menu_url and not any(a == "menu" for a, _ in nav):
+        nav.insert(1 if nav and nav[0][0] == "about" else 0, ("menu", "Menu"))
+    elif "menu" not in ctx.anchors and "dishes" in ctx.anchors:
+        nav.insert(1 if nav and nav[0][0] == "about" else 0, ("dishes", "Menu"))
+    return [(ctx.menu_url if a == "menu" and ctx.menu_url else _home(ctx, a), label) for a, label in nav[:6]]
+
+
+def _render_menu_page(content: dict, site: SiteData, ctx: Ctx, page_url: str) -> str:
+    p = content["menu_page"]
+    seo = content.get("seo") or {}
+    name = seo.get("title") or site.name
+    title = f"{p.get('heading') or 'Menu'} | {name}"
+    desc = p.get("intro") or (f"The menu at {site.name}" + (f", {site.cuisine.lower()}" if site.cuisine else "")
+                              + ": dishes and prices.")
+    meta = head_tags(content, site, ctx.menu_url or "", ctx.anchors | {"menu"}, title, desc[:160],
+                     menu_url=ctx.menu_url, home_url=ctx.home or None)
+    return _document(content, site, ctx, _nav(ctx), menu_page(p, ctx), False, title, desc[:160], meta)
+
+
+def _document(content: dict, site: SiteData, ctx: Ctx, nav: list[tuple[str, str]], body: str, over: bool,
+              title: str, desc: str, meta: str) -> str:
+    th, template, edit = content["theme"], content["template"], ctx.edit
+    fonts = "&".join(f"family={FONTS[f]}" for f in dict.fromkeys([th["heading_font"], th["body_font"], th["script_font"]]))
     flag = ('<div class="preview-flag">Preview: only you can see this until you publish</div>'
             if site.preview and not edit else "")
-    meta = head_tags(content, site, page_url, anchors, title, desc)
-    body_cls = (f"t-{e(template)} eb-{e(th.get('eyebrow', 'caps'))}{' is-preview' if site.preview and not edit else ''}"
-                f"{' is-editing' if edit else ''}")
+    body_cls = (f"t-{e(template)} eb-{e(th.get('eyebrow', 'caps'))} page-{ctx.page}"
+                f"{' is-preview' if site.preview and not edit else ''}{' is-editing' if edit else ''}")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title><meta name="description" content="{e(desc)}">{meta}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?{fonts}&display=swap" rel="stylesheet">
-<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>
+<style>{theme_css(th)}{BASE_CSS}{NTH_CSS}{QTY_CSS if 'class="qty"' in body else ""}{TEMPLATE_CSS.get(template, "")}{EDIT_CSS if edit else ""}</style></head>
 <body class="{body_cls}">{flag}<div class="page {"has-over" if over else ""}">
 {_header(content, ctx, nav, over)}
 <main>{body}</main>

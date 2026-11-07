@@ -5,6 +5,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api import (
     account,
@@ -74,6 +75,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["Authorization", "Content-Type"],
     )
+    # Compress responses: restaurant websites are served from here (a long menu with "+ Add" steppers is a few
+    # hundred KB of HTML, a tenth of that compressed). Streamed chat replies (text/event-stream) are left alone,
+    # so they still arrive word by word (tests/test_website.py checks both).
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     @app.get("/health", tags=["ops"])
     async def health():

@@ -73,6 +73,7 @@ def catalog() -> dict:
         "sections": [{"type": k, "label": v["label"], "icon": v["icon"], "help": v.get("help", ""),
                       "ai": v.get("ai", False), "fields": _fields(v["fields"])} for k, v in st.SECTIONS.items()],
         "layout_fields": _fields(st.LAYOUT_FIELDS),
+        "menu_page_fields": _fields(st.MENU_PAGE_FIELDS),
         "theme_fields": _fields(st.THEME_FIELDS),
         "fonts": [f for f in st.FONTS if f not in st.SCRIPT_FONTS],
         "script_fonts": st.SCRIPT_FONTS,
@@ -164,7 +165,8 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         menu.setdefault(it.category or "Menu", []).append(site_render.MenuItem(
             name=it.name, price=fmt_money(it.price_cents, location.currency), description=it.description,
             tags=list(it.tags or []), id=it.id,
-            price_value=f"{it.price_cents / 100:.2f}" if it.price_cents is not None else ""))
+            price_value=f"{it.price_cents / 100:.2f}" if it.price_cents is not None else "",
+            sold_out=it.stock_qty is not None and it.stock_qty <= 0))
     ordered = sorted(menu.items(), key=lambda kv: -(popularity.get(kv[0]) or 0))
     # Best sellers over the last 90 days, for "Signature dishes" until the owner picks their own.
     since = date.today() - timedelta(days=90)
@@ -185,6 +187,7 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
         rating=round(float(avg), 1) if avg is not None else None,
         best_sellers=best,
         order_url=f"{web}/?order={location.id}" if location.listed and location.accepts_orders else None,
+        order_form_url=f"{web}/" if location.listed and location.accepts_orders else None,
         book_url=f"{web}/?book={location.id}" if location.listed and location.accepts_bookings else None,
         book_form_url=f"{web}/" if location.listed and location.accepts_bookings else None,
         location_id=location.id, today=datetime.now(_tz(location.timezone)).date().isoformat(),
@@ -193,13 +196,18 @@ async def site_data(session: AsyncSession, location: Location, site: Website, pr
     )
 
 
-async def render_page(session: AsyncSession, site: Website, preview: bool, edit: bool = False) -> str | None:
+async def render_page(session: AsyncSession, site: Website, preview: bool, edit: bool = False,
+                      page: str = "home") -> str | None:
+    """page: "home", or "menu" for the separate menu page (live only once the owner turns it on and publishes;
+    the preview always shows it, so the owner can see it first)."""
     content = site.draft if preview else site.published
     if not content:
         return None
+    if page == "menu" and not preview and not st.menu_page_on(content):
+        return None
     location = await session.get(Location, site.location_id)
     data = await site_data(session, location, site, preview, edit)
-    return site_render.render(content, data, public_url(site))
+    return site_render.render(content, data, public_url(site), page=page)
 
 
 # --- Images ---------------------------------------------------------------------------------------------------

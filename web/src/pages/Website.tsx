@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Canvas, { type Box, type Device, type Selection } from "../components/site/Canvas";
 import {
-  AddSectionModal, DesignPanel, Flyout, PhotoModal, PhotosPanel, SectionPanel, SectionsPanel, SettingsPanel,
-  useTemplateFonts, type Version, ZonePanel,
+  AddSectionModal, DesignPanel, Flyout, MenuPagePanel, PhotoModal, PhotosPanel, SectionPanel, SectionsPanel,
+  SettingsPanel, useTemplateFonts, type Version, ZonePanel,
 } from "../components/site/BuilderPanels";
 import Ico from "../components/site/Ico";
 import SeoPanel from "../components/site/SeoPanel";
@@ -13,7 +13,9 @@ import { API_URL, api, fetchBlob, type SiteContent, type SiteEditor } from "../l
 import { timeAgo } from "../lib/format";
 import { fieldFor, newSectionId, parseTarget, readTarget, writeTarget } from "../lib/sitePath";
 
-type Panel = "design" | "sections" | "photos" | "seo" | "settings" | "section" | "header" | "footer" | null;
+type Panel = "design" | "sections" | "photos" | "seo" | "settings" | "section" | "header" | "footer" | "menupage" | null;
+/** Which page of the site is on the canvas: the home page, or the separate menu page. */
+type Page = "home" | "menu";
 type Menu = "layout" | "bg" | null;
 
 const TIPS_KEY = "pass.siteTips";
@@ -38,6 +40,7 @@ export default function Website() {
   const [html, setHtml] = useState("");
   const [device, setDevice] = useState<Device>(() => (window.innerWidth < 760 ? "phone" : "desktop"));
   const [editing, setEditing] = useState(true);
+  const [page, setPage] = useState<Page>("home");
   const [panel, setPanel] = useState<Panel>(null);
   const [sel, setSel] = useState<Selection>(null);
   const [menu, setMenu] = useState<Menu>(null);
@@ -57,8 +60,10 @@ export default function Website() {
   const rerenderNext = useRef(false);
   const draftRef = useRef<SiteContent | null>(null);
   const editingRef = useRef(editing);
+  const pageRef = useRef(page);
   draftRef.current = draft;
   editingRef.current = editing;
+  pageRef.current = page;
 
   const flash = useCallback((text: string) => {
     setToast(text);
@@ -66,7 +71,11 @@ export default function Website() {
   }, []);
 
   const refreshPreview = useCallback(async () => {
-    setHtml(await (await fetchBlob(`${base}/preview${editingRef.current ? "?edit=1" : ""}`)).text());
+    const q = new URLSearchParams();
+    if (editingRef.current) q.set("edit", "1");
+    if (pageRef.current === "menu") q.set("page", "menu");
+    const qs = q.toString();
+    setHtml(await (await fetchBlob(`${base}/preview${qs ? `?${qs}` : ""}`)).text());
   }, [base]);
 
   useEffect(() => {
@@ -109,6 +118,12 @@ export default function Website() {
       flash("No problem: nothing was charged.");
     }
   }, [base, flash]);
+
+  useEffect(() => {
+    if (site) void refreshPreview();
+    // Only when switching pages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   useTemplateFonts(site ? [...site.fonts, ...site.script_fonts] : []);
 
@@ -256,7 +271,17 @@ export default function Website() {
     flash(`${s?.label ?? "Section"} added. Click its text to make it yours.`);
   }
   /** Show a section of this type: un-hide it, or add it (a top banner goes first, the rest at the end). */
+  /** The page switcher: show the other page, with its own options open. */
+  function goTo(p: Page) {
+    if (p === page) return;
+    setPage(p);
+    setSel(null);
+    setMenu(null);
+    setPanel((cur) => (p === "menu" ? (editing ? "menupage" : cur) : cur === "menupage" ? null : cur));
+  }
   function ensureSection(type: string) {
+    const wasAway = page !== "home";
+    if (wasAway) setPage("home");
     const found = draft!.sections.find((x) => x.type === type);
     const s = spec(type);
     let sid = found?.id;
@@ -272,7 +297,7 @@ export default function Website() {
     if (sid) {
       const id = sid;
       setSel({ kind: "section", sid: id });
-      window.setTimeout(() => setReveal({ sid: id, n: Date.now() }), found ? 0 : 900);
+      window.setTimeout(() => setReveal({ sid: id, n: Date.now() }), found && !wasAway ? 0 : 900);
     }
   }
   function seoFix(fix: string) {
@@ -285,7 +310,10 @@ export default function Website() {
   }
   function pickLayer(sid: string) {
     setSel({ kind: "section", sid });
-    setReveal({ sid, n: Date.now() });
+    if (page !== "home") {
+      setPage("home");  // the sections are on the home page: wait for it to load, then scroll
+      window.setTimeout(() => setReveal({ sid, n: Date.now() }), 900);
+    } else setReveal({ sid, n: Date.now() });
   }
   function choosePhotos(ids: string[]) {
     if (!photo) return;
@@ -301,8 +329,10 @@ export default function Website() {
     setSel(s);
     setMenu(null);
     // Keep the open options panel in step with what's selected.
-    if (s && (s.kind === "header" || s.kind === "footer") && (panel === "section" || panel === "header" || panel === "footer")) setPanel(s.kind);
-    else if (s?.kind === "section" && (panel === "header" || panel === "footer")) setPanel(null);
+    const options = panel === "section" || panel === "header" || panel === "footer" || panel === "menupage";
+    if (s && (s.kind === "header" || s.kind === "footer") && options) setPanel(s.kind);
+    else if (s?.kind === "menupage" && options) setPanel("menupage");
+    else if (s?.kind === "section" && (panel === "header" || panel === "footer" || panel === "menupage")) setPanel(null);
   }
   function dismissTips() {
     setTips(false);
@@ -322,12 +352,21 @@ export default function Website() {
   const label = (s: Selection) =>
     !s ? "" : s.kind === "section"
       ? spec(draft.sections.find((x) => x.id === s.sid)?.type ?? "")?.label ?? "Section"
-      : s.kind === "header" ? "Header" : "Footer";
+      : s.kind === "header" ? "Header" : s.kind === "menupage" ? "Menu page" : "Footer";
+  const menuPageOn = draft.menu_page?.enabled === true;
 
   const toolbar = (box: Box, canvasW: number) => {
     if (box.y + box.h < 48) return null;
     const top = box.y - 50 < 6 ? Math.max(6, Math.min(box.y + 8, box.y + box.h - 50)) : box.y - 50;
     const style = { top, left: Math.min(Math.max(8, box.x + 8), Math.max(8, canvasW - 560)) };
+    if (sel?.kind === "menupage") {
+      return (
+        <div className="sb-toolbar" style={style}>
+          <span className="sb-tb-name">🍽 Menu page</span>
+          <button className="sb-tb-btn" onClick={() => setPanel("menupage")}><Ico name="sliders" size={16} /> Edit menu page</button>
+        </div>
+      );
+    }
     if (sel?.kind === "header" || sel?.kind === "footer") {
       return (
         <div className="sb-toolbar" style={style}>
@@ -399,7 +438,7 @@ export default function Website() {
   const panelTitle: Record<Exclude<Panel, null>, string> = {
     design: "Design", sections: "Sections", photos: "Photos", seo: "SEO: get found on Google", settings: "Website settings",
     section: section ? `${spec(section.type)?.label ?? "Section"}: more options` : "Section",
-    header: "Header", footer: "Footer",
+    header: "Header", footer: "Footer", menupage: "Menu page",
   };
   const photoCurrent = photo ? readTarget(draft, parseTarget(photo.target)) : null;
 
@@ -414,12 +453,21 @@ export default function Website() {
             {saving === "saving" ? "Saving…" : saving === "error" ? "Not saved" : site.published_at ? `Published ${timeAgo(site.published_at)}` : "Saved as a draft"}
           </span>
         </div>
-        <div className="seg sb-devices" role="group" aria-label="Screen size">
-          {(["desktop", "tablet", "phone"] as const).map((d) => (
-            <button key={d} className={device === d ? "on" : ""} onClick={() => setDevice(d)} title={`See it on a ${d}`} aria-label={d}>
-              <Ico name={d} size={16} />
+        <div className="sb-center">
+          <div className="seg sb-pages" role="group" aria-label="Page">
+            <button className={page === "home" ? "on" : ""} onClick={() => goTo("home")} title="Your home page">Home</button>
+            <button className={page === "menu" ? "on" : ""} onClick={() => goTo("menu")}
+              title={menuPageOn ? "Your menu page" : "Your menu page (not on your site yet)"}>
+              Menu page{!menuPageOn && <span className="sb-hide-sm muted"> · off</span>}
             </button>
-          ))}
+          </div>
+          <div className="seg sb-devices" role="group" aria-label="Screen size">
+            {(["desktop", "tablet", "phone"] as const).map((d) => (
+              <button key={d} className={device === d ? "on" : ""} onClick={() => setDevice(d)} title={`See it on a ${d}`} aria-label={d}>
+                <Ico name={d} size={16} />
+              </button>
+            ))}
+          </div>
         </div>
         <div className="sb-actions">
           <button className="sb-icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!past.current.length} onClick={undo}><Ico name="undo" /></button>
@@ -428,7 +476,7 @@ export default function Website() {
             <Ico name={editing ? "eye" : "pencil"} size={16} /> <span className="sb-hide-sm">{editing ? "Preview" : "Back to editing"}</span>
           </button>
           {site.is_published && (
-            <a className="btn small sb-hide-sm" href={site.url} target="_blank" rel="noreferrer"><Ico name="external" size={16} /> View live</a>
+            <a className="btn small sb-hide-sm" href={page === "menu" && menuPageOn ? `${site.url}/menu` : site.url} target="_blank" rel="noreferrer"><Ico name="external" size={16} /> View live</a>
           )}
           {site.is_published && site.has_unpublished_changes && (
             <button className="btn small sb-hide-sm" onClick={() => window.confirm("Throw away your changes and go back to the live version?") && void action("/discard", {}, "Changes thrown away.")}>
@@ -476,6 +524,9 @@ export default function Website() {
               {(panel === "header" || panel === "footer") && (
                 <ZonePanel zone={panel} site={site} draft={draft} change={change} fieldCtx={fieldCtx} />
               )}
+              {panel === "menupage" && (
+                <MenuPagePanel site={site} draft={draft} change={change} fieldCtx={fieldCtx} onStock={() => navigate("/stock")} />
+              )}
             </Flyout>
           )}
           <Canvas html={html} device={device} editing={editing} selected={sel} reveal={reveal} onSelect={select}
@@ -504,7 +555,11 @@ export default function Website() {
               <button className="btn small" onClick={dismissTips}>Got it</button>
             </div>
           )}
-          {!editing && <div className="sb-preview-note">This is how visitors will see your website.</div>}
+          {!editing && (
+            <div className="sb-preview-note">
+              {page === "menu" && !menuPageOn ? "Your menu page isn't on your site yet: turn it on to add it." : "This is how visitors will see your website."}
+            </div>
+          )}
         </main>
       </div>
 

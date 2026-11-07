@@ -66,13 +66,15 @@ async def choose_template(body: TemplateIn, location: Location = Depends(require
 
 
 @router.get("/preview", response_class=HTMLResponse)
-async def preview(edit: bool = False, location: Location = Depends(require_location),
+async def preview(edit: bool = False, page: str = "home", location: Location = Depends(require_location),
                   session: AsyncSession = Depends(get_session)):
     """The draft as it would look once published (only for the restaurant's team). edit=1 adds the markers the
-    visual editor uses (which text and photos can be clicked, each section's id)."""
+    visual editor uses (which text and photos can be clicked, each section's id). page=menu: the menu page."""
+    if page not in site_render.PAGES:
+        raise HTTPException(422, "Unknown page")
     site = await website.get_or_create(session, location)
-    return HTMLResponse(await website.render_page(session, site, preview=True, edit=edit) or site_render.not_found_page(),
-                        headers={"Cache-Control": "no-store"})
+    html = await website.render_page(session, site, preview=True, edit=edit, page=page)
+    return HTMLResponse(html or site_render.not_found_page(), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/publish")
@@ -282,6 +284,22 @@ async def public_site(slug: str, session: AsyncSession = Depends(get_session)):
     return _html(await website.render_page(session, site, preview=False))
 
 
+async def _menu_page(site: Website | None, session: AsyncSession) -> Response:
+    """The live menu page. If the owner has turned it off, old links go to the home page instead of a dead end."""
+    if site is None:
+        return _html(None)
+    page = await website.render_page(session, site, preview=False, page="menu")
+    if page is None and site.published:
+        return RedirectResponse(website.public_url(site), status_code=302)
+    return _html(page)
+
+
+@public.get("/sites/{slug}/menu", response_class=HTMLResponse, include_in_schema=False)
+async def public_menu(slug: str, session: AsyncSession = Depends(get_session)):
+    site = await session.scalar(select(Website).where(Website.slug == slug.lower()))
+    return await _menu_page(site, session)
+
+
 @public.get("/sites/{slug}/assets/{asset_id}", include_in_schema=False)
 async def public_asset(slug: str, asset_id: str, session: AsyncSession = Depends(get_session)):
     site = await session.scalar(select(Website).where(Website.slug == slug.lower()))
@@ -319,12 +337,13 @@ async def robots(request: Request, session: AsyncSession = Depends(get_session))
 async def sitemap(request: Request, session: AsyncSession = Depends(get_session)):
     site = await _site_for_host(request, session)
     if site is not None:
-        entries = [seo.sitemap_entry(site, website.public_url(site), _assets(site))] if seo.listed(site) else []
+        entries = seo.sitemap_entries(site, website.public_url(site), _assets(site)) if seo.listed(site) else []
         return _xml(site_seo.sitemap(entries))
     # This app's own address lists every published site that doesn't have its own domain.
     rows = await session.scalars(select(Website).where(Website.published.is_not(None),
                                                        Website.custom_domain.is_(None)).limit(45000))
-    return _xml(site_seo.sitemap([seo.sitemap_entry(s, website.public_url(s), _assets(s)) for s in rows if seo.listed(s)]))
+    return _xml(site_seo.sitemap([en for s in rows if seo.listed(s)
+                                  for en in seo.sitemap_entries(s, website.public_url(s), _assets(s))]))
 
 
 @public.get("/sites/{slug}/sitemap.xml", include_in_schema=False)
@@ -332,8 +351,14 @@ async def site_sitemap(slug: str, session: AsyncSession = Depends(get_session)):
     site = await session.scalar(select(Website).where(Website.slug == slug.lower()))
     if site is None:
         raise HTTPException(404, "Not found")
-    entries = [seo.sitemap_entry(site, website.public_url(site), _assets(site))] if seo.listed(site) else []
+    entries = seo.sitemap_entries(site, website.public_url(site), _assets(site)) if seo.listed(site) else []
     return _xml(site_seo.sitemap(entries))
+
+
+@public.get("/menu", response_class=HTMLResponse, include_in_schema=False)
+async def custom_domain_menu(request: Request, session: AsyncSession = Depends(get_session)):
+    """The menu page on a restaurant's own domain (e.g. www.demobistro.ca/menu)."""
+    return await _menu_page(await _site_for_host(request, session), session)
 
 
 @public.get("/{key}.txt", response_class=PlainTextResponse, include_in_schema=False)

@@ -306,3 +306,227 @@ async def test_preview_with_edit_markers(client, demo_location_id):
     plain = (await client.get(f"{base}/preview", headers=OWNER)).text
     edit = (await client.get(f"{base}/preview?edit=1", headers=OWNER)).text
     assert "data-e=" not in plain and "data-e=" in edit and "is-editing" in edit
+
+
+# --- The separate menu page ------------------------------------------------------------------------------------
+
+HOME = "https://api.example/sites/demo"
+
+
+def _with_menu_page(template: str = "gourmet", **props) -> dict:
+    content = st.clean_content(st.starter_content(template, "Demo", "Italian"))
+    content["menu_page"].update({"enabled": True, **props})
+    return st.clean_content(content)
+
+
+def test_menu_page_settings_are_checked():
+    out = st.clean_content({"template": "bistro", "menu_page": {
+        "enabled": "yes", "heading": "", "intro": "<b>Fresh</b>" * 50, "layout": "carousel", "bg": "neon",
+        "categories": ["Mains", 7, ""], "price_override": {"Steak Frites": 1}}})
+    mp = out["menu_page"]
+    assert mp["enabled"] is False and mp["heading"] == "Our menu"  # not a real yes; empty heading falls back
+    assert len(mp["intro"]) == 300 and mp["layout"] == "columns" and mp["bg"] == "alt"
+    assert mp["categories"] == ["Mains", "7"] and "price_override" not in mp  # only display settings are kept
+    assert st.clean_content({"template": "bistro"})["menu_page"]["enabled"] is False  # old sites: off
+    assert st.starter_content("bistro", "Demo")["menu_page"]["enabled"] is False
+
+
+def test_menu_page_shows_the_live_menu_and_links_back_home():
+    html = site_render.render(_with_menu_page(intro="Made fresh daily."), _demo_site(), HOME, page="menu")
+    assert "<h1>Our menu</h1>" in html and "Made fresh daily." in html
+    assert "Steak Frites" in html and "$34.00" in html and "Tiramisu" in html  # dishes and prices from the POS
+    assert 'id="cat-mains"' in html and 'href="#cat-desserts"' in html  # jump links to each category
+    assert f'<link rel="canonical" href="{HOME}/menu">' in html and "<title>Our menu | Demo</title>" in html
+    assert f'href="{HOME}#visit"' in html and f'href="{HOME}#reserve"' in html  # back to the home page
+    assert f'class="logo" href="{HOME}"' in html
+    assert f'href="{HOME}/menu" aria-current=page>Menu</a>' in html
+    assert "?order=L" in html and "data-e=" not in html and "edit-note" not in html
+    assert "application/ld+json" not in html  # business details for Google are on the SEO plan
+    pro = site_render.render(_with_menu_page(), _demo_site(seo_pro=True), HOME, page="menu")
+    assert f'"url":"{HOME}/menu","hasMenuSection"' in pro and f'"url":"{HOME}",' in pro  # the menu; the restaurant
+
+
+def test_home_page_links_to_the_menu_page_when_it_is_on():
+    off = site_render.render(st.clean_content(st.starter_content("gourmet", "Demo")), _demo_site(), HOME)
+    assert f"{HOME}/menu" not in off and 'href="#menu"' in off
+    on = site_render.render(_with_menu_page(), _demo_site(), HOME)
+    assert f'href="{HOME}/menu">Menu</a>' in on  # header
+    assert f'href="{HOME}/menu">View the menu</a>' in on or f'href="{HOME}/menu">View full menu' in on
+    assert f'href="{HOME}/menu#cat-mains">Mains</a>' in on  # footer
+    assert 'id="menu"' in on  # the Menu section on the home page stays if the owner keeps it
+    # A page with no Menu section still gets a "Menu" link when the menu page is on.
+    content = _with_menu_page("minimal")
+    content["sections"] = [s for s in content["sections"] if s["type"] != "menu"]
+    assert f'href="{HOME}/menu">Menu</a>' in site_render.render(content, _demo_site(), HOME)
+
+
+def test_menu_page_layouts_filters_and_editor_markers():
+    tabs = site_render.render(_with_menu_page(layout="tabs"), _demo_site(), HOME, page="menu")
+    assert 'class="tabs"' in tabs and 'class="mp-jump"' not in tabs  # tabs already list the categories
+    only = site_render.render(_with_menu_page(categories=["Desserts"], show_prices=False), _demo_site(), HOME,
+                              page="menu")
+    assert "Tiramisu" in only and "Steak Frites" not in only and "$12.00" not in only
+    edit = site_render.render(_with_menu_page(), _demo_site(preview=True, edit=True), HOME, page="menu")
+    assert 'data-zone="menupage"' in edit and 'data-e="menu_page:heading"' in edit
+    assert "edit the item in Stock" in edit  # tells the owner where dishes and prices are changed
+    no_menu = _demo_site()
+    no_menu.menu = []
+    empty = site_render.render(_with_menu_page(), no_menu, HOME, page="menu")
+    assert "Our menu will be here soon" in empty and "tel:+16045550100" in empty
+
+
+async def test_menu_page_through_the_api(client, session, demo_location_id):
+    base = f"/locations/{demo_location_id}/website"
+    site = (await client.get(base, headers=OWNER)).json()
+    assert {f["name"] for f in site["menu_page_fields"]} >= {"enabled", "heading", "layout", "categories"}
+    # The owner can preview it before turning it on; visitors can't see it until it's on and published.
+    preview = await client.get(f"{base}/preview?page=menu&edit=1", headers=OWNER)
+    assert preview.status_code == 200 and "Spaghetti Carbonara" in preview.text and "menu_page:heading" in preview.text
+    assert (await client.get(f"{base}/preview?page=admin", headers=OWNER)).status_code == 422
+    await client.post(f"{base}/publish", headers=OWNER)
+    off = await client.get("/sites/demo-bistro/menu", follow_redirects=False)
+    assert off.status_code == 302 and off.headers["location"].endswith("/sites/demo-bistro")
+
+    draft = site["draft"]
+    draft["menu_page"] = {**draft.get("menu_page", {}), "enabled": True, "intro": "Pasta made every morning."}
+    saved = (await client.put(f"{base}/draft", headers=OWNER, json={"content": draft})).json()
+    assert saved["draft"]["menu_page"]["enabled"] is True and saved["has_unpublished_changes"]
+    assert (await client.get("/sites/demo-bistro/menu", follow_redirects=False)).status_code == 302  # not yet live
+    await client.post(f"{base}/publish", headers=OWNER)
+    live = await client.get("/sites/demo-bistro/menu")
+    assert live.status_code == 200 and "Pasta made every morning." in live.text and "Spaghetti Carbonara" in live.text
+    assert "/sites/demo-bistro/menu" in (await client.get("/sites/demo-bistro")).text  # the home page links to it
+    assert "/sites/demo-bistro/menu" in (await client.get("/sites/demo-bistro/sitemap.xml")).text
+
+    # Option 1: the menu itself is changed in the POS / Stock, and the page shows it without republishing.
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                   Item.name == "Spaghetti Carbonara"))
+    item.price_cents = 2950
+    await session.commit()
+    assert "$29.50" in (await client.get("/sites/demo-bistro/menu")).text
+
+    # On the restaurant's own domain it's at /menu; unknown hosts and slugs get nothing.
+    await client.put(f"{base}/settings", headers=OWNER, json={"custom_domain": "www.demobistro.ca"})
+    own = await client.get("/menu", headers={"host": "www.demobistro.ca"})
+    assert own.status_code == 200 and "https://www.demobistro.ca/menu" in own.text
+    assert (await client.get("/menu", headers={"host": "unknown.example"})).status_code == 404
+    assert (await client.get("/sites/nobody-here/menu")).status_code == 404
+
+
+# --- Ordering straight from the menu ------------------------------------------------------------------------------
+
+
+def _ordering_site(**kw) -> site_render.SiteData:
+    site = _demo_site(**kw)
+    site.order_form_url = "https://app.example/"
+    return site
+
+
+def test_add_buttons_next_to_each_dish_send_the_order_to_the_app():
+    site = _ordering_site()
+    site.menu[1][1][0].sold_out = True  # Tiramisu is out of stock in the POS
+    html = site_render.render(_with_menu_page(order_buttons=True), site, HOME, page="menu")
+    form = 'form id="order-page" class="order-bar" method="get" action="https://app.example/"'
+    assert form in html and '<input type="hidden" name="order" value="L">' in html
+    # Steak Frites: a quantity from 0 (picked to start) to 9, sent as q.<first 8 characters of its id>.
+    steak = 'type="radio" class="q" name="q.11111111"'
+    assert html.count(steak) == site_render.MAX_QTY + 1
+    assert f'{steak} value="0" id="order-page-11111111-0" form="order-page" aria-label="Steak Frites: 0" checked>' in html
+    assert '<label for="order-page-11111111-1" title="Add to your order">+ Add</label>' in html
+    assert '<label for="order-page-11111111-2" title="One more">+</label>' in html  # 1 → 2
+    assert '<label for="order-page-11111111-0" title="One less">−</label>' in html  # 1 → 0
+    assert 'name="q.33333333"' not in html and '<span class="add add-out">Sold out</span>' in html
+    # The CSS shows − n + for the quantity picked and adds it to the order bar's count.
+    assert ".qty>.q:nth-of-type(3):checked~.q-plus>:nth-child(3){display:inline-grid}" in html
+    assert ".qty>.q:nth-of-type(3):checked{counter-increment:cart 2}" in html
+    assert 'Review order<span class="co-long"> and pay</span>' in html
+    assert "<script" not in html.lower()  # still no JavaScript
+    assert 'class="sec sec-menu mp-list bg-page orderable"' in html  # where the CSS counts what's added
+    # The home page's Menu section gets them too, with its own form.
+    content = _with_menu_page()
+    menu = next(s for s in content["sections"] if s["type"] == "menu")
+    menu["props"]["order_buttons"] = True
+    home = site_render.render(content, _ordering_site(), HOME)
+    form = f'order-{menu["id"].split("-")[-1]}'
+    assert f'<form id="{form}" class="order-bar"' in home and f'name="q.22222222" value="0" id="{form}-' in home
+
+
+def test_add_buttons_only_when_ordering_is_on_and_the_owner_wants_them():
+    # They start off, on new sites and on sites saved before they existed: the owner turns them on.
+    assert st.clean_content({"template": "bistro"})["menu_page"]["order_buttons"] is False
+    starter = st.clean_content(st.starter_content("gourmet", "Demo"))
+    assert next(s for s in starter["sections"] if s["type"] == "menu")["props"]["order_buttons"] is False
+    default = site_render.render(_with_menu_page(), _ordering_site(), HOME, page="menu")
+    assert 'class="qty"' not in default and "?order=L" in default
+    no_orders = site_render.render(_with_menu_page(order_buttons=True), _demo_site(), HOME, page="menu")
+    assert 'class="qty"' not in no_orders and "order-bar" not in no_orders.split("<body")[1]
+    assert "counter-increment:cart 1" not in no_orders  # nor the stepper's rules
+    assert "?order=L" in no_orders  # the plain "Order online" button stays
+    off = site_render.render(_with_menu_page(order_buttons=False), _ordering_site(), HOME, page="menu")
+    assert 'class="qty"' not in off
+    tabs = site_render.render(_with_menu_page(layout="tabs", order_buttons=True), _ordering_site(), HOME, page="menu")
+    assert tabs.count('class="qty"') == 3 and 'name="mt-page"' in tabs
+    order_form = tabs.split('<form id="order-page"')[1].split("</form>")[0]
+    assert "radio" not in order_form  # the tabs' radio buttons aren't sent with the order
+
+
+async def test_menu_link_to_the_app_carries_the_order(client, session, demo_location_id):
+    from app.models import Location
+
+    loc = await session.get(Location, demo_location_id)
+    loc.listed, loc.accepts_orders = True, True
+    await session.commit()
+    base = f"/locations/{demo_location_id}/website"
+    site = (await client.get(base, headers=OWNER)).json()
+    draft = site["draft"]
+    draft["menu_page"] = {**draft["menu_page"], "enabled": True, "order_buttons": True}
+    await client.put(f"{base}/draft", headers=OWNER, json={"content": draft})
+    await client.post(f"{base}/publish", headers=OWNER)
+    carbonara = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                        Item.name == "Spaghetti Carbonara"))
+    html = (await client.get("/sites/demo-bistro/menu")).text
+    assert f'name="q.{carbonara.id[:8]}" value="2" id="order-page-{carbonara.id[:8]}-2" form="order-page"' in html
+    assert f'name="order" value="{demo_location_id}"' in html
+    # Out of stock in the POS: shown as sold out, without a button.
+    carbonara.stock_qty = 0
+    await session.commit()
+    html = (await client.get("/sites/demo-bistro/menu")).text
+    assert f'name="q.{carbonara.id[:8]}"' not in html and "Sold out" in html
+
+
+def test_order_online_buttons_carry_the_dishes_picked_on_the_menu():
+    """With "+ Add" on the page, every "Order online" button submits the menu's order form instead of linking to an
+    empty cart, so nothing the guest picked is lost."""
+    content = _with_menu_page("smokehouse", order_buttons=True)  # header button: "Order online"
+    page = site_render.render(content, _ordering_site(), HOME, page="menu")
+    head = page.split("<main>")[0]
+    assert '<button class="btn btn-main" type="submit" form="order-page">Order online</button>' in head
+    assert "?order=L" not in page  # no plain link that would drop the picks
+    # The home page: the hero, header and "Fan favourites" link submit the Menu section's form.
+    menu = next(s for s in content["sections"] if s["type"] == "menu")
+    menu["props"]["order_buttons"] = True
+    home = site_render.render(content, _ordering_site(), HOME)
+    form = f'form="order-{menu["id"].split("-")[-1]}"'
+    assert home.count(f'type="submit" {form}>Order online') >= 3 and "?order=L" not in home
+    assert f'<button class="link-arrow" type="submit" {form}>Order online' in home
+    # Without the buttons (or with the Menu section hidden) they stay plain links.
+    menu["props"]["order_buttons"] = False
+    assert "?order=L" in site_render.render(content, _ordering_site(), HOME)
+    menu["props"]["order_buttons"], menu["visible"] = True, False
+    hidden = site_render.render(content, _ordering_site(), HOME)
+    assert "?order=L" in hidden and 'type="submit" form="order-' not in hidden
+
+
+async def test_pages_are_compressed_but_chat_streams_are_not(client, demo_location_id, fake_llm):
+    from tests.conftest import text_result
+
+    base = f"/locations/{demo_location_id}/website"
+    await client.get(base, headers=OWNER)
+    await client.post(f"{base}/publish", headers=OWNER)
+    page = await client.get("/sites/demo-bistro", headers={"Accept-Encoding": "gzip"})
+    assert page.headers["content-encoding"] == "gzip" and "Spaghetti Carbonara" in page.text
+    # The assistant's replies stream word by word: compressing them would hold the words back.
+    fake_llm([text_result("Busy night ahead.")])
+    chat = await client.post(f"/locations/{demo_location_id}/chat", headers={**OWNER, "Accept-Encoding": "gzip"},
+                             json={"message": "How's tonight looking?"})
+    assert chat.status_code == 200 and "content-encoding" not in chat.headers and "Busy night ahead." in chat.text

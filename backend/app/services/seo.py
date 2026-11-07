@@ -24,7 +24,7 @@ from sqlalchemy.orm import undefer
 from app.config import get_settings
 from app.models import Integration, Location, SiteAsset, Website, utcnow
 from app.money import fmt_money
-from app.services import site_seo, site_templates as st
+from app.services import site_render, site_seo, site_templates as st
 from app.services.notify import http
 
 log = logging.getLogger(__name__)
@@ -302,7 +302,9 @@ async def overview(session: AsyncSession, location: Location, site: Website) -> 
     return {
         "plan": plan_out(site), **result, "city": site_seo.city_of(location.address),
         "cuisine": location.cuisine, "name": location.name, "urls": urls(site, page_url),
-        "structured_data": site_seo.structured_data(content, data, page_url, anchors),
+        "structured_data": site_seo.structured_data(
+            content, data, page_url, anchors,
+            site_render.menu_page_url(page_url) if st.menu_page_on(content) else None),
         "indexnow": {"pinged_at": plan.get("pinged_at"), "result": plan.get("ping")},
         "share_image": site_seo.share_image(content),
     }
@@ -444,6 +446,14 @@ def sitemap_entry(site: Website, page_url: str, asset_base: str) -> site_seo.Sit
     images = [f"{asset_base}/{i}" for i in st.image_ids(content)]
     day = site.published_at.date().isoformat() if site.published_at else None
     return site_seo.SitemapEntry(page_url, day, images)
+
+
+def sitemap_entries(site: Website, page_url: str, asset_base: str) -> list[site_seo.SitemapEntry]:
+    """The home page, and the menu page when it's on."""
+    home = sitemap_entry(site, page_url, asset_base)
+    if not st.menu_page_on(site.published):
+        return [home]
+    return [home, site_seo.SitemapEntry(site_render.menu_page_url(page_url), home.lastmod)]
 
 
 def listed(site: Website) -> bool:
