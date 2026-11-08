@@ -80,9 +80,14 @@ export function useRestaurantChat(): ChatConfig {
   };
 }
 
-/** The Restaurant Manager, in the corner of every restaurant screen except its home (where the chat is the page).
+/** The Restaurant Manager, in the corner of every restaurant screen (on phones, not on its home, where the chat
+ * is the page).
  * Opens with anything it noticed on its own. */
-export function RestaurantDock({ children }: { children: ReactNode }) {
+export function RestaurantDock({ homeIsChat = false, children }: {
+  /** The phone layout, where "/" is the chat itself, so the corner button stays out of the way there. */
+  homeIsChat?: boolean;
+  children: ReactNode;
+}) {
   const { location, me, refreshUnread } = useApp();
   const config = useRestaurantChat();
   const { pathname } = useLocation();
@@ -117,7 +122,7 @@ export function RestaurantDock({ children }: { children: ReactNode }) {
 
   return (
     <AssistantDock config={{ ...config, placeholder: "Ask about sales, stock, staff…", notices, onDismissNotice: dismiss }}
-      popup={popup} hidden={pathname === "/"}>
+      popup={popup} hidden={homeIsChat && pathname === "/"}>
       {children}
     </AssistantDock>
   );
@@ -182,10 +187,15 @@ export function personalChat(me: Me, agent: "customer" | "driver"): ChatConfig {
 }
 
 /** The Customer agent or the Driver Assistant, in the corner of every screen of that app except its home. */
-export function PersonalDock({ me, agent, children }: { me: Me; agent: "customer" | "driver"; children: ReactNode }) {
+export function PersonalDock({ me, agent, homeIsChat = false, children }: {
+  me: Me;
+  agent: "customer" | "driver";
+  homeIsChat?: boolean;
+  children: ReactNode;
+}) {
   const { pathname } = useLocation();
   return (
-    <AssistantDock config={personalChat(me, agent)} hidden={pathname === "/"}>
+    <AssistantDock config={personalChat(me, agent)} hidden={homeIsChat && pathname === "/"}>
       {children}
     </AssistantDock>
   );
