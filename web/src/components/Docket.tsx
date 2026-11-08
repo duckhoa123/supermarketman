@@ -21,7 +21,12 @@ const BUTTONS: Partial<Record<Proposal["kind"], string>> = {
 
 /** Something an agent prepared, waiting for a person's OK. Styled as a kitchen docket.
  * Nothing is posted, sent, ordered or booked until the button is pressed. */
-export default function Docket({ proposal, locationId }: { proposal: Proposal; locationId?: string }) {
+export default function Docket({ proposal, locationId, onDone }: {
+  proposal: Proposal;
+  locationId?: string;
+  /** Called after the action went through, e.g. to refresh the agent's Working on list. */
+  onDone?: () => void;
+}) {
   const [state, setState] = useState<"waiting" | "saving" | "done" | "dismissed">("waiting");
   const [text, setText] = useState(proposal.reply_text ?? "");
   const [error, setError] = useState("");
@@ -101,6 +106,7 @@ export default function Docket({ proposal, locationId }: { proposal: Proposal; l
           break;
       }
       setState("done");
+      onDone?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "That didn't go through.");
       setState("waiting");

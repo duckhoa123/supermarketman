@@ -2,12 +2,15 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { signOut } from "../lib/auth";
 
-/** Phone-only page with the links that don't fit in the bottom tabs. */
+/** Phone-only page with the classic screens: everything the agent reads from, to look at yourself. */
 export default function More({ links, children }: { links: { to: string; label: string }[]; children?: ReactNode }) {
   return (
     <>
       <div className="page-head">
-        <h1>More</h1>
+        <div>
+          <h1>Screens</h1>
+          <p>Everything your agent reads from, to look at or change yourself.</p>
+        </div>
       </div>
       <section className="panel">
         <ul className="list">

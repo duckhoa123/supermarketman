@@ -24,7 +24,13 @@ export function useAssistant(): AssistantApi {
 
 /** The agent's button in the bottom-right corner and the chat window it opens. The chat stays mounted while
  * closed, so a conversation carries on as the person moves between screens. */
-export default function AssistantDock({ config, popup, children }: { config: ChatConfig; popup?: Popup | null; children: ReactNode }) {
+export default function AssistantDock({ config, popup, hidden = false, children }: {
+  config: ChatConfig;
+  popup?: Popup | null;
+  /** On the agent's home the chat is the page itself, so the corner button and pop-up step aside. */
+  hidden?: boolean;
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [greeting, setGreeting] = useState(false);
   const [prompt, setPrompt] = useState<{ text: string; nonce: number } | null>(null);
@@ -43,6 +49,7 @@ export default function AssistantDock({ config, popup, children }: { config: Cha
   }, [open]);
 
   const name = config.profile?.display_name ?? "assistant";
+  if (hidden) return <AssistantContext.Provider value={{ open: api }}>{children}</AssistantContext.Provider>;
   return (
     <AssistantContext.Provider value={{ open: api }}>
       {children}

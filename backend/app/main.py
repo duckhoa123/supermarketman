@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api import (
     account,
+    agent_home,
     agents,
     chat,
     customer,
@@ -84,8 +85,8 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True}
 
-    for module in (account, agents, restaurant, operations, receiving, website, chat, customer, fleet, integrations,
-                   webhooks, internal):
+    for module in (account, agents, agent_home, restaurant, operations, receiving, website, chat, customer, fleet,
+                   integrations, webhooks, internal):
         app.include_router(module.router)
     app.include_router(website.public)  # restaurants' public websites: /sites/{slug} and custom domains
     return app

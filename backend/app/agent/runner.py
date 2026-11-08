@@ -18,12 +18,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import tools_customer, tools_driver
+from app.agent import memory
 from app.agent.llm import LLM, LLMResult
 from app.agent.pricing import Usage, cost_usd
 from app.agent.profiles import get_profile, persona_block
 from app.agent.prompts import AGENT_SYSTEM, CUSTOMER_SYSTEM, DRIVER_SYSTEM, context_block, personal_context
 from app.agent.router import choose_model
-from app.agent.tools import TOOLS, ToolContext, ToolError, execute_tool
+from app.agent.tools import TOOLS, ToolContext, ToolError, execute_tool, with_cache
 from app.config import get_settings
 from app.models import AIUsage, Conversation, Integration, Message, utcnow
 
@@ -40,10 +41,25 @@ class AgentSpec:
     execute: Callable[[str, dict, ToolContext], Awaitable[dict]]
 
 
+def _with_memory(tools: list[dict]) -> list[dict]:
+    """Every agent can remember and forget; the cache mark moves to the new last tool."""
+    plain = [{k: v for k, v in t.items() if k != "cache_control"} for t in tools]
+    return with_cache(plain + memory.MEMORY_TOOLS)
+
+
+def _executor(execute: Callable[[str, dict, ToolContext], Awaitable[dict]]):
+    async def run(name: str, args: dict, ctx: ToolContext) -> dict:
+        if name in memory.MEMORY_TOOL_NAMES:
+            return await memory.execute(name, args, ctx)
+        return await execute(name, args, ctx)
+    return run
+
+
 AGENT_SPECS = {
-    "restaurant_manager": AgentSpec(AGENT_SYSTEM, TOOLS, execute_tool),
-    "customer": AgentSpec(CUSTOMER_SYSTEM, tools_customer.CUSTOMER_TOOLS, tools_customer.execute),
-    "driver": AgentSpec(DRIVER_SYSTEM, tools_driver.DRIVER_TOOLS, tools_driver.execute),
+    "restaurant_manager": AgentSpec(AGENT_SYSTEM, _with_memory(TOOLS), _executor(execute_tool)),
+    "customer": AgentSpec(CUSTOMER_SYSTEM, _with_memory(tools_customer.CUSTOMER_TOOLS),
+                          _executor(tools_customer.execute)),
+    "driver": AgentSpec(DRIVER_SYSTEM, _with_memory(tools_driver.DRIVER_TOOLS), _executor(tools_driver.execute)),
 }
 
 
@@ -98,6 +114,10 @@ async def _system(session: AsyncSession, spec: AgentSpec, ctx: ToolContext) -> l
     else:
         extra = "The customer shared their current location." if ctx.position else ""
         dynamic = personal_context(persona=persona, extra=extra)
+    location_id = ctx.location.id if ctx.agent == "restaurant_manager" and ctx.location is not None else None
+    notes = memory.memory_block(await memory.list_memories(session, ctx.user_id, ctx.agent, location_id))
+    if notes:
+        dynamic += "\n\n" + notes
     return [{"type": "text", "text": spec.system, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": dynamic}]
 

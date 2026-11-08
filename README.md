@@ -8,6 +8,8 @@ One platform for Vancouver with three connected agents. Everyone picks an avatar
 | **Customer agent** | People ordering food | Finds restaurants nearby that fit what they want (dish, diet, calories, open now); places pickup or delivery orders and books tables (the customer confirms in the app); order updates and tipping; a nutrition log against their own goals. |
 | **Driver Assistant** | Drivers we employ (invite only) | Jobs with pickup, drop-off, route link and ETA; nearest-driver dispatch inside a 20 km service area, batching orders from the same restaurant; busy alerts to on-call drivers; deliveries per hour, on-time rate, wages, tips and a weekly goal. |
 
+**Agent-first home.** Each agent's app opens on a conversation with it, not a dashboard, with four tabs: **Chat** (what needs your OK, what's under way and what the agent noticed, then the ongoing conversation), **Working on** (everything waiting on you, running or scheduled, with steps; drivers see *My shift*), **Activity** (one record of what was done, who approved it and what's planned) and **You** (what the agent remembers, which you can forget; what it can reach; AI spend). The classic screens stay one tap away under **Screens**. Agents remember things you ask them to (`remember`/`forget` tools), and anything that sends, posts, orders, books or charges still waits for a tap.
+
 **Receiving.** When a delivery arrives, staff photograph the supplier invoice (or upload the PDF). Claude reads the supplier, invoice number, date and every line; the app matches each line to a stock item (remembered from earlier invoices, otherwise by name) and shows the price change against the last delivery. After a person checks and confirms, the lines go into the receiving log sheet (filter, search, download as CSV), tracked stock goes up (with pack sizes, e.g. 24 bottles per case), and any price change of 3% or more is announced by the Restaurant Manager, with what it costs per week at the usual order volume. The agent can also answer "which supplier prices went up?" from the same data.
 
 One order touches all three: a customer orders, the restaurant accepts and marks it ready, the nearest on-shift driver gets the job, the customer is kept updated and can tip, the meal lands in their nutrition log, and the restaurant's reports count it. Agents prepare actions, but anything that sends, posts, orders, books or charges waits for a person to tap confirm.
@@ -147,6 +149,9 @@ Live sites are served by `api` at `https://<api address>/sites/<web address>`. T
 | `/driver/me`, `/driver/shift/{start,end}`, `/driver/location`, `/driver/deliveries/{id}/status`, `/driver/stats` | Driver app |
 | `/fleet/overview`, `/fleet/drivers`, `/fleet/deliveries/{id}/assign` | Dispatcher and platform admin |
 | `GET /me/alerts` | Personal notifications (order, booking and job updates) |
+| `GET /locations/{id}/work`, `GET /agents/{agent}/work` | Working on and Activity: needs you, under way, scheduled and done, built from existing records |
+| `/locations/{id}/memory`, `/agents/{agent}/memory` (`GET`, `POST`, `DELETE /{memory_id}`) | What the agent remembers for this person |
+| `GET /locations/{id}/agent-access`, `GET /agents/{agent}/access` | What the agent can reach, and AI spend this month |
 | `POST /locations/{id}/invoices` (photo or PDF), `GET/PUT /invoices/{scan}`, `/invoices/{scan}/confirm` | Scan, check and confirm a delivery invoice |
 | `GET /locations/{id}/receiving-log` (`?format=csv`), `/price-changes`, `/price-history` | Receiving log sheet and supplier price tracking |
 | `/locations/{id}/website` (`/draft`, `/template`, `/preview`, `/publish`, `/discard`, `/versions`, `/settings`, `/images`, `/write-copy`) | Website editor |

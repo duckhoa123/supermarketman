@@ -36,10 +36,11 @@ function useHideOnScroll(): boolean {
   return hidden;
 }
 
-/** Side rail on wide screens; on phones, a menu bar at the top (plus "More") that hides while scrolling down. */
-export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, children }: {
-  nav: NavItem[];
-  tabs: string[];
+/** Side rail on wide screens; on phones, a menu bar at the top that hides while scrolling down.
+ *  The agent comes first (Chat, Working on, Activity, You); the classic screens sit under "Screens". */
+export default function Shell({ primary, screens, profile, footer, onSwitchAgent, children }: {
+  primary: NavItem[];
+  screens: NavItem[];
   profile?: AgentProfile;
   footer?: ReactNode;
   onSwitchAgent: () => void;
@@ -47,6 +48,7 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
 }) {
   const badge = (n: NavItem) => (n.badge ? <span className="badge">{n.badge}</span> : null);
   const hidden = useHideOnScroll();
+  const screensBadge = screens.reduce((sum, n) => sum + (n.badge ?? 0), 0);
   return (
     <div className="shell">
       <aside className="rail">
@@ -63,8 +65,17 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
             </span>
           </button>
         )}
-        <nav className="nav">
-          {nav.map((n) => (
+        <nav className="nav" aria-label={profile?.display_name ?? "Agent"}>
+          {primary.map((n) => (
+            <NavLink key={n.to} to={n.to} end={n.end}>
+              {n.label}
+              {badge(n)}
+            </NavLink>
+          ))}
+        </nav>
+        <p className="rail-h">Screens</p>
+        <nav className="nav nav-screens" aria-label="Screens">
+          {screens.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end}>
               {n.label}
               {badge(n)}
@@ -79,15 +90,16 @@ export default function Shell({ nav, tabs, profile, footer, onSwitchAgent, child
         </div>
       </aside>
       <nav className={`tabs ${hidden ? "tabs-hidden" : ""}`} aria-label="Main">
-        {nav
-          .filter((n) => tabs.includes(n.to))
-          .map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end}>
-              {n.label}
-              {badge(n)}
-            </NavLink>
-          ))}
-        <NavLink to="/more">More</NavLink>
+        {primary.map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.end}>
+            {n.label}
+            {badge(n)}
+          </NavLink>
+        ))}
+        <NavLink to="/more">
+          Screens
+          {screensBadge > 0 && <span className="badge">{screensBadge}</span>}
+        </NavLink>
       </nav>
       <main className="main">{children}</main>
     </div>
