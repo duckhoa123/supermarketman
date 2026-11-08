@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { PersonalDock, RestaurantDock } from "./components/AgentDocks";
+import { PersonalDock, RestaurantDock, personalChat, useRestaurantChat } from "./components/AgentDocks";
 import Shell, { type NavItem } from "./components/Shell";
+import { WorkProvider, useAgentHome } from "./components/WorkProvider";
 import { AppContext, MeContext } from "./context";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
@@ -9,6 +10,10 @@ import {
   captureCloverLaunch, captureWebsiteLink, cartToParam, initialMode, pendingCloverLaunch, storeMode, takeWebsiteLink,
 } from "./lib/mode";
 import Agents from "./pages/Agents";
+import AgentActivity from "./pages/agent/Activity";
+import AgentHome from "./pages/agent/Home";
+import WorkingOn from "./pages/agent/WorkingOn";
+import You from "./pages/agent/You";
 import Alerts from "./pages/Alerts";
 import AppOrders from "./pages/AppOrders";
 import Bookings from "./pages/Bookings";
@@ -87,7 +92,7 @@ export default function App() {
         if (fromSite.time) q.set("time", fromSite.time);
         if (fromSite.party) q.set("party", String(fromSite.party));
         if (fromSite.items) q.set("cart", cartToParam(fromSite.items));
-        navigate(`/?${q.toString()}`, { replace: true });
+        navigate(`/discover?${q.toString()}`, { replace: true });
       } else {
         setModeState((current) => (current && data.agents.some((a) => a.agent === current) ? current : initialMode(data)));
       }
@@ -171,13 +176,38 @@ function AgentsRoute({ me, refreshMe, setMode, current }: ModeProps & { current:
   );
 }
 
+/** The shell for one agent: its own four tabs first (Chat, Working on, Activity, You), then the classic screens. */
+function AgentShell({ screens, footer, onSwitchAgent, children }: {
+  screens: NavItem[];
+  footer?: ReactNode;
+  onSwitchAgent: () => void;
+  children: ReactNode;
+}) {
+  const { agent, profile, work } = useAgentHome();
+  const primary: NavItem[] = [
+    { to: "/", label: "Chat", end: true },
+    { to: "/working", label: agent === "driver" ? "My shift" : "Working on", badge: work?.needs_you.length || undefined },
+    { to: "/activity", label: "Activity" },
+    { to: "/you", label: "You" },
+  ];
+  return (
+    <Shell primary={primary} screens={screens} profile={profile} footer={footer} onSwitchAgent={onSwitchAgent}>
+      {children}
+    </Shell>
+  );
+}
+
+function RestaurantHome() {
+  return <AgentHome chat={useRestaurantChat()} />;
+}
+
 function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
   const [locationId, setLocationId] = useState<string | null>(me.locations[0]?.id ?? null);
   const location = me.locations.find((l) => l.id === locationId) ?? me.locations[0];
   const [unread, refreshUnread] = usePolling(`/locations/${location.id}/alerts?unread_only=true&limit=1`);
   const navigate = useNavigate();
   const nav: NavItem[] = [
-    { to: "/", label: "Today", end: true },
+    { to: "/today", label: "Today" },
     { to: "/plan", label: "Plan" },
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
@@ -192,7 +222,6 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/settings", label: "Settings" },
     ...(me.is_fleet_admin ? [{ to: "/fleet", label: "Fleet" }] : []),
   ];
-  const tabs = ["/", "/app-orders", "/receiving", "/bookings", "/alerts"];
   const picker =
     me.locations.length > 1 ? (
       <select className="select" value={location.id} onChange={(e) => setLocationId(e.target.value)} aria-label="Restaurant">
@@ -208,12 +237,16 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
 
   return (
     <AppContext.Provider value={{ me, location, unread, refreshUnread, refreshMe }}>
+      <WorkProvider agent="restaurant_manager" profile={me.agents.find((a) => a.agent === "restaurant_manager")}
+        locationId={location.id}>
       <RestaurantDock>
-      <Shell nav={nav} tabs={tabs} profile={me.agents.find((a) => a.agent === "restaurant_manager")}
-        footer={picker} onSwitchAgent={() => navigate("/agents")}>
+      <AgentShell screens={nav} footer={picker} onSwitchAgent={() => navigate("/agents")}>
         <Routes>
-          <Route path="/" element={<Today />} />
-          <Route path="/today" element={<Navigate to="/" replace />} />
+          <Route path="/" element={<RestaurantHome />} />
+          <Route path="/working" element={<WorkingOn />} />
+          <Route path="/activity" element={<AgentActivity />} />
+          <Route path="/you" element={<You />} />
+          <Route path="/today" element={<Today />} />
           <Route path="/plan" element={<Plan />} />
           <Route path="/app-orders" element={<AppOrders />} />
           <Route path="/bookings" element={<Bookings />} />
@@ -231,15 +264,16 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
           <Route
             path="/more"
             element={
-              <More links={[...nav.filter((n) => !tabs.includes(n.to)), { to: "/agents", label: "Switch agent or customise" }]}>
+              <More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]}>
                 {me.locations.length > 1 && <li className="stack" style={{ gap: 6 }}>{picker}</li>}
               </More>
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </Shell>
+      </AgentShell>
       </RestaurantDock>
+      </WorkProvider>
     </AppContext.Provider>
   );
 }
@@ -251,7 +285,7 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
   const nav: NavItem[] =
     agent === "customer"
       ? [
-          { to: "/", label: "Discover", end: true },
+          { to: "/discover", label: "Discover" },
           { to: "/orders", label: "Orders" },
           { to: "/nutrition", label: "Food log" },
           { to: "/profile", label: "Profile" },
@@ -259,41 +293,43 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
           ...fleet,
         ]
       : [
-          { to: "/", label: "Jobs", end: true },
+          { to: "/jobs", label: "Jobs" },
           { to: "/earnings", label: "Earnings" },
           { to: "/updates", label: "Updates", badge: unread },
           ...fleet,
         ];
-  const tabs = nav.slice(0, 5).map((n) => n.to);
+  const profile = me.agents.find((a) => a.agent === agent);
 
   return (
+    <WorkProvider agent={agent} profile={profile}>
     <PersonalDock me={me} agent={agent}>
-    <Shell nav={nav} tabs={tabs} profile={me.agents.find((a) => a.agent === agent)} onSwitchAgent={() => navigate("/agents")}>
+    <AgentShell screens={nav} onSwitchAgent={() => navigate("/agents")}>
       <Routes>
+        <Route path="/" element={<AgentHome chat={personalChat(me, agent)} />} />
+        <Route path="/working" element={<WorkingOn />} />
+        <Route path="/activity" element={<AgentActivity />} />
+        <Route path="/you" element={<You />} />
         {agent === "customer" ? (
           <>
-            <Route path="/" element={<Discover />} />
-            <Route path="/discover" element={<Navigate to="/" replace />} />
+            <Route path="/discover" element={<Discover />} />
             <Route path="/orders" element={<MyOrders />} />
             <Route path="/nutrition" element={<Nutrition />} />
             <Route path="/profile" element={<Profile />} />
           </>
         ) : (
           <>
-            <Route path="/" element={<Jobs />} />
+            <Route path="/jobs" element={<Jobs />} />
             <Route path="/earnings" element={<Earnings />} />
           </>
         )}
         <Route path="/updates" element={<Updates onRead={refreshUnread} />} />
         {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}
         <Route path="/agents" element={<AgentsRoute me={me} refreshMe={refreshMe} setMode={setMode} current={agent} />} />
-        <Route
-          path="/more"
-          element={<More links={[...nav.filter((n) => !tabs.includes(n.to)), { to: "/agents", label: "Switch agent or customise" }]} />}
-        />
+        <Route path="/more" element={<More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </Shell>
+    </AgentShell>
     </PersonalDock>
+    </WorkProvider>
   );
 }

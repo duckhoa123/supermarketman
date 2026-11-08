@@ -402,6 +402,24 @@ class AgentProfile(TimestampMixin, Base):
     tone: Mapped[str] = mapped_column(String(24), default="friendly")  # friendly | concise | detailed | playful
 
 
+class AgentMemory(Base):
+    """Something a person asked one of their agents to remember ("Harbour delivers Tue, Thu and Sat").
+
+    Read into the agent's prompt on every chat; the person can see and forget each one under You.
+    Restaurant Manager memories belong to one person at one restaurant; the other agents' have no location.
+    """
+
+    __tablename__ = "agent_memories"
+    __table_args__ = (Index("ix_agent_memories_owner", "user_id", "agent", "location_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(64))
+    agent: Mapped[str] = mapped_column(String(24))
+    location_id: Mapped[str | None] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(String(300))
+    source: Mapped[str] = mapped_column(String(16), default="chat")  # chat (the agent saved it) | app (typed in You)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
 # --- Restaurant Manager: purchasing, labour, guests, bookings, weather ---------------------------
 
 

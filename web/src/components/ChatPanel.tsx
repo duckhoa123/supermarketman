@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Docket from "./Docket";
 import Avatar from "./Avatar";
-import { streamFrom, type AgentProfile, type ChatEvent, type Proposal } from "../lib/api";
+import { api, streamFrom, type AgentProfile, type ChatEvent, type Proposal } from "../lib/api";
+
+/** A conversation newer than this is picked up again when the chat opens as a page. */
+const RESUME_MS = 3 * 24 * 3600_000;
 
 export type Notice = { id: string; title: string; body: string; ask: string };
 
@@ -18,6 +21,17 @@ export type ChatConfig = {
   /** Things the agent noticed on its own (e.g. a supplier price rise), shown at the top of the chat. */
   notices?: Notice[];
   onDismissNotice?: (id: string) => void;
+};
+
+type PageOptions = {
+  /** "dock": the corner chat window (default). "page": the agent's home, where the chat is the screen. */
+  variant?: "dock" | "page";
+  /** Conversations list to pick the latest one up from, so the chat reads like one ongoing thread. */
+  resumeFrom?: string;
+  /** Shown at the top of the thread, above the conversation (the home's cards). */
+  header?: ReactNode;
+  /** After a docket's action went through, or a reply finished (the agent may have drafted something). */
+  onChanged?: () => void;
 };
 
 type Turn =
@@ -40,7 +54,11 @@ export default function ChatPanel({
   open,
   onClose,
   prompt,
-}: ChatConfig & {
+  variant = "dock",
+  resumeFrom,
+  header,
+  onChanged,
+}: ChatConfig & PageOptions & {
   open: boolean;
   onClose: () => void;
   /** A question another screen asked to send (changes `nonce` each time). */
@@ -54,20 +72,48 @@ export default function ChatPanel({
   const conversationId = useRef<string | undefined>(undefined);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const followNew = useRef(variant === "dock"); // the page doesn't jump past its cards when a thread is resumed
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (followNew.current) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns]);
 
   useEffect(() => {
-    // A new agent or restaurant starts a new conversation.
+    // A new agent or restaurant starts a new conversation (or picks up the latest one, on the home page).
     setTurns([]);
     conversationId.current = undefined;
-  }, [path]);
+    if (!resumeFrom) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await api<{ id: string; updated_at: string }[]>(resumeFrom);
+        const latest = list[0];
+        if (!latest || Date.now() - new Date(latest.updated_at).getTime() > RESUME_MS) return;
+        const conv = await api<{ id: string; messages: { role: string; text: string }[] }>(`${resumeFrom}/${latest.id}`);
+        if (cancelled) return;
+        const earlier: Turn[] = conv.messages
+          .filter((m) => m.text.trim())
+          .slice(-30)
+          .map((m) => (m.role === "user"
+            ? { role: "user", text: m.text }
+            : { role: "ai", text: m.text, tools: [], proposals: [], pending: false }));
+        setTurns((now) => {
+          if (now.length) return now; // they started typing first: keep the new conversation
+          conversationId.current = conv.id;
+          return earlier;
+        });
+      } catch {
+        /* no history: start fresh */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [path, resumeFrom]);
 
   useEffect(() => {
-    if (open) window.setTimeout(() => inputRef.current?.focus(), 50);
-  }, [open]);
+    if (open && variant === "dock") window.setTimeout(() => inputRef.current?.focus(), 50);
+  }, [open, variant]);
 
   useEffect(() => {
     if (prompt?.text) void send(prompt.text);
@@ -95,6 +141,7 @@ export default function ChatPanel({
     if (!message || busy) return;
     setInput("");
     setBusy(true);
+    followNew.current = true;
     setTurns((prev) => [
       ...prev,
       { role: "user", text: message },
@@ -119,11 +166,18 @@ export default function ChatPanel({
     } finally {
       updateLast((t) => ({ ...t, pending: false }));
       setBusy(false);
+      onChanged?.();
     }
   }
 
+  function newChat() {
+    setTurns([]);
+    conversationId.current = undefined;
+  }
+
   return (
-    <div className="chat">
+    <div className={`chat ${variant === "page" ? "chat-page" : ""}`}>
+      {variant === "dock" && (
       <header className="chat-head">
         {profile && <Avatar profile={profile} size={36} />}
         <div className="chat-who">
@@ -131,13 +185,7 @@ export default function ChatPanel({
           <span className="small muted">{profile?.label}</span>
         </div>
         {turns.length > 0 && (
-          <button
-            className="btn small"
-            onClick={() => {
-              setTurns([]);
-              conversationId.current = undefined;
-            }}
-          >
+          <button className="btn small" onClick={newChat}>
             New chat
           </button>
         )}
@@ -145,8 +193,18 @@ export default function ChatPanel({
           ✕
         </button>
       </header>
+      )}
 
       <div className="thread">
+        {header}
+        {variant === "page" && (
+          <div className="thread-divider">
+            <span>Chat with {profile?.display_name ?? "your agent"}</span>
+            {turns.length > 0 && (
+              <button className="linkish small" onClick={newChat}>Start a new chat</button>
+            )}
+          </div>
+        )}
         {notices.map((n) => (
           <section key={n.id} className="notice">
             <strong>{n.title}</strong>
@@ -190,7 +248,7 @@ export default function ChatPanel({
               {t.text || (t.pending && !t.error ? <span className="muted">Looking into it…</span> : null)}
               {t.error && <p className="error">{t.error}</p>}
               {t.proposals.map((p, j) => (
-                <Docket key={j} proposal={p} locationId={locationId} />
+                <Docket key={j} proposal={p} locationId={locationId} onDone={onChanged} />
               ))}
             </div>
           )

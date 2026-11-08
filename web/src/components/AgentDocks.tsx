@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import AssistantDock, { type Popup } from "./AssistantDock";
-import type { Notice } from "./ChatPanel";
+import type { ChatConfig, Notice } from "./ChatPanel";
 import { useApp } from "../context";
 import { api, chatPath, type AlertRow, type Me } from "../lib/api";
 
@@ -28,6 +29,8 @@ const RESTAURANT_TOOLS: Record<string, string> = {
   get_receiving_log: "Checked deliveries",
   get_price_changes: "Checked supplier prices",
   get_price_history: "Looked up price history",
+  remember: "Saved a note",
+  forget: "Forgot a note",
 };
 
 const RESTAURANT_STARTERS = [
@@ -39,7 +42,7 @@ const RESTAURANT_STARTERS = [
   "Plan a promotion for our slowest night.",
 ];
 
-const stripSpeaker = (title: string) => title.replace(/^[^:]{1,60}:\s*/, ""); // the avatar shows who's speaking
+export const stripSpeaker = (title: string) => title.replace(/^[^:]{1,60}:\s*/, ""); // the avatar shows who's speaking
 
 /** What the manager says when it pops up: the unread alerts, or a short hello when all is quiet. */
 function greetingFor(alerts: AlertRow[], firstName: string, place: string, agentName: string): Popup {
@@ -61,18 +64,37 @@ function greetingFor(alerts: AlertRow[], firstName: string, place: string, agent
   };
 }
 
-/** The Restaurant Manager, on every restaurant screen. Opens with anything it noticed on its own. */
+/** The Restaurant Manager's chat: who it is, what it can look at, and how it opens. */
+export function useRestaurantChat(): ChatConfig {
+  const { location, me } = useApp();
+  const profile = me.agents.find((a) => a.agent === "restaurant_manager");
+  return {
+    path: chatPath("restaurant_manager", location.id),
+    profile,
+    greeting: `Hi, I'm ${profile?.display_name ?? "your manager"}. Ask me anything about ${location.name}: sales, stock, staff, suppliers, bookings or reviews.`,
+    starters: RESTAURANT_STARTERS,
+    toolLabels: RESTAURANT_TOOLS,
+    placeholder: `Message ${profile?.display_name ?? "your manager"}`,
+    locationId: location.id,
+    allowDeep: true,
+  };
+}
+
+/** The Restaurant Manager, in the corner of every restaurant screen except its home (where the chat is the page).
+ * Opens with anything it noticed on its own. */
 export function RestaurantDock({ children }: { children: ReactNode }) {
   const { location, me, refreshUnread } = useApp();
-  const profile = me.agents.find((a) => a.agent === "restaurant_manager");
+  const config = useRestaurantChat();
+  const { pathname } = useLocation();
   const [notices, setNotices] = useState<Notice[]>([]);
   const [popup, setPopup] = useState<Popup | null>(null);
   const firstName = (me.name ?? "").trim().split(/\s+/)[0];
+  const agentName = config.profile?.display_name ?? "me";
 
   useEffect(() => {
     api<{ alerts: AlertRow[] }>(`/locations/${location.id}/alerts?unread_only=true&limit=20`)
       .then((r) => {
-        setPopup(greetingFor(r.alerts, firstName, location.name, profile?.display_name ?? "me"));
+        setPopup(greetingFor(r.alerts, firstName, location.name, agentName));
         setNotices(
           r.alerts
             .filter((a) => a.kind === "price_change")
@@ -86,7 +108,7 @@ export function RestaurantDock({ children }: { children: ReactNode }) {
         );
       })
       .catch(() => undefined);
-  }, [location.id, firstName, location.name, profile?.display_name]);
+  }, [location.id, firstName, location.name, agentName]);
 
   function dismiss(id: string) {
     setNotices((n) => n.filter((x) => x.id !== id));
@@ -94,21 +116,8 @@ export function RestaurantDock({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AssistantDock
-      config={{
-        path: chatPath("restaurant_manager", location.id),
-        profile,
-        greeting: `Hi, I'm ${profile?.display_name ?? "your manager"}. Ask me anything about ${location.name}: sales, stock, staff, suppliers, bookings or reviews.`,
-        starters: RESTAURANT_STARTERS,
-        toolLabels: RESTAURANT_TOOLS,
-        placeholder: "Ask about sales, stock, staff…",
-        locationId: location.id,
-        allowDeep: true,
-        notices,
-        onDismissNotice: dismiss,
-      }}
-      popup={popup}
-    >
+    <AssistantDock config={{ ...config, placeholder: "Ask about sales, stock, staff…", notices, onDismissNotice: dismiss }}
+      popup={popup} hidden={pathname === "/"}>
       {children}
     </AssistantDock>
   );
@@ -124,6 +133,8 @@ const CUSTOMER_TOOLS: Record<string, string> = {
   get_nutrition: "Checked your day",
   log_food: "Logged food",
   propose_nutrition_goals: "Suggested goals",
+  remember: "Saved a note",
+  forget: "Forgot a note",
 };
 
 const DRIVER_TOOLS: Record<string, string> = {
@@ -131,10 +142,12 @@ const DRIVER_TOOLS: Record<string, string> = {
   get_shift: "Checked your shift",
   get_my_stats: "Added up your numbers",
   get_busy_areas: "Checked busy areas",
+  remember: "Saved a note",
+  forget: "Forgot a note",
 };
 
-/** The Customer agent or the Driver Assistant, on every screen of that app. */
-export function PersonalDock({ me, agent, children }: { me: Me; agent: "customer" | "driver"; children: ReactNode }) {
+/** The Customer agent's or the Driver Assistant's chat. */
+export function personalChat(me: Me, agent: "customer" | "driver"): ChatConfig {
   const profile = me.agents.find((a) => a.agent === agent);
   const name = profile?.display_name ?? (agent === "customer" ? "your food assistant" : "your driver assistant");
   const config =
@@ -165,8 +178,14 @@ export function PersonalDock({ me, agent, children }: { me: Me; agent: "customer
           toolLabels: DRIVER_TOOLS,
           placeholder: "Ask about your jobs or your week",
         };
+  return { ...config, profile };
+}
+
+/** The Customer agent or the Driver Assistant, in the corner of every screen of that app except its home. */
+export function PersonalDock({ me, agent, children }: { me: Me; agent: "customer" | "driver"; children: ReactNode }) {
+  const { pathname } = useLocation();
   return (
-    <AssistantDock config={{ ...config, profile }}>
+    <AssistantDock config={personalChat(me, agent)} hidden={pathname === "/"}>
       {children}
     </AssistantDock>
   );
