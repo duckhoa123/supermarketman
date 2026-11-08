@@ -4,6 +4,7 @@ import { PersonalDock, RestaurantDock, personalChat, useRestaurantChat } from ".
 import Shell, { type NavItem } from "./components/Shell";
 import { WorkProvider, useAgentHome } from "./components/WorkProvider";
 import { AppContext, MeContext } from "./context";
+import { useIsPhone } from "./hooks";
 import { api, API_URL, ApiError, type AgentKind, type Me } from "./lib/api";
 import { getToken, onAuthChange, signOut } from "./lib/auth";
 import {
@@ -206,6 +207,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
   const location = me.locations.find((l) => l.id === locationId) ?? me.locations[0];
   const [unread, refreshUnread] = usePolling(`/locations/${location.id}/alerts?unread_only=true&limit=1`);
   const navigate = useNavigate();
+  const phone = useIsPhone();
   const nav: NavItem[] = [
     { to: "/today", label: "Today" },
     { to: "/plan", label: "Plan" },
@@ -234,46 +236,67 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     ) : (
       <span className="small muted">{location.name}</span>
     );
+  const profile = me.agents.find((a) => a.agent === "restaurant_manager");
+
+  // The screens, the same in both layouts.
+  const screens = (
+    <>
+      <Route path="/today" element={<Today />} />
+      <Route path="/plan" element={<Plan />} />
+      <Route path="/app-orders" element={<AppOrders />} />
+      <Route path="/bookings" element={<Bookings />} />
+      <Route path="/stock" element={<Stock />} />
+      <Route path="/receiving" element={<Receiving />} />
+      <Route path="/purchasing" element={<Purchasing />} />
+      <Route path="/orders" element={<Orders />} />
+      <Route path="/tables" element={<Tables />} />
+      <Route path="/reviews" element={<Reviews />} />
+      <Route path="/website" element={<Website />} />
+      <Route path="/alerts" element={<Alerts />} />
+      <Route path="/settings" element={<Settings />} />
+      {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}
+      <Route path="/agents" element={<AgentsRoute me={me} refreshMe={refreshMe} setMode={setMode} current="restaurant_manager" />} />
+      <Route
+        path="/more"
+        element={
+          <More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]}>
+            {me.locations.length > 1 && <li className="stack" style={{ gap: 6 }}>{picker}</li>}
+          </More>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </>
+  );
 
   return (
     <AppContext.Provider value={{ me, location, unread, refreshUnread, refreshMe }}>
-      <WorkProvider agent="restaurant_manager" profile={me.agents.find((a) => a.agent === "restaurant_manager")}
-        locationId={location.id}>
-      <RestaurantDock>
-      <AgentShell screens={nav} footer={picker} onSwitchAgent={() => navigate("/agents")}>
-        <Routes>
-          <Route path="/" element={<RestaurantHome />} />
-          <Route path="/working" element={<WorkingOn />} />
-          <Route path="/activity" element={<AgentActivity />} />
-          <Route path="/you" element={<You />} />
-          <Route path="/today" element={<Today />} />
-          <Route path="/plan" element={<Plan />} />
-          <Route path="/app-orders" element={<AppOrders />} />
-          <Route path="/bookings" element={<Bookings />} />
-          <Route path="/stock" element={<Stock />} />
-          <Route path="/receiving" element={<Receiving />} />
-          <Route path="/purchasing" element={<Purchasing />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/tables" element={<Tables />} />
-          <Route path="/reviews" element={<Reviews />} />
-          <Route path="/website" element={<Website />} />
-          <Route path="/alerts" element={<Alerts />} />
-          <Route path="/settings" element={<Settings />} />
-          {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}
-          <Route path="/agents" element={<AgentsRoute me={me} refreshMe={refreshMe} setMode={setMode} current="restaurant_manager" />} />
-          <Route
-            path="/more"
-            element={
-              <More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]}>
-                {me.locations.length > 1 && <li className="stack" style={{ gap: 6 }}>{picker}</li>}
-              </More>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AgentShell>
-      </RestaurantDock>
-      </WorkProvider>
+      {phone ? (
+        // Phones: the agent first (Chat, Working on, Activity, You), the screens under "Screens".
+        <WorkProvider agent="restaurant_manager" profile={profile} locationId={location.id}>
+          <RestaurantDock homeIsChat>
+            <AgentShell screens={nav} footer={picker} onSwitchAgent={() => navigate("/agents")}>
+              <Routes>
+                <Route path="/" element={<RestaurantHome />} />
+                <Route path="/working" element={<WorkingOn />} />
+                <Route path="/activity" element={<AgentActivity />} />
+                <Route path="/you" element={<You />} />
+                {screens}
+              </Routes>
+            </AgentShell>
+          </RestaurantDock>
+        </WorkProvider>
+      ) : (
+        // Wider windows: the classic layout, opening on Today, with the agent in the corner.
+        <RestaurantDock>
+          <Shell primary={[{ to: "/", label: "Today", end: true }, ...nav.filter((n) => n.to !== "/today")]} screens={[]}
+            profile={profile} footer={picker} onSwitchAgent={() => navigate("/agents")}>
+            <Routes>
+              <Route path="/" element={<Today />} />
+              {screens}
+            </Routes>
+          </Shell>
+        </RestaurantDock>
+      )}
     </AppContext.Provider>
   );
 }
@@ -281,6 +304,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
 function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "customer" | "driver" }) {
   const [unread, refreshUnread] = usePolling("/me/alerts?unread_only=true", 30_000);
   const navigate = useNavigate();
+  const phone = useIsPhone();
   const fleet = me.is_fleet_admin ? [{ to: "/fleet", label: "Fleet" }] : [];
   const nav: NavItem[] =
     agent === "customer"
@@ -299,37 +323,58 @@ function PersonalApp({ me, refreshMe, setMode, agent }: ModeProps & { agent: "cu
           ...fleet,
         ];
   const profile = me.agents.find((a) => a.agent === agent);
+  const first = agent === "customer" ? <Discover /> : <Jobs />;
 
+  const screens = (
+    <>
+      {agent === "customer" ? (
+        <>
+          <Route path="/discover" element={<Discover />} />
+          <Route path="/orders" element={<MyOrders />} />
+          <Route path="/nutrition" element={<Nutrition />} />
+          <Route path="/profile" element={<Profile />} />
+        </>
+      ) : (
+        <>
+          <Route path="/jobs" element={<Jobs />} />
+          <Route path="/earnings" element={<Earnings />} />
+        </>
+      )}
+      <Route path="/updates" element={<Updates onRead={refreshUnread} />} />
+      {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}
+      <Route path="/agents" element={<AgentsRoute me={me} refreshMe={refreshMe} setMode={setMode} current={agent} />} />
+      <Route path="/more" element={<More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </>
+  );
+
+  if (!phone) {
+    // Wider windows: the classic layout, opening on Discover or Jobs, with the agent in the corner.
+    return (
+      <PersonalDock me={me} agent={agent}>
+        <Shell primary={[{ ...nav[0], to: "/", end: true }, ...nav.slice(1)]} screens={[]} profile={profile}
+          onSwitchAgent={() => navigate("/agents")}>
+          <Routes>
+            <Route path="/" element={first} />
+            {screens}
+          </Routes>
+        </Shell>
+      </PersonalDock>
+    );
+  }
   return (
     <WorkProvider agent={agent} profile={profile}>
-    <PersonalDock me={me} agent={agent}>
-    <AgentShell screens={nav} onSwitchAgent={() => navigate("/agents")}>
-      <Routes>
-        <Route path="/" element={<AgentHome chat={personalChat(me, agent)} />} />
-        <Route path="/working" element={<WorkingOn />} />
-        <Route path="/activity" element={<AgentActivity />} />
-        <Route path="/you" element={<You />} />
-        {agent === "customer" ? (
-          <>
-            <Route path="/discover" element={<Discover />} />
-            <Route path="/orders" element={<MyOrders />} />
-            <Route path="/nutrition" element={<Nutrition />} />
-            <Route path="/profile" element={<Profile />} />
-          </>
-        ) : (
-          <>
-            <Route path="/jobs" element={<Jobs />} />
-            <Route path="/earnings" element={<Earnings />} />
-          </>
-        )}
-        <Route path="/updates" element={<Updates onRead={refreshUnread} />} />
-        {me.is_fleet_admin && <Route path="/fleet" element={<Fleet />} />}
-        <Route path="/agents" element={<AgentsRoute me={me} refreshMe={refreshMe} setMode={setMode} current={agent} />} />
-        <Route path="/more" element={<More links={[...nav, { to: "/agents", label: "Switch agent or customise" }]} />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AgentShell>
-    </PersonalDock>
+      <PersonalDock me={me} agent={agent} homeIsChat>
+        <AgentShell screens={nav} onSwitchAgent={() => navigate("/agents")}>
+          <Routes>
+            <Route path="/" element={<AgentHome chat={personalChat(me, agent)} />} />
+            <Route path="/working" element={<WorkingOn />} />
+            <Route path="/activity" element={<AgentActivity />} />
+            <Route path="/you" element={<You />} />
+            {screens}
+          </Routes>
+        </AgentShell>
+      </PersonalDock>
     </WorkProvider>
   );
 }

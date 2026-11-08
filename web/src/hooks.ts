@@ -26,3 +26,20 @@ export function useApi<T>(path: string | null) {
 
   return { data, error, loading, reload: load };
 }
+
+/** The phone layout's breakpoint, the same one styles.css uses. */
+const PHONE_QUERY = "(max-width: 760px)";
+
+/** True on phone-sized screens, where each agent's app opens on its chat (Chat, Working on, Activity, You).
+ * Wider windows keep the classic layout: the screens in a side rail and the agent in the corner. */
+export function useIsPhone(): boolean {
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => setPhone(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return phone;
+}

@@ -37,7 +37,8 @@ function useHideOnScroll(): boolean {
 }
 
 /** Side rail on wide screens; on phones, a menu bar at the top that hides while scrolling down.
- *  The agent comes first (Chat, Working on, Activity, You); the classic screens sit under "Screens". */
+ *  `primary` is the main menu. On phones that's the agent (Chat, Working on, Activity, You) with the classic
+ *  screens under "Screens"; wider windows list the screens themselves and pass no `screens`. */
 export default function Shell({ primary, screens, profile, footer, onSwitchAgent, children }: {
   primary: NavItem[];
   screens: NavItem[];
@@ -73,15 +74,19 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
             </NavLink>
           ))}
         </nav>
-        <p className="rail-h">Screens</p>
-        <nav className="nav nav-screens" aria-label="Screens">
-          {screens.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end}>
-              {n.label}
-              {badge(n)}
-            </NavLink>
-          ))}
-        </nav>
+        {screens.length > 0 && (
+          <>
+            <p className="rail-h">Screens</p>
+            <nav className="nav nav-screens" aria-label="Screens">
+              {screens.map((n) => (
+                <NavLink key={n.to} to={n.to} end={n.end}>
+                  {n.label}
+                  {badge(n)}
+                </NavLink>
+              ))}
+            </nav>
+          </>
+        )}
         <div className="rail-foot">
           {footer}
           <button className="btn small" onClick={() => void signOut().then(() => window.location.assign("/"))}>
