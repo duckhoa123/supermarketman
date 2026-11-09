@@ -135,7 +135,8 @@ def compose(location: Location, supplier: Supplier | None, po: PurchaseOrder, se
             delivery: date | None = None) -> dict:
     """The message for this order, from the restaurant's template (or the text already sent)."""
     delivery = delivery or po.delivery_date or default_delivery_date(location)
-    body = po.message if po.message and po.status != "draft" else fill(
+    # A draft saved with its own wording keeps it (editing the draft's items clears it again).
+    body = po.message if po.message else fill(
         template_for(location), order_values(location, supplier, po, sender, delivery))
     return {"subject": f"Order from {location.name} for {nice_date(delivery)}", "body": body,
             "delivery_date": delivery.isoformat(), "to_email": supplier.email if supplier else None,

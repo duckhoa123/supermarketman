@@ -834,3 +834,21 @@ button.sb-photo { cursor: pointer; }
   .inv-foot .btn.primary { order: -1; width: 100%; padding: 10px; font-size: 0.95rem; }
   .inv-line { padding: 10px; }
 }
+
+/* --- Order email to a supplier ------------------------------------------------------------------------ */
+.so-suppliers { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.so-supplier { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); cursor: pointer; font: inherit; color: var(--ink); min-width: 0; }
+.so-supplier span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.so-supplier:hover { border-color: var(--basil); }
+.so-supplier.on { border-color: var(--basil); background: var(--basil-tint); box-shadow: inset 0 0 0 1px var(--basil); }
+.so-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; }
+@media (max-width: 760px) { .so-grid { grid-template-columns: 1fr; } }
+.so-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.so-lines li { display: flex; gap: 6px; align-items: flex-start; }
+.so-qty { width: 72px; flex: none; }
+.so-unit { width: 72px; flex: none; }
+.so-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.so-name small { font-size: 0.74rem; padding-left: 2px; }
+.so-meta { display: grid; grid-template-columns: 60px 1fr; gap: 4px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--page); }
+.so-meta span { min-width: 0; overflow-wrap: anywhere; }
+.so-body { font-family: inherit; line-height: 1.5; min-height: 260px; }

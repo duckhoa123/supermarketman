@@ -3,6 +3,7 @@ import { useApp } from "../../context";
 import { useApi } from "../../hooks";
 import { api, type OrderMessage, type OrderTemplate, type PurchaseOrder, type Supplier } from "../../lib/api";
 import { timeAgo } from "../../lib/format";
+import SupplierOrderDialog from "../../components/SupplierOrderDialog";
 
 const STATUS_PILL: Record<string, string> = { draft: "warn", approved: "", sent: "good", received: "good", cancelled: "" };
 const SENT_VIA: Record<string, string> = { email: "by email", sms: "by text", manual: "by you" };
@@ -18,6 +19,9 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", notes: "" });
+  const [picked, setPicked] = useState<string | null>(null);
+  const [writing, setWriting] = useState<Supplier | null>(null);
+  const [notice, setNotice] = useState("");
 
   async function act(path: string, label: string, body: unknown = {}) {
     setBusy(label);
@@ -52,6 +56,35 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
   return (
     <>
       {error && <p className="error">{error}</p>}
+
+      {notice && <p className="notice">{notice}</p>}
+      {writing && (
+        <SupplierOrderDialog base={base} supplier={writing} onClose={() => setWriting(null)}
+          onDone={(m) => { setWriting(null); setNotice(m); void orders.reload(); }} />
+      )}
+
+      {view === "orders" && (
+      <section className="panel stack" style={{ gap: 10, marginBottom: 16 }}>
+        <div>
+          <h2>Write an order</h2>
+          <p className="small muted">Choose a supplier, then generate the email. AI can fill in the items from your sales and what you usually order from them.</p>
+        </div>
+        {suppliers.data?.length === 0 && <p className="small muted">No suppliers yet: add them under the Suppliers tab.</p>}
+        <div className="so-suppliers" role="radiogroup" aria-label="Supplier">
+          {suppliers.data?.map((s) => (
+            <button key={s.id} role="radio" aria-checked={picked === s.id} className={`so-supplier ${picked === s.id ? "on" : ""}`}
+              onClick={() => setPicked(s.id)} onDoubleClick={() => setWriting(s)}>
+              <strong>{s.name}</strong>
+              <span className="small muted">{s.email ?? "no email yet"}</span>
+            </button>
+          ))}
+        </div>
+        <button className="btn primary" style={{ alignSelf: "start" }} disabled={!picked}
+          onClick={() => setWriting(suppliers.data?.find((s) => s.id === picked) ?? null)}>
+          ✉ Generate email
+        </button>
+      </section>
+      )}
 
       {view === "orders" && (
       <section className="panel">
@@ -126,7 +159,7 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
       <section className="panel">
         <h2>Suppliers</h2>
         <ul className="list">
-          {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} />)}
+          {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} onWrite={setWriting} />)}
         </ul>
         <form className="row" style={{ marginTop: 12 }} onSubmit={addSupplier}>
           <input className="input" style={{ flex: 2 }} required placeholder="Supplier name" value={form.name}
@@ -332,7 +365,7 @@ function TemplateEditor({ base }: { base: string }) {
   );
 }
 
-function SupplierRow({ s, base, onSaved }: { s: Supplier; base: string; onSaved: () => Promise<void> }) {
+function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string; onSaved: () => Promise<void>; onWrite: (s: Supplier) => void }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState({ email: s.email ?? "", phone: s.phone ?? "", notes: s.notes ?? "" });
   const [err, setErr] = useState("");
@@ -358,7 +391,10 @@ function SupplierRow({ s, base, onSaved }: { s: Supplier; base: string; onSaved:
           <strong>{s.name}</strong>
           <div className="small muted">{[s.email ?? "no email yet", s.phone ?? "no phone yet", s.notes].filter(Boolean).join(" · ")}</div>
         </div>
-        <button className="btn small" onClick={() => setEditing(true)}>Edit</button>
+        <div className="row">
+          <button className="btn small primary" onClick={() => onWrite(s)}>✉ Write an order</button>
+          <button className="btn small" onClick={() => setEditing(true)}>Edit</button>
+        </div>
       </li>
     );
   }

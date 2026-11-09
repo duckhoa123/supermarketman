@@ -250,12 +250,85 @@ async def edit_po(po_id: str, body: POPatch, location: Location = Depends(requir
         raise HTTPException(409, "Only drafts can be edited")
     if body.lines is not None:
         po.lines = [ln.model_dump() for ln in body.lines]
+        po.message = None  # the saved wording no longer matches the items
     if body.note is not None:
         po.note = body.note
     if body.delivery_date is not None:
         po.delivery_date = body.delivery_date
     await session.commit()
     return {"ok": True}
+
+
+# Writing an order to one supplier: suggested items, the message, then save as a draft or send.
+
+
+async def _supplier(session: AsyncSession, location: Location, supplier_id: str) -> Supplier:
+    x = await session.get(Supplier, supplier_id)
+    if x is None or x.location_id != location.id:
+        raise HTTPException(404, "Supplier not found")
+    return x
+
+
+@router.post("/suppliers/{supplier_id}/order-suggestion")
+async def supplier_order_suggestion(supplier_id: str, location: Location = Depends(require_manager),
+                                    session: AsyncSession = Depends(get_session)):
+    """Items and quantities to order now, from this supplier's delivery history, stock and the forecast."""
+    from app.services import supplier_orders
+
+    supplier = await _supplier(session, location, supplier_id)
+    out = await supplier_orders.suggest(session, location, supplier)
+    for ln in out["lines"]:
+        ln.pop("key", None)
+    return out
+
+
+class OrderDraftIn(BaseModel):
+    lines: list[POLine] = Field(default_factory=list, max_length=100)
+    delivery_date: date | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/suppliers/{supplier_id}/order-message")
+async def supplier_order_message(supplier_id: str, body: OrderDraftIn, location: Location = Depends(require_location),
+                                 user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """The email for these items, written from the restaurant's template (nothing is saved)."""
+    from types import SimpleNamespace
+
+    supplier = await _supplier(session, location, supplier_id)
+    po = SimpleNamespace(id="new", lines=[ln.model_dump() for ln in body.lines], note=body.note, message=None,
+                         status="draft", delivery_date=None)
+    return purchasing.compose(location, supplier, po, await session.get(User, user.id), body.delivery_date)
+
+
+class NewOrderIn(OrderDraftIn):
+    supplier_id: str
+    message: str | None = Field(default=None, max_length=purchasing.MAX_MESSAGE)
+    send: str | None = Field(default=None, pattern="^(email|manual)$")  # empty: save as a draft
+
+
+@router.post("/purchase-orders")
+async def create_po(body: NewOrderIn, location: Location = Depends(require_manager),
+                    user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Save an order to a supplier as a draft, or save and send it."""
+    supplier = await _supplier(session, location, body.supplier_id)
+    if not body.lines:
+        raise HTTPException(422, "Add at least one item")
+    if body.send == "email" and not supplier.email:
+        raise HTTPException(409, "Add the supplier's email address first, or save the order as a draft")
+    po = PurchaseOrder(location_id=location.id, supplier_id=supplier.id, status="draft",
+                       lines=[ln.model_dump() for ln in body.lines], note=body.note, delivery_date=body.delivery_date,
+                       message=(body.message or "").strip()[:purchasing.MAX_MESSAGE] or None)
+    session.add(po)
+    await session.flush()
+    if body.send:
+        try:
+            await purchasing.send(session, location, po, await session.get(User, user.id), body.send, po.message,
+                                  body.delivery_date)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    else:
+        await session.commit()
+    return purchasing.po_out(po, supplier.name)
 
 
 # Message template for supplier orders ("Hello {supplier}, I want to order: {items} ...").
