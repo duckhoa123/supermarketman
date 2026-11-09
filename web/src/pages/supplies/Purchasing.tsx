@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useApp } from "../../context";
 import { useApi } from "../../hooks";
-import { api, type OrderMessage, type OrderTemplate, type PurchaseOrder, type Supplier } from "../../lib/api";
+import { api, type OrderMessage, type PurchaseOrder, type Supplier } from "../../lib/api";
 import { timeAgo } from "../../lib/format";
 import SupplierOrderDialog from "../../components/SupplierOrderDialog";
 
 const STATUS_PILL: Record<string, string> = { draft: "warn", approved: "", sent: "good", received: "good", cancelled: "" };
 const SENT_VIA: Record<string, string> = { email: "by email", sms: "by text", manual: "by you" };
 
-/** Orders to suppliers (drafted when stock runs low; nothing is sent without approval), or the suppliers and the
- * order message template. Part of the Supplies page. */
-export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "suppliers"; onScanInvoice: () => void }) {
+/** Suppliers and the orders to them (written with "Generate email", or drafted when stock runs low; nothing is
+ * sent without approval). Part of the Supplies page. */
+export function PurchasingPanel({ onScanInvoice }: { onScanInvoice: () => void }) {
   const { location } = useApp();
   const base = `/locations/${location.id}`;
   const orders = useApi<PurchaseOrder[]>(`${base}/purchase-orders`);
@@ -19,7 +19,7 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", notes: "" });
-  const [picked, setPicked] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [writing, setWriting] = useState<Supplier | null>(null);
   const [notice, setNotice] = useState("");
 
@@ -47,6 +47,7 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
         body: { name: form.name, email: form.email || undefined, phone: form.phone || undefined, notes: form.notes || undefined },
       });
       setForm({ name: "", email: "", phone: "", notes: "" });
+      setAdding(false);
       await suppliers.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't add the supplier.");
@@ -63,30 +64,33 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
           onDone={(m) => { setWriting(null); setNotice(m); void orders.reload(); }} />
       )}
 
-      {view === "orders" && (
-      <section className="panel stack" style={{ gap: 10, marginBottom: 16 }}>
-        <div>
-          <h2>Write an order</h2>
-          <p className="small muted">Choose a supplier, then generate the email. AI can fill in the items from your sales and what you usually order from them.</p>
+      <section className="panel" style={{ marginBottom: 16 }}>
+        <div className="spread">
+          <div>
+            <h2>Your suppliers</h2>
+            <p className="small muted">Press <strong>Generate email</strong> to write an order. AI can fill in the items from your sales and what you usually order from them.</p>
+          </div>
+          {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add a supplier</button>}
         </div>
-        {suppliers.data?.length === 0 && <p className="small muted">No suppliers yet: add them under the Suppliers tab.</p>}
-        <div className="so-suppliers" role="radiogroup" aria-label="Supplier">
-          {suppliers.data?.map((s) => (
-            <button key={s.id} role="radio" aria-checked={picked === s.id} className={`so-supplier ${picked === s.id ? "on" : ""}`}
-              onClick={() => setPicked(s.id)} onDoubleClick={() => setWriting(s)}>
-              <strong>{s.name}</strong>
-              <span className="small muted">{s.email ?? "no email yet"}</span>
-            </button>
-          ))}
-        </div>
-        <button className="btn primary" style={{ alignSelf: "start" }} disabled={!picked}
-          onClick={() => setWriting(suppliers.data?.find((s) => s.id === picked) ?? null)}>
-          ✉ Generate email
-        </button>
+        {adding && (
+          <form className="row so-add" onSubmit={addSupplier}>
+            <input className="input" style={{ flex: 2 }} required autoFocus placeholder="Supplier name" value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <input className="input" style={{ flex: 2 }} type="email" placeholder="Order email" value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <input className="input" style={{ flex: 1 }} placeholder="Phone (for texts and WhatsApp)" value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <button className="btn primary">Add</button>
+            <button type="button" className="btn" onClick={() => setAdding(false)}>Cancel</button>
+          </form>
+        )}
+        {suppliers.data?.length === 0 && !adding && <p className="small muted">No suppliers yet. Add one to start ordering.</p>}
+        <ul className="list">
+          {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} onWrite={setWriting} />)}
+        </ul>
+        <p className="small muted" style={{ marginTop: 8 }}>Link items to suppliers and set reorder amounts on the Stock page.</p>
       </section>
-      )}
 
-      {view === "orders" && (
       <section className="panel">
         <div className="spread">
           <div>
@@ -152,31 +156,7 @@ export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "sup
           })}
         </ul>
       </section>
-      )}
 
-      {view === "suppliers" && (
-      <>
-      <section className="panel">
-        <h2>Suppliers</h2>
-        <ul className="list">
-          {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} onWrite={setWriting} />)}
-        </ul>
-        <form className="row" style={{ marginTop: 12 }} onSubmit={addSupplier}>
-          <input className="input" style={{ flex: 2 }} required placeholder="Supplier name" value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <input className="input" style={{ flex: 2 }} type="email" placeholder="Order email" value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <input className="input" style={{ flex: 1 }} placeholder="Phone (for texts and WhatsApp)" value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <button className="btn">Add</button>
-        </form>
-        <p className="small muted" style={{ marginTop: 8 }}>
-          Link items to suppliers and set reorder amounts on the Stock page.
-        </p>
-      </section>
-      <TemplateEditor base={base} />
-      </>
-      )}
     </>
   );
 }
@@ -305,66 +285,6 @@ function Composer({ po, base, supplier, busy, canSend, onClose, onSend }: {
   );
 }
 
-/** The restaurant's own wording for supplier orders. */
-function TemplateEditor({ base }: { base: string }) {
-  const tpl = useApi<OrderTemplate>(`${base}/order-template`);
-  const [text, setText] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
-  const box = useRef<HTMLTextAreaElement>(null);
-  const value = text ?? tpl.data?.template ?? "";
-
-  function insert(key: string) {
-    const el = box.current;
-    const token = `{${key}}`;
-    if (!el) return setText(value + token);
-    const [a, b] = [el.selectionStart, el.selectionEnd];
-    setText(value.slice(0, a) + token + value.slice(b));
-    window.setTimeout(() => { el.focus(); el.setSelectionRange(a + token.length, a + token.length); }, 0);
-  }
-
-  async function save(template: string) {
-    setStatus("");
-    try {
-      await api(`${base}/order-template`, { method: "PUT", body: { template } });
-      setText(null);
-      await tpl.reload();
-      setStatus("Saved. New messages use this wording.");
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Couldn't save.");
-    }
-  }
-
-  if (!tpl.data) return null;
-  return (
-    <details className="panel tpl-details" style={{ marginTop: 16 }}>
-      <summary>
-        <h2>Order message template</h2>
-        <span className="small muted">{tpl.data.is_default ? "Standard wording" : "Your wording"} · Edit ▾</span>
-      </summary>
-      <p className="small muted">
-        Every order to a supplier starts from this message. Words in {"{curly brackets}"} are filled in for each order.
-        Tap one to add it where your cursor is.
-      </p>
-      <div className="chips">
-        {tpl.data.placeholders.map((p) => (
-          <button key={p.key} type="button" className="chip" title={p.label} onClick={() => insert(p.key)}>
-            {`{${p.key}}`} <span className="muted">{p.label}</span>
-          </button>
-        ))}
-      </div>
-      <textarea ref={box} className="textarea" rows={12} value={value} onChange={(e) => setText(e.target.value)}
-        aria-label="Order message template" style={{ fontFamily: "inherit", marginTop: 8 }} />
-      <div className="row" style={{ marginTop: 8 }}>
-        <button className="btn primary small" disabled={text === null} onClick={() => void save(value)}>Save template</button>
-        {!tpl.data.is_default && (
-          <button className="btn small" onClick={() => window.confirm("Go back to the standard message?") && void save("")}>Use the standard message</button>
-        )}
-        {status && <span className="small muted">{status}</span>}
-      </div>
-    </details>
-  );
-}
-
 function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string; onSaved: () => Promise<void>; onWrite: (s: Supplier) => void }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState({ email: s.email ?? "", phone: s.phone ?? "", notes: s.notes ?? "" });
@@ -392,7 +312,7 @@ function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string;
           <div className="small muted">{[s.email ?? "no email yet", s.phone ?? "no phone yet", s.notes].filter(Boolean).join(" · ")}</div>
         </div>
         <div className="row">
-          <button className="btn small primary" onClick={() => onWrite(s)}>✉ Write an order</button>
+          <button className="btn small primary" onClick={() => onWrite(s)}>✉ Generate email</button>
           <button className="btn small" onClick={() => setEditing(true)}>Edit</button>
         </div>
       </li>

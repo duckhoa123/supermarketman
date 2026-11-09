@@ -5,10 +5,9 @@ import { useApp } from "../context";
 import { PurchasingPanel } from "./supplies/Purchasing";
 import { Invoices, LogSheet, PriceChanges } from "./supplies/Receiving";
 
-type Tab = "orders" | "deliveries" | "log" | "prices" | "suppliers";
+type Tab = "orders" | "deliveries" | "log" | "prices";
 const TABS: [Tab, string][] = [
-  ["orders", "Orders"], ["deliveries", "Deliveries"], ["log", "Log sheet"], ["prices", "Price changes"],
-  ["suppliers", "Suppliers"],
+  ["orders", "Suppliers & orders"], ["deliveries", "Deliveries"], ["log", "Log sheet"], ["prices", "Price changes"],
 ];
 
 /** Purchasing and receiving in one place: order from suppliers, check in what arrives (scan the invoice: stock goes
@@ -34,9 +33,7 @@ export default function Supplies() {
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => go(t)}>{label}</button>
         ))}
       </div>
-      {(tab === "orders" || tab === "suppliers") && (
-        <PurchasingPanel view={tab} onScanInvoice={() => go("deliveries")} />
-      )}
+      {tab === "orders" && <PurchasingPanel onScanInvoice={() => go("deliveries")} />}
       {tab === "deliveries" && (
         <>
           <Invoices key={version} locationId={location.id} onOpen={(id) => go("deliveries", { scan: id })} />
