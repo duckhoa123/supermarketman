@@ -58,7 +58,8 @@ async def test_email_preview_then_draft_or_send(client, session, demo_location_i
 
     base = f"/locations/{demo_location_id}/purchase-orders"
     draft = (await client.post(base, headers=OWNER, json={
-        "supplier_id": dairy.id, "lines": lines, "delivery_date": "2026-11-20", "message": "Hi! Usual order please."})).json()
+        "supplier_id": dairy.id, "lines": lines, "delivery_date": "2026-11-20",
+        "message": "Hi! Usual order please."})).json()
     assert draft["status"] == "draft" and draft["message"] == "Hi! Usual order please."
     shown = (await client.get(f"{base}/{draft['id']}/message", headers=OWNER)).json()
     assert shown["body"] == "Hi! Usual order please."  # a saved draft keeps its wording...
