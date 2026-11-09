@@ -330,7 +330,7 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         scan.supplier_id = supplier.id
     supplier_name = supplier.name if supplier else scan.supplier_name
     received_on = scan.invoice_date or utcnow().date()
-    changes, stock_updates = [], []
+    changes, stock_updates, created = [], [], []
     for ln in lines:
         key = im.product_key(scan.supplier_name, ln["description"], ln.get("sku"))
         prev = await last_line(session, location.id, key, received_on, before_scan=scan.id)
@@ -338,6 +338,9 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         pct = (im.price_change_pct(ln["unit_price_cents"], pack, prev.unit_price_cents, prev.pack_size)
                if prev is not None and ln.get("kind", "item") == "item" else None)
         item = await session.get(Item, ln["item_id"]) if ln.get("item_id") else None
+        if item is None and ln.get("create_item") and ln.get("kind", "item") == "item":
+            item = await new_stock_item(session, location, ln, pack, supplier)
+            created.append(item.name)
         added = None
         if item is not None and item.location_id == location.id and ln.get("kind", "item") == "item" \
                 and item.stock_qty is not None:
@@ -358,6 +361,10 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         po = await session.get(PurchaseOrder, purchase_order_id)
         if po is not None and po.location_id == location.id and po.status in ("approved", "sent"):
             po.status = "received"  # stock was added from the invoice lines, not again from the order
+    if created:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(scan, "lines")  # the new items' ids were written onto the lines
     scan.status, scan.confirmed_by, scan.confirmed_at = "confirmed", user_id, utcnow()
     scan.purchase_order_id = purchase_order_id or scan.purchase_order_id
     await session.flush()
@@ -370,9 +377,97 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         alert = await create_alert(session, location, kind="price_change", title=title, body=body, data=data,
                                    dedupe_key=f"price:{scan.id}")
     await session.commit()
-    return {"lines": len(lines), "stock_updates": stock_updates,
+    return {"lines": len(lines), "stock_updates": stock_updates, "created_items": created,
             "price_changes": [{"description": c["line"]["description"], "change_pct": c["pct"]} for c in changes],
             "alerted": alert is not None}
+
+
+async def new_stock_item(session: AsyncSession, location: Location, ln: dict, pack: float,
+                         supplier: Supplier | None) -> Item:
+    """A supplier product that isn't in inventory yet becomes a stock item (an ingredient or supply, so it's kept
+    off the customer menu). Its stock starts at 0; the invoice adds the delivered amount."""
+    import uuid
+
+    name = (ln.get("description") or "Item").strip()[:300]
+    existing = await session.scalar(select(Item).where(Item.location_id == location.id,
+                                                       func.lower(Item.name) == name.lower()))
+    if existing is not None:
+        if existing.stock_qty is None:
+            existing.stock_qty = 0.0
+        return existing
+    unit_price = int(ln.get("unit_price_cents") or 0)
+    item = Item(location_id=location.id, provider="pass", external_id=f"pass-{uuid.uuid4().hex[:12]}", name=name,
+                category="Supplies", unit=(ln.get("unit") if pack == 1 else None), stock_qty=0.0,
+                cost_cents=round(unit_price / pack) if unit_price > 0 else None, price_cents=0,
+                supplier_id=supplier.id if supplier else None, orderable=False, active=True)
+    session.add(item)
+    await session.flush()
+    ln["item_id"] = item.id
+    return item
+
+
+async def to_xlsx(session: AsyncSession, location: Location, scan: InvoiceScan) -> tuple[bytes, str]:
+    """The invoice as an Excel file: details at the top, one row per line, money as numbers."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    names = {i.id: i.name for i in await session.scalars(select(Item).where(Item.location_id == location.id))}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invoice"
+    bold = Font(bold=True)
+    details = [("Supplier", scan.supplier_name or ""), ("Invoice no.", scan.invoice_number or ""),
+               ("Date", scan.invoice_date.isoformat() if scan.invoice_date else ""),
+               ("Status", "Imported" if scan.status == "confirmed" else "Not imported yet")]
+    for row, (k, v) in enumerate(details, start=1):
+        ws.cell(row=row, column=1, value=k).font = bold
+        ws.cell(row=row, column=2, value=v)
+    head = ["Item on invoice", "SKU", "Type", "Qty", "Unit", "Unit price", "Line total", "Stock item",
+            "Stock units per unit", "Last price", "Change %"]
+    top = len(details) + 2
+    fill = PatternFill("solid", fgColor="E3ECE8")
+    for col, h in enumerate(head, start=1):
+        c = ws.cell(row=top, column=col, value=h)
+        c.font, c.fill = bold, fill
+    money_fmt = '"$"#,##0.00'
+    r = top
+    for ln in scan.lines:
+        r += 1
+        stock = names.get(ln.get("item_id")) or ("New stock item" if ln.get("create_item") else "")
+        values = [ln.get("description"), ln.get("sku") or "", ln.get("kind", "item"), ln.get("qty"), ln.get("unit") or "",
+                  (ln.get("unit_price_cents") or 0) / 100, (ln.get("line_total_cents") or 0) / 100, stock,
+                  ln.get("pack_size") or 1,
+                  ln["last_price_cents"] / 100 if ln.get("last_price_cents") is not None else None,
+                  ln["change_pct"] / 100 if ln.get("change_pct") is not None else None]
+        for col, v in enumerate(values, start=1):
+            c = ws.cell(row=r, column=col, value=v)
+            if col in (6, 7, 10):
+                c.number_format = money_fmt
+            elif col == 11:
+                c.number_format = "0.0%"
+    if scan.lines:
+        r += 1
+        ws.cell(row=r, column=5, value="Lines total").font = bold
+        c = ws.cell(row=r, column=7, value=f"=SUM(G{top + 1}:G{r - 1})")
+        c.font, c.number_format = bold, money_fmt
+    for label, cents in (("Invoice subtotal", scan.subtotal_cents), ("Tax", scan.tax_cents),
+                         ("Invoice total", scan.total_cents)):
+        if cents is not None:
+            r += 1
+            ws.cell(row=r, column=5, value=label).font = bold
+            ws.cell(row=r, column=7, value=cents / 100).number_format = money_fmt
+    widths = [38, 12, 8, 8, 8, 12, 12, 26, 12, 12, 10]
+    for col, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+    ws.freeze_panes = ws.cell(row=top + 1, column=1)
+    for row in ws.iter_rows(min_row=top + 1, max_row=r, min_col=1, max_col=1):
+        row[0].alignment = Alignment(wrap_text=True)
+    buf = io.BytesIO()
+    wb.save(buf)
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (scan.supplier_name or "invoice"))[:40].strip("-")
+    name = f"{safe or 'invoice'}-{scan.invoice_number or scan.id[:8]}.xlsx".replace(" ", "-")
+    return buf.getvalue(), name
 
 
 async def units_last_8_weeks(session: AsyncSession, location_id: str, key: str) -> float:

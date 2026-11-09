@@ -796,3 +796,41 @@ button.sb-photo { cursor: pointer; }
 /* Supplies page tabs: scroll sideways on narrow screens instead of wrapping. */
 .supplies-tabs { display: flex; width: max-content; max-width: 100%; overflow-x: auto; margin-bottom: 16px; }
 .supplies-tabs button { white-space: nowrap; }
+
+/* --- Invoice check pop-up ---------------------------------------------------------------------------- */
+.inv-dialog { display: grid; gap: 18px; }
+.inv-dialog.with-photo { grid-template-columns: minmax(240px, 36%) 1fr; align-items: start; }
+@media (max-width: 860px) { .inv-dialog.with-photo { grid-template-columns: 1fr; } }
+.inv-photo { position: sticky; top: 0; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; background: var(--page); max-height: 70dvh; overflow-y: auto; }
+.inv-photo img { width: 100%; display: block; }
+.inv-photo object { width: 100%; height: 66dvh; display: block; }
+.inv-main { min-width: 0; gap: 12px; }
+.inv-head { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+@media (max-width: 600px) { .inv-head { grid-template-columns: 1fr 1fr; } .inv-head > :first-child { grid-column: 1 / -1; } }
+.inv-reading { display: flex; gap: 10px; align-items: center; padding: 18px; border-radius: var(--radius-m); background: var(--page); }
+.inv-reading .spinner { width: 18px; height: 18px; border-radius: 999px; border: 3px solid var(--line); border-top-color: var(--basil); animation: inv-spin 0.9s linear infinite; flex: none; }
+@keyframes inv-spin { to { transform: rotate(360deg); } }
+.inv-done span { font-size: 0.9rem; }
+.inv-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.inv-line { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
+.inv-line.is-new { border-color: var(--basil); box-shadow: inset 3px 0 0 var(--basil); }
+.inv-line.is-fee { background: var(--page); }
+.inv-line-top { display: flex; align-items: center; gap: 8px; }
+.inv-n { flex: none; width: 24px; height: 24px; border-radius: 999px; background: var(--page); color: var(--muted); font-size: 0.75rem; font-weight: 700; display: grid; place-items: center; }
+.inv-desc { flex: 1; min-width: 0; font-weight: 600; }
+.inv-line-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 560px) { .inv-line-fields { grid-template-columns: 1fr 1fr; } }
+.inv-line-fields label, .inv-line-stock label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inv-line-fields span, .inv-line-stock span { font-size: 0.75rem; color: var(--muted); }
+.inv-line-fields output { padding: 8px 0; font-weight: 700; }
+.inv-line-stock { display: grid; grid-template-columns: 1fr 150px; gap: 8px; align-items: start; }
+@media (max-width: 560px) { .inv-line-stock { grid-template-columns: 1fr; } }
+.inv-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; width: 100%; }
+@media (max-width: 560px) {
+  .inv-foot { gap: 8px; }
+  .inv-foot > .small { width: 100%; }
+  .inv-foot .row { width: 100%; gap: 6px; }
+  .inv-foot .btn { padding: 6px 10px; font-size: 0.85rem; }
+  .inv-foot .btn.primary { order: -1; width: 100%; padding: 10px; font-size: 0.95rem; }
+  .inv-line { padding: 10px; }
+}

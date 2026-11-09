@@ -77,6 +77,7 @@ class DraftLine(BaseModel):
     item_id: str | None = None
     pack_size: float = Field(default=1, gt=0, le=10_000)
     match: str | None = Field(default=None, max_length=40)
+    create_item: bool = False  # not matched: add it to inventory as a new stock item when the invoice is imported
 
 
 class DraftIn(BaseModel):
@@ -107,6 +108,16 @@ async def edit_invoice(scan_id: str, body: DraftIn, location: Location = Depends
 class ConfirmIn(BaseModel):
     purchase_order_id: str | None = None
     allow_duplicate: bool = False
+
+
+@router.get("/invoices/{scan_id}/export.xlsx")
+async def export_invoice(scan_id: str, location: Location = Depends(require_location),
+                         session: AsyncSession = Depends(get_session)):
+    """The invoice's lines as an Excel sheet."""
+    scan = await _scan(session, location, scan_id)
+    data, name = await receiving.to_xlsx(session, location, scan)
+    return Response(content=data, headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.post("/invoices/{scan_id}/confirm")

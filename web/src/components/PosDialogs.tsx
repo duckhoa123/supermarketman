@@ -10,8 +10,8 @@ function toCents(text: string): number | null {
   return text.trim() === "" || Number.isNaN(n) || n < 0 ? null : Math.round(n * 100);
 }
 
-export function Dialog({ title, onClose, children, footer, narrow = false }: {
-  title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; narrow?: boolean;
+export function Dialog({ title, onClose, children, footer, narrow = false, width }: {
+  title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; narrow?: boolean; width?: string;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -20,7 +20,8 @@ export function Dialog({ title, onClose, children, footer, narrow = false }: {
   }, [onClose]);
   return (
     <div className="sb-modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="sb-modal" role="dialog" aria-modal="true" aria-label={title} style={narrow ? { width: "min(460px, 100%)" } : undefined}>
+      <div className="sb-modal" role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : "Dialog"}
+        style={narrow ? { width: "min(460px, 100%)" } : width ? { width } : undefined}>
         <div className="sb-flyout-head">
           <h2>{title}</h2>
           <button className="sb-icon" onClick={onClose} aria-label="Close">✕</button>

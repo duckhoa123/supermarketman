@@ -467,6 +467,7 @@ export type DraftLine = {
   item_id: string | null;
   pack_size: number;
   match: string | null;
+  create_item?: boolean;
   last_price_cents?: number | null;
   last_received_on?: string | null;
   change_pct?: number | null;

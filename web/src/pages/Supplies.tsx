@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import InvoiceReview from "../components/InvoiceReview";
 import { useApp } from "../context";
@@ -18,6 +19,7 @@ export default function Supplies() {
   const tab = (TABS.some(([t]) => t === params.get("tab")) ? params.get("tab") : "orders") as Tab;
   const scan = params.get("scan");
   const go = (t: Tab, extra: Record<string, string> = {}) => setParams({ tab: t, ...extra });
+  const [version, setVersion] = useState(0);
 
   return (
     <>
@@ -35,12 +37,14 @@ export default function Supplies() {
       {(tab === "orders" || tab === "suppliers") && (
         <PurchasingPanel view={tab} onScanInvoice={() => go("deliveries")} />
       )}
-      {tab === "deliveries" &&
-        (scan ? (
-          <InvoiceReview key={scan} scanId={scan} onClose={() => go("deliveries")} />
-        ) : (
-          <Invoices locationId={location.id} onOpen={(id) => go("deliveries", { scan: id })} />
-        ))}
+      {tab === "deliveries" && (
+        <>
+          <Invoices key={version} locationId={location.id} onOpen={(id) => go("deliveries", { scan: id })} />
+          {scan && (
+            <InvoiceReview key={scan} scanId={scan} onClose={() => { go("deliveries"); setVersion((v) => v + 1); }} />
+          )}
+        </>
+      )}
       {tab === "log" && <LogSheet locationId={location.id} />}
       {tab === "prices" && <PriceChanges locationId={location.id} />}
     </>

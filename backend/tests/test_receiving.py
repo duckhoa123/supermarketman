@@ -219,3 +219,41 @@ async def test_without_ai_key_lines_can_be_entered_by_hand(client, session, demo
     assert line.received_on.isoformat() == "2026-10-20" and line.supplier_name == "Coastal Produce Co. (demo)"
     report = (await client.get(f"/locations/{demo_location_id}/reports/month", headers=OWNER)).json()
     assert "deliveries" in report
+
+
+async def test_import_adds_new_stock_items_and_exports_excel(client, session, demo_location_id, fake_llm):
+    """Unmatched lines marked "new" become stock items (kept off the menu) with the delivered amount."""
+    import io
+
+    from openpyxl import load_workbook
+
+    scan = (await _scan_and_read(client, demo_location_id, fake_llm, DAIRY_1))["scan"]
+    base = f"/locations/{demo_location_id}/invoices/{scan['id']}"
+    lines = [{k: v for k, v in ln.items() if k not in ("last_price_cents", "last_received_on", "change_pct")}
+             for ln in scan["lines"]]
+    for ln in lines:
+        if ln["description"] == "Mascarpone 500g":
+            ln["create_item"] = True
+            ln["pack_size"] = 1
+    assert (await client.put(base, headers=OWNER, json={"lines": lines})).status_code == 200
+
+    xlsx = await client.get(f"{base}/export.xlsx", headers=OWNER)
+    assert xlsx.status_code == 200 and "Harbour-Dairy" in xlsx.headers["content-disposition"]
+    ws = load_workbook(io.BytesIO(xlsx.content)).active
+    rows = [[c.value for c in row] for row in ws.iter_rows()]
+    assert rows[0][:2] == ["Supplier", "Harbour Dairy & Deli (demo)"] and rows[1][1] == "HD-2041"
+    header = rows.index(next(r for r in rows if r[0] == "Item on invoice"))
+    body = {r[0]: r for r in rows[header + 1:] if r[0]}
+    assert body["Mascarpone 500g"][3:8] == [2, "tub", 10.5, 21.0, "New stock item"]
+    assert body["Burrata 125g x 6"][7] == "Burrata & Tomato" and body["Delivery fee"][2] == "fee"
+
+    r = (await client.post(f"{base}/confirm", headers=OWNER)).json()
+    assert r["created_items"] == ["Mascarpone 500g"]
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id, Item.name == "Mascarpone 500g"))
+    assert item.stock_qty == 2 and item.unit == "tub" and item.cost_cents == 1050 and item.orderable is False
+    assert item.supplier_id == scan["supplier_id"] and item.category == "Supplies"
+    logged = await session.scalar(select(ReceivedLine).where(ReceivedLine.scan_id == scan["id"],
+                                                             ReceivedLine.description == "Mascarpone 500g"))
+    assert logged.item_id == item.id and logged.stock_added == 2
+    after = (await client.get(base, headers=OWNER)).json()
+    assert next(ln for ln in after["lines"] if ln["description"] == "Mascarpone 500g")["item_id"] == item.id
