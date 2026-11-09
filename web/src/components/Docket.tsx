@@ -62,7 +62,7 @@ export default function Docket({ proposal, locationId, onDone }: {
             method: "POST",
             body: {},
           });
-          setResult("Approved. It's emailed to the supplier now; see Purchasing for its status.");
+          setResult("Approved. It's emailed to the supplier now; see Supplies → Orders for its status.");
           break;
         case "customer_order": {
           const r = await api<{ payment: { status: string; message?: string } }>("/customer/orders", {

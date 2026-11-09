@@ -1,13 +1,8 @@
 import { useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import InvoiceReview from "../components/InvoiceReview";
-import { useApp } from "../context";
-import { useApi } from "../hooks";
-import { fetchBlob, uploadFile, type InvoiceScan, type LogLine, type Supplier } from "../lib/api";
-import { prepareUpload } from "../lib/image";
-import { timeAgo } from "../lib/format";
-
-type Tab = "invoices" | "log" | "prices";
+import { useApi } from "../../hooks";
+import { fetchBlob, uploadFile, type InvoiceScan, type LogLine, type Supplier } from "../../lib/api";
+import { prepareUpload } from "../../lib/image";
+import { timeAgo } from "../../lib/format";
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -20,40 +15,7 @@ function Pct({ value }: { value: number | null }) {
   return <span className={`pill ${value > 0 ? "low" : "good"}`}>{value > 0 ? "▲" : "▼"} {Math.abs(value)}%</span>;
 }
 
-/** Receiving deliveries: scan the invoice, check it, and keep every line in a log sheet with price history. */
-export default function Receiving() {
-  const { location } = useApp();
-  const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as Tab) || "invoices";
-  const open = params.get("scan");
-  const setTab = (t: Tab) => setParams({ tab: t });
-
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>Receiving</h1>
-          <p>Photograph each invoice when a delivery arrives. Every line is logged, stock goes up, and price changes are flagged.</p>
-        </div>
-        <div className="seg" role="group" aria-label="Receiving">
-          {([["invoices", "Invoices"], ["log", "Log sheet"], ["prices", "Price changes"]] as const).map(([t, label]) => (
-            <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{label}</button>
-          ))}
-        </div>
-      </div>
-      {tab === "invoices" &&
-        (open ? (
-          <InvoiceReview key={open} scanId={open} onClose={() => setParams({ tab: "invoices" })} />
-        ) : (
-          <Invoices locationId={location.id} onOpen={(id) => setParams({ tab: "invoices", scan: id })} />
-        ))}
-      {tab === "log" && <LogSheet locationId={location.id} />}
-      {tab === "prices" && <PriceChanges locationId={location.id} />}
-    </>
-  );
-}
-
-function Invoices({ locationId, onOpen }: { locationId: string; onOpen: (id: string) => void }) {
+export function Invoices({ locationId, onOpen }: { locationId: string; onOpen: (id: string) => void }) {
   const { data, reload, error } = useApi<InvoiceScan[]>(`/locations/${locationId}/invoices`);
   const camera = useRef<HTMLInputElement>(null);
   const files = useRef<HTMLInputElement>(null);
@@ -140,7 +102,7 @@ function Invoices({ locationId, onOpen }: { locationId: string; onOpen: (id: str
   );
 }
 
-function LogSheet({ locationId }: { locationId: string }) {
+export function LogSheet({ locationId }: { locationId: string }) {
   const [start, setStart] = useState(daysAgo(30));
   const [end, setEnd] = useState(daysAgo(0));
   const [supplier, setSupplier] = useState("");
@@ -200,7 +162,7 @@ function LogSheet({ locationId }: { locationId: string }) {
   );
 }
 
-function PriceChanges({ locationId }: { locationId: string }) {
+export function PriceChanges({ locationId }: { locationId: string }) {
   const [days, setDays] = useState(90);
   const { data } = useApi<{ count: number; increases: number; decreases: number; changes: LogLine[] }>(
     `/locations/${locationId}/price-changes?days=${days}`);

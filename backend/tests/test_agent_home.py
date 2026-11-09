@@ -29,7 +29,7 @@ async def test_restaurant_work_shows_what_needs_you_and_what_happened(client, se
     po = next(e for e in work["needs_you"] if e["id"] == f"po:{draft['id']}")
     assert po["proposal"]["kind"] == "purchase_order" and po["proposal"]["purchase_order_id"] == draft["id"]
     assert {ln["name"] for ln in po["proposal"]["lines"]} >= {"Tiramisu"}
-    assert po["link"] == "/purchasing"
+    assert po["link"] == "/supplies?tab=orders"
 
     # Low-rated reviews without a reply wait too; the demo's 1-star review is among them.
     one_star = await session.scalar(select(Review).where(Review.location_id == loc, Review.rating == 1))

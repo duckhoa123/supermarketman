@@ -146,7 +146,7 @@ async def restaurant_work(session: AsyncSession, location: Location, user_id: st
         if po.status == "draft":
             entries.append(Entry(
                 id=f"po:{po.id}", kind="purchase_order", state="needs_you", title=f"Order from {name}",
-                detail=_lines_summary(lines), at=po.created_at, source="Purchasing", link="/purchasing",
+                detail=_lines_summary(lines), at=po.created_at, source="Supplies", link="/supplies?tab=orders",
                 proposal={"kind": "purchase_order", "label": f"Order from {name}", "purchase_order_id": po.id,
                           "supplier": name,
                           "lines": [{"name": ln.get("name"), "qty": ln.get("qty"), "unit": ln.get("unit")}
@@ -154,25 +154,25 @@ async def restaurant_work(session: AsyncSession, location: Location, user_id: st
         elif po.status in ("approved", "sent") and po.send_error:
             entries.append(Entry(
                 id=f"po:{po.id}", kind="purchase_order", state="needs_you", title=f"Couldn't send the order to {name}",
-                detail=_clip(po.send_error), at=po.approved_at or po.updated_at, source="Purchasing",
-                link="/purchasing"))
+                detail=_clip(po.send_error), at=po.approved_at or po.updated_at, source="Supplies",
+                link="/supplies?tab=orders"))
         elif po.status in ("approved", "sent"):
             due = f" · due {po.delivery_date.strftime('%a %-d %b')}" if po.delivery_date else ""
             entries.append(Entry(
                 id=f"po:{po.id}", kind="purchase_order", state="in_progress", title=f"Waiting for {name}'s delivery",
-                detail=f"{_lines_summary(lines)}{due}", at=po.sent_at or po.approved_at, source="Purchasing",
-                link="/purchasing"))
+                detail=f"{_lines_summary(lines)}{due}", at=po.sent_at or po.approved_at, source="Supplies",
+                link="/supplies?tab=orders"))
         if po.approved_at and po.approved_at >= since:
             entries.append(Entry(
                 id=f"po-approved:{po.id}", kind="purchase_order", state="done",
                 title=f"Sent the order to {name}" if po.sent_at else f"Approved the order to {name}",
                 detail=_lines_summary(lines) + (f" · by {po.sent_via}" if po.sent_via else ""),
-                at=po.sent_at or po.approved_at, source="Purchasing", link="/purchasing",
+                at=po.sent_at or po.approved_at, source="Supplies", link="/supplies?tab=orders",
                 by_you=po.approved_by == user_id))
         if po.status == "received" and po.updated_at >= since:
             entries.append(Entry(
                 id=f"po-received:{po.id}", kind="purchase_order", state="done", title=f"{name}'s delivery arrived",
-                detail=_lines_summary(lines), at=po.updated_at, source="Purchasing", link="/purchasing"))
+                detail=_lines_summary(lines), at=po.updated_at, source="Supplies", link="/supplies?tab=orders"))
 
     # Reviews: low ratings with no reply yet need you; replies this week are done.
     reviews = await session.scalars(select(Review).where(
@@ -202,19 +202,20 @@ async def restaurant_work(session: AsyncSession, location: Location, user_id: st
         name = sc.supplier_name or "a supplier"
         if sc.status == "processing":
             entries.append(Entry(id=f"invoice:{sc.id}", kind="invoice", state="in_progress",
-                                 title=f"Reading the invoice from {name}", at=sc.created_at, source="Receiving",
-                                 link="/receiving"))
+                                 title=f"Reading the invoice from {name}", at=sc.created_at, source="Supplies",
+                                 link="/supplies?tab=deliveries"))
         elif sc.status == "review":
             entries.append(Entry(id=f"invoice:{sc.id}", kind="invoice", state="needs_you",
                                  title=f"Check the invoice from {name}",
                                  detail=f"{len(sc.lines or [])} lines to confirm before stock is updated",
-                                 at=sc.created_at, source="Receiving", link="/receiving"))
+                                 at=sc.created_at, source="Supplies", link=f"/supplies?tab=deliveries&scan={sc.id}"))
         elif sc.status == "confirmed":
             total = f" · {money(sc.total_cents)}" if sc.total_cents is not None else ""
             entries.append(Entry(id=f"invoice:{sc.id}", kind="invoice", state="done",
                                  title=f"Checked in the invoice from {name}",
                                  detail=f"{len(sc.lines or [])} lines{total}", at=sc.updated_at,
-                                 source="Receiving", link="/receiving", by_you=sc.confirmed_by == user_id))
+                                 source="Supplies", link=f"/supplies?tab=deliveries&scan={sc.id}",
+                                 by_you=sc.confirmed_by == user_id))
 
     # Orders from the customer app.
     orders = await session.scalars(select(CustomerOrder).where(

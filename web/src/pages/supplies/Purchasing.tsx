@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useApp } from "../context";
-import { useApi } from "../hooks";
-import { api, type OrderMessage, type OrderTemplate, type PurchaseOrder, type Supplier } from "../lib/api";
-import { timeAgo } from "../lib/format";
+import { useApp } from "../../context";
+import { useApi } from "../../hooks";
+import { api, type OrderMessage, type OrderTemplate, type PurchaseOrder, type Supplier } from "../../lib/api";
+import { timeAgo } from "../../lib/format";
 
 const STATUS_PILL: Record<string, string> = { draft: "warn", approved: "", sent: "good", received: "good", cancelled: "" };
 const SENT_VIA: Record<string, string> = { email: "by email", sms: "by text", manual: "by you" };
 
-/** Suppliers and the orders drafted when stock runs low. Nothing is sent without approval. */
-export default function Purchasing() {
+/** Orders to suppliers (drafted when stock runs low; nothing is sent without approval), or the suppliers and the
+ * order message template. Part of the Supplies page. */
+export function PurchasingPanel({ view, onScanInvoice }: { view: "orders" | "suppliers"; onScanInvoice: () => void }) {
   const { location } = useApp();
   const base = `/locations/${location.id}`;
   const orders = useApi<PurchaseOrder[]>(`${base}/purchase-orders`);
@@ -50,19 +51,19 @@ export default function Purchasing() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Purchasing</h1>
-          <p>When stock runs low, an order to that item's supplier is drafted here. Check it, then send it.</p>
-        </div>
-        <button className="btn" disabled={busy !== ""} onClick={() => void act("/purchase-orders/draft", "draft")}>
-          Draft orders for low stock
-        </button>
-      </div>
       {error && <p className="error">{error}</p>}
 
+      {view === "orders" && (
       <section className="panel">
-        <h2>Orders</h2>
+        <div className="spread">
+          <div>
+            <h2>Orders to suppliers</h2>
+            <p className="small muted">When stock runs low, an order to that item's supplier is drafted here. Check it, then send it.</p>
+          </div>
+          <button className="btn" disabled={busy !== ""} onClick={() => void act("/purchase-orders/draft", "draft")}>
+            Draft orders for low stock
+          </button>
+        </div>
         {orders.data?.length === 0 && <p className="muted">No supplier orders yet.</p>}
         <ul className="list">
           {orders.data?.map((po) => {
@@ -104,9 +105,12 @@ export default function Purchasing() {
                       </button>
                     )}
                     {(po.status === "approved" || po.status === "sent") && (
-                      <button className="btn small" disabled={busy !== ""} onClick={() => void act(`/purchase-orders/${po.id}/received`, po.id)}>
-                        Mark received (adds to stock)
-                      </button>
+                      <>
+                        <button className="btn small primary" onClick={onScanInvoice}>Delivery arrived: scan the invoice</button>
+                        <button className="btn small" disabled={busy !== ""} onClick={() => void act(`/purchase-orders/${po.id}/received`, po.id)}>
+                          Mark received without an invoice
+                        </button>
+                      </>
                     )}
                   </div>
                 )}
@@ -115,10 +119,11 @@ export default function Purchasing() {
           })}
         </ul>
       </section>
+      )}
 
-      <TemplateEditor base={base} />
-
-      <section className="panel" style={{ marginTop: 16 }}>
+      {view === "suppliers" && (
+      <>
+      <section className="panel">
         <h2>Suppliers</h2>
         <ul className="list">
           {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} />)}
@@ -136,6 +141,9 @@ export default function Purchasing() {
           Link items to suppliers and set reorder amounts on the Stock page.
         </p>
       </section>
+      <TemplateEditor base={base} />
+      </>
+      )}
     </>
   );
 }

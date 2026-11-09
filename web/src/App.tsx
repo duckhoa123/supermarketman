@@ -23,10 +23,9 @@ import More from "./pages/More";
 import Onboarding from "./pages/Onboarding";
 import Orders from "./pages/Orders";
 import Plan from "./pages/Plan";
-import Purchasing from "./pages/Purchasing";
-import Receiving from "./pages/Receiving";
 import Reviews from "./pages/Reviews";
 import Settings from "./pages/Settings";
+import Supplies, { OldSuppliesLink } from "./pages/Supplies";
 import Stock from "./pages/Stock";
 import Tables from "./pages/Tables";
 import Today from "./pages/Today";
@@ -214,8 +213,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
     { to: "/stock", label: "Stock" },
-    { to: "/receiving", label: "Receiving" },
-    { to: "/purchasing", label: "Purchasing" },
+    { to: "/supplies", label: "Supplies" },
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
     { to: "/reviews", label: "Reviews" },
@@ -246,8 +244,9 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
       <Route path="/app-orders" element={<AppOrders />} />
       <Route path="/bookings" element={<Bookings />} />
       <Route path="/stock" element={<Stock />} />
-      <Route path="/receiving" element={<Receiving />} />
-      <Route path="/purchasing" element={<Purchasing />} />
+      <Route path="/supplies" element={<Supplies />} />
+      <Route path="/receiving" element={<OldSuppliesLink from="receiving" />} />
+      <Route path="/purchasing" element={<OldSuppliesLink from="purchasing" />} />
       <Route path="/orders" element={<Orders />} />
       <Route path="/tables" element={<Tables />} />
       <Route path="/reviews" element={<Reviews />} />
