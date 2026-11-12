@@ -216,3 +216,60 @@ async def test_item_sales_report_records_what_sold_that_day(client, session, dem
     total = await session.scalar(select(func.sum(ItemSalesDaily.qty)).where(
         ItemSalesDaily.location_id == demo_location_id, ItemSalesDaily.day == date(2026, 11, 11)))
     assert total == 29
+
+
+# The layouts of Clover's real exports (made-up contents).
+CLOVER_ITEMS = _xlsx({
+    "Instructions & Glossary": [["Clover Inventory Import/Export"], ["Term", "Description"], ["Clover ID", "Leave blank."]],
+    "Items": [
+        ["Clover ID", "Name", "Alternate Name", "Description", "Price", "Price Type", "Price Unit", "Cost",
+         "Product Code", "SKU", "Quantity", "Hidden?", "Default tax rates?", "Non-revenue item?", "Printer Labels",
+         "Modifier Groups", "Categories", "Tax Rates"],
+        ["AAA111", "Chicken Wings ", "", None, 14.95, "Fixed", "", 0.0, "", None, "", "No", "No", "No", "Fried",
+         "Appetizers", "Appetizers", "GST"],
+        [None, None, None, None, None, None, None, None, None, None, None, None, None, None, "Sides", None, None, None],
+        ["BBB222", "Side Rice", "", None, 3.5, "Fixed", "", 0.75, "", "", "", "No", "No", "No", "", "", "Sides", "GST"],
+        ["CCC333", "Side Rice", "", None, 4.0, "Fixed", "", 0.0, "", "", "", "Yes", "No", "No", "", "", "Sides", ""],
+    ],
+    "Modifier Groups": [["Modifier Group ID", "Modifier Group Name", "Modifier", "Price"], ["M1", "Extras", "No Ham", 0]],
+    "Tax Rates": [["Tax Rate ID", "Name", "Tax Rate"], ["T1", "GST", 0.05]],
+})
+
+CLOVER_ITEM_SALES = (
+    "﻿Item sales\n\"Wed, Nov 11, 2026, 12:00 a.m.  - Wed, Nov 11, 2026, 11:59 p.m. \"\n"
+    "\"Requested on: Wed, Nov 11, 2026, 8:50 p.m. \"\nFilters: Revenue = Revenue items\n\n"
+    "Gross sales,\"$1,056.30\",\n\nNet sales,\"$1,056.30\",\n\n"
+    "Category,Category/Item,Gross sales,Net sales,Modifier name,Modifier qty. sold,Modifier gross sales,Sold,Discounts\n"
+    "Total,,\"$1,056.30\",\"$1,056.30\",,1,$0.00,60,$0.00\n"
+    "Pho,,$596.70,$596.70,,0,$0.00,31,$0.00\n"
+    ",Brisket Pho (R),$217.25,$217.25,,0,$0.00,11,$0.00\n"
+    ",\" Special Pho (R)\",$379.45,$379.45,,0,$0.00,20,$0.00\n"
+    "Appetizers,,$459.60,$459.60,,1,$0.00,29,$0.00\n"
+    ",Shrimp Salad Roll,$459.60,$459.60,,1,$0.00,29,$0.00\n"
+    ",,,,No Ham,1,$0.00,,\n"
+).encode()
+
+
+async def test_clover_items_export_layout(client, session, demo_location_id):
+    p = (await _post(client, demo_location_id, "/preview", "inventory-export.xlsx", CLOVER_ITEMS)).json()
+    assert p["kind"] == "items" and p["sheet"] == "Items" and p["rows"] == 3  # not the extra label row
+    r = (await _post(client, demo_location_id, "", "inventory-export.xlsx", CLOVER_ITEMS)).json()
+    assert r == {"kind": "items", "added": 3, "updated": 0, "skipped": 0}
+    wings = await session.scalar(select(Item).where(Item.external_id == "AAA111"))
+    assert wings.name == "Chicken Wings" and wings.cost_cents is None and wings.category == "Appetizers"
+    rice = {i.external_id: i for i in await session.scalars(select(Item).where(Item.name == "Side Rice"))}
+    assert set(rice) == {"BBB222", "CCC333"}  # two Clover items with one name stay two items
+    assert rice["BBB222"].cost_cents == 75 and rice["CCC333"].active is False
+
+
+async def test_clover_item_sales_layout(client, session, demo_location_id):
+    await client.post(f"/locations/{demo_location_id}/demo-data/clear", headers=OWNER)
+    p = (await _post(client, demo_location_id, "/preview", "Item sales.csv", CLOVER_ITEM_SALES)).json()
+    assert p["kind"] == "item_sales" and p["day"] == "2026-11-11" and p["rows"] == 3
+    assert p["columns"][p["mapping"]["name"]] == "Category/Item" and p["columns"][p["mapping"]["qty"]] == "Sold"
+    r = (await _post(client, demo_location_id, "", "Item sales.csv", CLOVER_ITEM_SALES)).json()
+    assert r == {"kind": "item_sales", "day": "2026-11-11", "items": 3, "skipped": 0, "qty": 60, "sales_cents": 105630}
+    rows = {x.name: x for x in await session.scalars(select(ItemSalesDaily).where(
+        ItemSalesDaily.location_id == demo_location_id, ItemSalesDaily.day == date(2026, 11, 11)))}
+    assert (rows["Special Pho (R)"].qty, rows["Special Pho (R)"].category) == (20, "Pho")
+    assert rows["Shrimp Salad Roll"].category == "Appetizers"

@@ -64,7 +64,7 @@ FIELDS: dict[str, dict[str, tuple[str, bool, list[str]]]] = {
     },
 }
 FIELDS["item_sales"] = {
-    "name": ("Item", True, ["item name", "item", "name", "product", "product name", "menu item"]),
+    "name": ("Item", True, ["item name", "item", "category/item", "name", "product", "product name", "menu item"]),
     "qty": ("Quantity sold", True, ["quantity sold", "qty sold", "sold", "items sold", "# sold", "number sold",
                                     "count", "quantity", "qty", "units sold", "sales count"]),
     "revenue": ("Sales", False, ["net sales", "item net sales", "sales", "gross sales", "item gross sales",
@@ -341,6 +341,8 @@ def preview(location: Location, name: str | None, data: bytes, kind: str | None 
                         "day at a time to see each day's best sellers.")
         if len(dates) > 1:
             warnings.append("This file covers more than one day.")
+    if t.kind in ("items", "item_sales") and t.mapping.get("name") is not None:
+        t.rows = [r for r in t.rows if str(cell(r, t.mapping["name"]) or "").strip()]
     return {**extra, 
         "kind": t.kind, "label": KIND_LABEL[t.kind], "sheet": t.sheet, "header_row": t.header_row + 1,
         "rows": len(t.rows), "columns": t.columns,
@@ -371,21 +373,27 @@ async def import_items(session: AsyncSession, location: Location, t: Table) -> d
     m = t.mapping
     existing = list(await session.scalars(select(Item).where(Item.location_id == location.id)))
     by_ext = {(i.provider, i.external_id): i for i in existing}
-    by_name = {i.name.strip().lower(): i for i in existing if i.provider != "demo"}
+    by_name = {i.name.strip().lower(): i for i in existing if i.provider not in ("demo", PROVIDER)}
     added = updated = skipped = 0
+    seen: set[str] = set()
     for row in t.rows:
         name = str(cell(row, m["name"]) or "").strip()
+        given = str(cell(row, m["external_id"]) or "").strip()
         price = money(cell(row, m["price"]))
         if not name:
-            skipped += 1
+            if given:
+                skipped += 1
+            continue  # Clover puts an item's second printer label or category on an extra row below it
+        ext = given or f"import-{_slug(name)}"
+        if ext in seen:
             continue
-        ext = str(cell(row, m["external_id"]) or "").strip() or f"import-{_slug(name)}"
-        item = by_ext.get((PROVIDER, ext)) or by_name.get(name.lower())
+        seen.add(ext)
+        # The POS id decides; a name only matches items made in Pass (never two POS items with the same name).
+        item = by_ext.get((PROVIDER, ext)) or (by_name.pop(name.lower(), None) if not given else None)
         if item is None:
             item = Item(location_id=location.id, provider=PROVIDER, external_id=ext[:100], name=name[:300])
             session.add(item)
             by_ext[(PROVIDER, ext)] = item
-            by_name[name.lower()] = item
             added += 1
         else:
             updated += 1
@@ -393,7 +401,7 @@ async def import_items(session: AsyncSession, location: Location, t: Table) -> d
         if price is not None:
             item.price_cents = max(0, price)
         cost = money(cell(row, m["cost"]))
-        if cost is not None:
+        if cost:  # Clover writes 0 when no cost was entered
             item.cost_cents = max(0, cost)
         cat = str(cell(row, m["category"]) or "").strip()
         if cat:
@@ -680,14 +688,20 @@ async def import_item_sales(session: AsyncSession, location: Location, t: Table,
         select(Item).where(Item.location_id == location.id))}
     totals: dict[str, list] = {}
     skipped = 0
+    current_cat = None  # Clover lists each category's subtotal, then its items below it with the category blank
     for row in t.rows:
-        name = str(cell(row, m["name"]) or "").strip()
+        name = str(cell(row, m["name"]) or "").strip().strip('"').strip()
+        cat_cell = str(cell(row, m["category"]) or "").strip() if m["category"] != m["name"] else ""
+        if not name:
+            if cat_cell and _norm(cat_cell) not in ("total", "totals", "grandtotal"):
+                current_cat = cat_cell  # a category's subtotal row
+            continue  # subtotals, modifier rows and blank lines aren't items
         qty = number(cell(row, m["qty"]))
-        if not name or qty is None or _norm(name) in ("total", "totals", "grandtotal", "subtotal"):
+        if qty is None or _norm(name) in ("total", "totals", "grandtotal", "subtotal"):
             skipped += 1
             continue
         cents = money(cell(row, m["revenue"])) or 0
-        cat = str(cell(row, m["category"]) or "").strip() or categories.get(name.lower())
+        cat = cat_cell or current_cat or categories.get(name.lower())
         cur = totals.setdefault(name[:300], [cat, 0.0, 0])
         cur[1] += qty
         cur[2] += cents
