@@ -34,9 +34,9 @@ export function Dialog({ title, onClose, children, footer, narrow = false, width
 }
 
 /** Add a menu item, or change one. With Clover connected it's saved in Clover too. */
-export function ItemDialog({ locationId, item, categories, pos, onDone, onClose }: {
+export function ItemDialog({ locationId, item, categories, pos, onDone, onClose, onDelete }: {
   locationId: string; item: InventoryItem | null; categories: string[]; pos: string | null;
-  onDone: (message: string) => void; onClose: () => void;
+  onDone: (message: string) => void; onClose: () => void; onDelete?: (item: InventoryItem) => void;
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [price, setPrice] = useState(item ? (item.price_cents / 100).toFixed(2) : "");
@@ -70,7 +70,9 @@ export function ItemDialog({ locationId, item, categories, pos, onDone, onClose 
 
   return (
     <Dialog title={item ? `Edit ${item.name}` : "Add an item"} onClose={onClose} narrow
-      footer={<div className="row" style={{ marginLeft: "auto" }}>
+      footer={<div className="row" style={{ width: "100%" }}>
+        {item && onDelete && <button className="btn danger" type="button" onClick={() => onDelete(item)}>Delete item</button>}
+        <span style={{ flex: 1 }} />
         <button className="btn" type="button" onClick={onClose}>Cancel</button>
         <button className="btn primary" form="item-form" disabled={busy}>{busy ? (inPos ? `Saving to ${where}…` : "Saving…") : "Save"}</button>
       </div>}>

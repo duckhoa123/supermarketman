@@ -862,3 +862,4 @@ button.sb-photo { cursor: pointer; }
 .import-totals { display: flex; flex-wrap: wrap; gap: 8px; }
 .import-totals > div { display: flex; flex-direction: column; padding: 8px 12px; border-radius: var(--radius-m); background: var(--surface); border: 1px solid var(--line); min-width: 110px; }
 .import-totals strong { font-size: 1.1rem; }
+table.data tr.picked td { background: var(--basil-tint); }

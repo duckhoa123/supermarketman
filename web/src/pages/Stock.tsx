@@ -14,7 +14,31 @@ export default function Stock() {
   const pos = useApi<{ pos: string | null }>(`/locations/${location.id}/pos-write`);
   const [editing, setEditing] = useState<InventoryItem | "new" | null>(null);
   const [notice, setNotice] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   const categories = Array.from(new Set((data?.items ?? []).map((i) => i.category).filter(Boolean) as string[])).sort();
+
+  async function remove(list: InventoryItem[]) {
+    if (!list.length) return;
+    const fromPos = pos.data?.pos ? list.filter((i) => i.provider === pos.data?.pos).length : 0;
+    const what = list.length === 1 ? `“${list[0].name}”` : `${list.length} items`;
+    const where = fromPos ? ` They're deleted in ${pos.data!.pos![0].toUpperCase()}${pos.data!.pos!.slice(1)} too.` : "";
+    if (!window.confirm(`Delete ${what}?${where} Past sales and deliveries keep their history. This can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      const r = await api<{ deleted: number; failed: { name: string; error: string }[] }>(
+        `/locations/${location.id}/items/delete`, { method: "POST", body: { ids: list.map((i) => i.id) } });
+      setNotice(`Deleted ${r.deleted} item${r.deleted === 1 ? "" : "s"}.`
+        + (r.failed.length ? ` Not deleted: ${r.failed.map((f) => f.name).join(", ")} (${r.failed[0].error})` : ""));
+      setPicked(new Set());
+      setEditing(null);
+      await reload();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Couldn't delete.");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function patch(item: InventoryItem, body: Record<string, unknown>) {
     await api(`/locations/${location.id}/items/${item.id}`, { method: "PATCH", body });
@@ -57,6 +81,12 @@ export default function Stock() {
             <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} />
             Low only
           </label>
+          {picked.size > 0 && (
+            <button className="btn danger" disabled={deleting}
+              onClick={() => void remove((data?.items ?? []).filter((i) => picked.has(i.id)))}>
+              {deleting ? "Deleting…" : `Delete ${picked.size} selected`}
+            </button>
+          )}
           <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>
         </div>
       </div>
@@ -64,7 +94,7 @@ export default function Stock() {
       {error && <p className="error">{error}</p>}
       {editing && (
         <ItemDialog locationId={location.id} item={editing === "new" ? null : editing} categories={categories}
-          pos={pos.data?.pos ?? null} onClose={() => setEditing(null)}
+          pos={pos.data?.pos ?? null} onClose={() => setEditing(null)} onDelete={(i) => void remove([i])}
           onDone={(m) => { setEditing(null); setNotice(m); void reload(); }} />
       )}
       {data && data.items_with_stock_tracking === 0 && (
@@ -78,6 +108,11 @@ export default function Stock() {
           <table className="data">
             <thead>
               <tr>
+                <th style={{ width: 32 }}>
+                  <input type="checkbox" aria-label="Select all items"
+                    checked={!!data.items.length && data.items.every((i) => picked.has(i.id))}
+                    onChange={(e) => setPicked(e.target.checked ? new Set(data.items.map((i) => i.id)) : new Set())} />
+                </th>
                 <th>Item</th>
                 <th>Category</th>
                 <th className="num">In stock</th>
@@ -89,7 +124,11 @@ export default function Stock() {
             </thead>
             <tbody>
               {data.items.map((i) => (
-                <tr key={i.id}>
+                <tr key={i.id} className={picked.has(i.id) ? "picked" : ""}>
+                  <td>
+                    <input type="checkbox" aria-label={`Select ${i.name}`} checked={picked.has(i.id)}
+                      onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(i.id); else n.delete(i.id); return n; })} />
+                  </td>
                   <td>{i.name}{i.provider === "clover" && <span className="pill" style={{ marginLeft: 6 }}>Clover</span>}</td>
                   <td className="muted">{i.category ?? "–"}</td>
                   <td className="num">

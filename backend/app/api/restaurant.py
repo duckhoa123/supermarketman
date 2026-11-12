@@ -53,7 +53,7 @@ async def get_top_items(period: str = "last_7_days", sort_by: str = "revenue", l
 @router.get("/inventory")
 async def get_inventory(low_stock_only: bool = False, search: str | None = None,
                         location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
-    return await analytics.inventory(session, location, low_stock_only, search, limit=50)
+    return await analytics.inventory(session, location, low_stock_only, search, limit=1000)
 
 
 class ItemPatch(BaseModel):
@@ -136,6 +136,17 @@ async def edit_item(item_id: str, body: ItemEdit, location: Location = Depends(r
     except pos_write.PosError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"ok": True}
+
+
+class DeleteItemsIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/items/delete")
+async def delete_items(body: DeleteItemsIn, location: Location = Depends(require_manager),
+                       session: AsyncSession = Depends(get_session)):
+    """Delete items from Pass (and from Clover too, when Clover is connected and the item came from it)."""
+    return await pos_write.delete_items(session, location, body.ids)
 
 
 class PosLineIn(BaseModel):

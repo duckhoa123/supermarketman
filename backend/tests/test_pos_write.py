@@ -99,6 +99,11 @@ class FakeClover:
     async def update_item(self, token, mid, item_id, **kw):
         self.calls.append(("update_item", item_id, kw))
 
+    async def delete_item(self, token, mid, item_id):
+        if self.fail:
+            raise POSWriteError(self.fail)
+        self.calls.append(("delete_item", item_id))
+
     async def create_order(self, token, mid, lines, *, title, note=None):
         if self.fail:
             raise POSWriteError(self.fail)
@@ -200,5 +205,41 @@ async def test_accepted_app_orders_are_sent_to_clover(session, demo_location_id)
         await handle_push_order_to_pos(session, {"customer_order_id": second.id})
         await session.refresh(second)
         assert second.pos_order_id is None and second.pos_error == "Clover said: nope"
+    finally:
+        set_adapter("clover", None)
+
+
+async def test_deleting_items(client, session, demo_location_id):
+    from app.integrations.pos.registry import set_adapter
+    from app.models import PurchaseOrder
+
+    base = f"/locations/{demo_location_id}"
+    stock = (await client.get(f"{base}/inventory", headers=OWNER)).json()["items"]
+    burrata = next(i for i in stock if i["name"] == "Burrata & Tomato")
+    tiramisu = next(i for i in stock if i["name"] == "Tiramisu")
+    await client.post(f"{base}/purchase-orders/draft", headers=OWNER)  # the demo's low items go into a draft
+    r = (await client.post(f"{base}/items/delete", headers=OWNER, json={"ids": [burrata["id"], "not-an-item"]})).json()
+    assert r == {"deleted": 1, "deleted_in_pos": 0, "failed": [], "pos": None}
+    names = [i["name"] for i in (await client.get(f"{base}/inventory", headers=OWNER)).json()["items"]]
+    assert "Burrata & Tomato" not in names and "Tiramisu" in names
+    drafts = list(await session.scalars(select(PurchaseOrder).where(PurchaseOrder.location_id == demo_location_id,
+                                                                     PurchaseOrder.status == "draft")))
+    assert all(ln["item_id"] != burrata["id"] for po in drafts for ln in po.lines)  # dropped from the draft order
+    assert (await client.post(f"{base}/items/delete", headers={"Authorization": "Bearer dev:intruder@example.com"},
+                              json={"ids": [tiramisu["id"]]})).status_code == 404
+
+    fake = FakeClover()
+    set_adapter("clover", fake)
+    try:
+        await _connect(session, demo_location_id)
+        new = (await client.post(f"{base}/items", headers=OWNER, json={"name": "Chicken", "price_cents": 1200})).json()
+        fake.fail = "Clover didn't allow Pass to make this change."
+        r = (await client.post(f"{base}/items/delete", headers=OWNER, json={"ids": [new["id"], tiramisu["id"]]})).json()
+        assert r["deleted"] == 1
+        assert r["failed"] == [{"name": "Chicken", "error": "Clover didn't allow Pass to make this change."}]
+        fake.fail = None
+        r = (await client.post(f"{base}/items/delete", headers=OWNER, json={"ids": [new["id"]]})).json()
+        assert r == {"deleted": 1, "deleted_in_pos": 1, "failed": [], "pos": "clover"}
+        assert ("delete_item", "CLV-NEW") in fake.calls
     finally:
         set_adapter("clover", None)

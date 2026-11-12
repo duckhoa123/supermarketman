@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.pos.base import OutLine, POSWriteError
 from app.integrations.pos.registry import get_adapter
-from app.models import CustomerOrder, Integration, Item, Location, Order, OrderLine, utcnow
+from app.models import CustomerOrder, Integration, Item, Location, Order, OrderLine, PurchaseOrder, utcnow
 from app.services.integration_store import access_token, pos_integration
 from app.services.sync import rebuild_rollups
 
@@ -161,3 +161,38 @@ async def push_customer_order(session: AsyncSession, order: CustomerOrder) -> di
     order.pos_order_id, order.pos_error = sent.external_id, None
     await session.commit()
     return {"ok": True, "pos_order_id": sent.external_id}
+
+
+async def delete_items(session: AsyncSession, location: Location, ids: list[str]) -> dict:
+    """Delete items. One from a connected POS is deleted there first (otherwise the next sync would bring it
+    back); if the POS refuses, it stays in both. Past sales and deliveries keep their history."""
+    items = list(await session.scalars(select(Item).where(Item.location_id == location.id, Item.id.in_(ids))))
+    integ = await _writable(session, location)
+    adapter = get_adapter(integ.provider) if integ is not None else None
+    token = await access_token(session, integ) if integ is not None else None
+    gone, in_pos, failed = [], 0, []
+    for item in items:
+        if integ is not None and item.provider == integ.provider and not item.external_id.startswith("import-"):
+            try:
+                await adapter.delete_item(token, integ.external_id, item.external_id)
+                in_pos += 1
+            except POSWriteError as exc:
+                failed.append({"name": item.name, "error": str(exc)})
+                continue
+        gone.append(item)
+    dead = {i.id for i in gone}
+    if dead:
+        for po in await session.scalars(select(PurchaseOrder).where(PurchaseOrder.location_id == location.id,
+                                                                     PurchaseOrder.status == "draft")):
+            kept = [ln for ln in po.lines or [] if not (isinstance(ln, dict) and ln.get("item_id") in dead)]
+            if len(kept) != len(po.lines or []):
+                if kept:
+                    po.lines, po.message = kept, None
+                else:
+                    await session.delete(po)
+        for item in gone:
+            await session.delete(item)
+    await session.commit()
+    return {"deleted": len(gone), "deleted_in_pos": in_pos, "failed": failed,
+            "pos": integ.provider if integ is not None else None}
+

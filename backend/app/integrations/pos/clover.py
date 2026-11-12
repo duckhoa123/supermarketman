@@ -182,6 +182,8 @@ class CloverAdapter:
             if resp.status_code == 429 and attempt < 3:
                 await asyncio.sleep(min(float(resp.headers.get("Retry-After", 2 ** (attempt + 1))), 10))
                 continue
+            if resp.status_code == 404 and method == "DELETE":
+                return {}  # already gone
             if resp.status_code in (401, 403):
                 # Not POSAuthError: reading may still work, so the connection stays as it is.
                 raise POSWriteError(PERMISSION_HELP.format(perm=perm))
@@ -255,3 +257,6 @@ class CloverAdapter:
         await self._send(access_token, f"/v3/merchants/{merchant_id}/orders/{oid}", {"total": total}, "Orders write")
         return oid
 
+    async def delete_item(self, access_token: str, merchant_id: str, item_id: str) -> None:
+        await self._send(access_token, f"/v3/merchants/{merchant_id}/items/{item_id}", None, "Inventory write",
+                         method="DELETE")
