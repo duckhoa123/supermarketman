@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import PosImport from "../components/PosImport";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
 import { api, type IntegrationRow } from "../lib/api";
@@ -238,6 +239,11 @@ export default function Settings() {
               );
             })}
           </ul>
+        </section>
+
+        <section className="panel">
+          <h2>Import from a Clover export</h2>
+          <PosImport locationId={location.id} />
         </section>
 
         {demo.data && demo.data.items + demo.data.orders > 0 && (

@@ -513,10 +513,11 @@ export type LogLine = {
 };
 
 /** Upload a file (multipart) to the API with the signed-in user's token. */
-export async function uploadFile<T>(path: string, file: Blob, name: string): Promise<T> {
+export async function uploadFile<T>(path: string, file: Blob, name: string, fields: Record<string, string> = {}): Promise<T> {
   const token = await getToken();
   const form = new FormData();
   form.append("file", file, name);
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},

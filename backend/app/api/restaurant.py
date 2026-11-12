@@ -1,6 +1,9 @@
 """Dashboard, inventory, orders, tables, reviews and alerts for one location."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import json
+from datetime import date
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +12,7 @@ from app.db import get_session
 from app.integrations.pos.base import POSAuthError
 from app.integrations.reviews.google import get_google_client
 from app.models import Alert, AlertRule, DiningTable, Item, Location, Review, utcnow
-from app.services import analytics, demo_data, pos_write
+from app.services import analytics, demo_data, pos_import, pos_write
 from app.services.integration_store import access_token, get_integration
 from app.tenancy import require_location, require_manager, require_owner
 
@@ -336,3 +339,47 @@ async def demo_data_counts(location: Location = Depends(require_location), sessi
 async def clear_demo_data(location: Location = Depends(require_owner), session: AsyncSession = Depends(get_session)):
     """Remove the demo menu items and sales, keeping everything from the POS."""
     return await demo_data.clear(session, location)
+
+
+# --- Importing POS export files (Clover's Items and Orders exports) ---------------------------------------------------
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    data = await file.read(pos_import.MAX_BYTES + 1)
+    if len(data) > pos_import.MAX_BYTES:
+        raise HTTPException(413, "Files must be under 15 MB: export a shorter date range")
+    return data
+
+
+KINDS = "^(items|orders|sales_report)$"
+
+
+@router.post("/imports/preview")
+async def import_preview(file: UploadFile = File(...), kind: str | None = Form(default=None, pattern=KINDS),
+                         location: Location = Depends(require_manager)):
+    """What's in an exported file, which column holds what (guessed), and the first rows, before importing."""
+    try:
+        return pos_import.preview(location, file.filename, await _read_upload(file), kind)
+    except pos_import.PosImportError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/imports")
+async def import_file(file: UploadFile = File(...), kind: str | None = Form(default=None, pattern=KINDS),
+                      mapping: str | None = Form(default=None, max_length=5000), day: str | None = Form(default=None),
+                      location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
+    """Import the file with the columns the owner confirmed in the preview."""
+    try:
+        cols = json.loads(mapping) if mapping else None
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "Bad column choices") from exc
+    if cols is not None and not isinstance(cols, dict):
+        raise HTTPException(422, "Bad column choices")
+    try:
+        on = date.fromisoformat(day) if day else None
+    except ValueError as exc:
+        raise HTTPException(422, "Pick a date") from exc
+    try:
+        return await pos_import.run(session, location, file.filename, await _read_upload(file), kind, cols, on)
+    except pos_import.PosImportError as exc:
+        raise HTTPException(422, str(exc)) from exc
