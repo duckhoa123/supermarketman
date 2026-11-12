@@ -351,7 +351,7 @@ async def _read_upload(file: UploadFile) -> bytes:
     return data
 
 
-KINDS = "^(items|orders|sales_report)$"
+KINDS = "^(items|orders|sales_report|item_sales)$"
 
 
 @router.post("/imports/preview")

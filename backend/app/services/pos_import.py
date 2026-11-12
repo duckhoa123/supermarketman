@@ -63,7 +63,15 @@ FIELDS: dict[str, dict[str, tuple[str, bool, list[str]]]] = {
                                              "line item total", "item sales"]),
     },
 }
-KIND_LABEL = {"items": "menu items", "orders": "orders"}
+FIELDS["item_sales"] = {
+    "name": ("Item", True, ["item name", "item", "name", "product", "product name", "menu item"]),
+    "qty": ("Quantity sold", True, ["quantity sold", "qty sold", "sold", "items sold", "# sold", "number sold",
+                                    "count", "quantity", "qty", "units sold", "sales count"]),
+    "revenue": ("Sales", False, ["net sales", "item net sales", "sales", "gross sales", "item gross sales",
+                                 "revenue", "net revenue", "amount", "total sales", "total", "item sales"]),
+    "category": ("Category", False, ["category", "categories", "category name", "item category", "revenue class"]),
+}
+KIND_LABEL = {"items": "menu items", "orders": "orders", "item_sales": "items sold"}
 
 
 class PosImportError(ValueError):
@@ -152,6 +160,8 @@ def _fits(kind: str, m: dict[str, int | None]) -> int:
     found = sum(1 for v in m.values() if v is not None)
     if kind == "items":
         ok = m["name"] is not None and m["price"] is not None
+    elif kind == "item_sales":
+        ok = m["name"] is not None and m["qty"] is not None and m["revenue"] is not None
     else:
         ok = m["date"] is not None and (m["total"] is not None or m["item_total"] is not None
                                        or m["item_price"] is not None)
@@ -165,18 +175,30 @@ def detect(sheets: list[tuple[str, list[list]]], kind: str | None = None) -> Tab
             columns = [str(c).strip() if c is not None else "" for c in rows[r]]
             if sum(1 for c in columns if c) < 2:
                 continue
-            for k in ([kind] if kind else ["orders", "items"]):
+            normed = {_norm(c) for c in columns}
+            sold_words = any("sold" in c for c in normed)
+            has_sales = bool(normed & {_norm(n) for n in FIELDS["item_sales"]["revenue"][2] if n != "total"})
+            for k in ([kind] if kind else ["orders", "item_sales", "items"]):
                 m = _guess(columns, k)
                 score = _fits(k, m)
                 # An orders file has dates; don't read a menu list with a "date added" column as orders.
                 if k == "items" and _guess(columns, "orders")["date"] is not None and kind is None:
                     score = min(score, 1)
+                if kind is None and k == "item_sales":
+                    # A sales summary per item: counts sold and money taken, no dates per row.
+                    if _guess(columns, "orders")["date"] is not None or not (sold_words or has_sales):
+                        score = 0
+                    elif score:
+                        score += 3
+                if kind is None and k == "items" and (sold_words or has_sales) and "price" not in normed:
+                    score = 0
                 if score and (best is None or score > best[0]):
                     body = [row for row in rows[r + 1:] if any(c not in (None, "") for c in row)]
                     best = (score, Table(k, sheet, r, columns, body, m))
     if best is None:
-        raise PosImportError("This doesn't look like an items or orders export: no row of column names with a name "
-                           "and price (items), or a date and total (orders), was found.")
+        raise PosImportError("This doesn't look like an items, orders or item sales export: no row of column names "
+                             "with a name and price (items), a date and total (orders), or an item, quantity sold "
+                             "and sales (item sales) was found.")
     return best[1]
 
 
@@ -281,6 +303,20 @@ def _sample(t: Table, tz: ZoneInfo, n: int = 8) -> list[dict]:
     return out
 
 
+def _title_dates(sheets: list[tuple[str, list[list]]], t: "Table") -> list[date]:
+    rows = next((r for name, r in sheets if name == t.sheet), [])
+    found = []
+    for r in rows[:t.header_row]:
+        text = " ".join(str(c) for c in r if c not in (None, ""))
+        if re.match(r"\s*requested", text, re.I):
+            continue
+        for d in DATE_TEXT.findall(text):
+            parsed = when(d, ZoneInfo("UTC"))
+            if parsed:
+                found.append(parsed.date())
+    return sorted(set(found))
+
+
 def preview(location: Location, name: str | None, data: bytes, kind: str | None = None) -> dict:
     sheets = read_sheets(name, data)
     rep = detect_report(sheets) if kind in (None, "sales_report") else None
@@ -296,7 +332,16 @@ def preview(location: Location, name: str | None, data: bytes, kind: str | None 
         warnings.append("No item column: sales totals are imported, but not which dishes sold.")
     if t.kind == "items" and t.mapping["external_id"] is None:
         warnings.append("No item id column: items are matched to existing ones by name.")
-    return {
+    extra = {}
+    if t.kind == "item_sales":
+        dates = _title_dates(sheets, t)
+        extra = {"day": dates[0].isoformat() if len(dates) == 1 else None, "needs_day": len(dates) != 1,
+                 "multi_day": len(dates) > 1}
+        warnings.append("Item sales are totals for a period: Pass records them on the day you choose. Export one "
+                        "day at a time to see each day's best sellers.")
+        if len(dates) > 1:
+            warnings.append("This file covers more than one day.")
+    return {**extra, 
         "kind": t.kind, "label": KIND_LABEL[t.kind], "sheet": t.sheet, "header_row": t.header_row + 1,
         "rows": len(t.rows), "columns": t.columns,
         "fields": [{"key": k, "label": label, "required": req} for k, (label, req, _) in FIELDS[t.kind].items()],
@@ -475,6 +520,12 @@ async def run(session: AsyncSession, location: Location, name: str | None, data:
             raise PosImportError("Choose which day this report is for")
         return await import_report(session, location, rep, day)
     t = _use_mapping(detect(sheets, None if kind == "sales_report" else kind), mapping)
+    if t.kind == "item_sales":
+        dates = _title_dates(sheets, t)
+        day = day or (dates[0] if len(dates) == 1 else None)
+        if day is None:
+            raise PosImportError("Choose which day these item sales are for")
+        return await import_item_sales(session, location, t, day)
     if t.kind == "items":
         return await import_items(session, location, t)
     return await import_orders(session, location, t)
@@ -607,3 +658,46 @@ async def import_report(session: AsyncSession, location: Location, rep: Report, 
     row.orders_count, row.guests, row.by_hour = t["orders"] or 0, 0, t["by_hour"]
     await session.commit()
     return {"kind": "sales_report", "day": day.isoformat(), "sales_cents": t["sales_cents"], "orders": t["orders"]}
+
+
+async def import_item_sales(session: AsyncSession, location: Location, t: Table, day: date) -> dict:
+    """How many of each item sold that day, and for how much (best sellers, prep list, forecasts)."""
+    from app.models import ItemSalesDaily
+
+    tz = ZoneInfo(location.timezone)
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    provider = await session.scalar(select(Order.provider).where(
+        Order.location_id == location.id, Order.opened_at >= start,
+        Order.opened_at < datetime.combine(day, time.max, tzinfo=tz)).limit(1))
+    if provider == "demo":
+        raise PosImportError(f"{day.isoformat()} still has the demo restaurant's sample sales. Remove the demo data "
+                             "(below, in Settings) first, then import this file again.")
+    if provider:
+        raise PosImportError(f"Pass already has single orders for {day.isoformat()}, which include what sold, so "
+                             "this file wasn't imported for that day.")
+    m = t.mapping
+    categories = {i.name.strip().lower(): i.category for i in await session.scalars(
+        select(Item).where(Item.location_id == location.id))}
+    totals: dict[str, list] = {}
+    skipped = 0
+    for row in t.rows:
+        name = str(cell(row, m["name"]) or "").strip()
+        qty = number(cell(row, m["qty"]))
+        if not name or qty is None or _norm(name) in ("total", "totals", "grandtotal", "subtotal"):
+            skipped += 1
+            continue
+        cents = money(cell(row, m["revenue"])) or 0
+        cat = str(cell(row, m["category"]) or "").strip() or categories.get(name.lower())
+        cur = totals.setdefault(name[:300], [cat, 0.0, 0])
+        cur[1] += qty
+        cur[2] += cents
+    for old in await session.scalars(select(ItemSalesDaily).where(ItemSalesDaily.location_id == location.id,
+                                                                  ItemSalesDaily.day == day)):
+        await session.delete(old)
+    await session.flush()
+    for name, (cat, qty, cents) in totals.items():
+        session.add(ItemSalesDaily(location_id=location.id, day=day, name=name, category=cat, qty=qty,
+                                   revenue_cents=cents))
+    await session.commit()
+    return {"kind": "item_sales", "day": day.isoformat(), "items": len(totals), "skipped": skipped,
+            "qty": sum(v[1] for v in totals.values()), "sales_cents": sum(v[2] for v in totals.values())}

@@ -184,3 +184,35 @@ async def test_clover_sales_report_fills_in_a_days_totals(client, session, demo_
     many = _sales_report("Nov 1, 2026 12:00 a.m. - Nov 10, 2026 11:59 p.m.")
     p = (await _post(client, demo_location_id, "/preview", "r.xlsx", many)).json()
     assert p["multi_day"] is True and any("one day at a time" in w for w in p["warnings"])
+
+
+ITEM_SALES = _xlsx({"Item Sales": [
+    ["Item Sales"], ["Nov 11, 2026 12:00 a.m. - Nov 11, 2026 11:59 p.m."],
+    ["Requested on: Wed, Nov 11, 2026, 8:50 p.m."], [],
+    ["Item", "Category", "Items sold", "Gross sales", "Discounts", "Refunds", "Net sales"],
+    ["Beef pho", "Noodles", 18, 342.0, 0, 0, 342.0],
+    ["Spring rolls", "Starters", 9, 81.0, -5.0, 0, 76.0],
+    ["Beef pho", "Noodles", 2, 38.0, 0, 0, 38.0],
+    ["Total", "", 29, 461.0, -5.0, 0, 456.0],
+]})
+
+
+async def test_item_sales_report_records_what_sold_that_day(client, session, demo_location_id):
+    p = (await _post(client, demo_location_id, "/preview", "Item sales.xlsx", ITEM_SALES)).json()
+    assert p["kind"] == "item_sales" and p["day"] == "2026-11-11" and p["needs_day"] is False
+    cols = p["columns"]
+    assert (cols[p["mapping"]["name"]], cols[p["mapping"]["qty"]], cols[p["mapping"]["revenue"]]) == (
+        "Item", "Items sold", "Net sales")
+    blocked = await _post(client, demo_location_id, "", "Item sales.xlsx", ITEM_SALES)
+    assert blocked.status_code == 422 and "demo data" in blocked.json()["detail"]
+    await client.post(f"/locations/{demo_location_id}/demo-data/clear", headers=OWNER)
+    r = (await _post(client, demo_location_id, "", "Item sales.xlsx", ITEM_SALES)).json()
+    assert r == {"kind": "item_sales", "day": "2026-11-11", "items": 2, "skipped": 1, "qty": 29, "sales_cents": 45600}
+    rows = {x.name: x for x in await session.scalars(select(ItemSalesDaily).where(
+        ItemSalesDaily.location_id == demo_location_id, ItemSalesDaily.day == date(2026, 11, 11)))}
+    assert (rows["Beef pho"].qty, rows["Beef pho"].revenue_cents, rows["Beef pho"].category) == (20, 38000, "Noodles")
+    again = (await _post(client, demo_location_id, "", "Item sales.xlsx", ITEM_SALES)).json()
+    assert again["items"] == 2  # replaces that day's figures, never adds to them
+    total = await session.scalar(select(func.sum(ItemSalesDaily.qty)).where(
+        ItemSalesDaily.location_id == demo_location_id, ItemSalesDaily.day == date(2026, 11, 11)))
+    assert total == 29

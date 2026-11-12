@@ -3,14 +3,14 @@ import { uploadFile } from "../lib/api";
 
 type Field = { key: string; label: string; required: boolean };
 type Preview = {
-  kind: "items" | "orders" | "sales_report"; label: string; sheet: string; rows: number; header_row?: number;
+  kind: "items" | "orders" | "sales_report" | "item_sales"; label: string; sheet: string; rows: number; header_row?: number;
   columns?: string[]; fields?: Field[]; mapping?: Record<string, number | null>; sample?: Record<string, string>[];
   warnings: string[];
   day?: string | null; needs_day?: boolean; multi_day?: boolean;
   totals?: { sales: number; tax: number; tips: number; orders: number | null; busiest_hour: string | null };
 };
 type Result = { kind: string; added?: number; updated?: number; skipped?: number; from?: string | null; to?: string | null;
-  day?: string; sales_cents?: number; orders?: number | null };
+  day?: string; sales_cents?: number; orders?: number | null; items?: number; qty?: number };
 
 const money = (cents: number) =>
   new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" }).format(cents / 100);
@@ -52,14 +52,15 @@ export default function PosImport({ locationId }: { locationId: string }) {
     setError("");
     try {
       const fields: Record<string, string> = { kind: preview.kind };
-      if (preview.kind === "sales_report") {
+      if (preview.kind === "sales_report" || preview.kind === "item_sales") {
         if (day) fields.day = day;
-      } else {
-        fields.mapping = JSON.stringify(mapping);
       }
+      if (preview.kind !== "sales_report") fields.mapping = JSON.stringify(mapping);
       const r = await uploadFile<Result>(`/locations/${locationId}/imports`, file, file.name, fields);
       const line = r.kind === "sales_report"
         ? `${file.name}: sales for ${r.day} imported (${money(r.sales_cents ?? 0)}${r.orders ? `, ${r.orders} orders` : ""}).`
+        : r.kind === "item_sales"
+        ? `${file.name}: ${r.qty} sold across ${r.items} items on ${r.day} (${money(r.sales_cents ?? 0)}).`
         : `${file.name}: ${r.added} new and ${r.updated} updated ${r.kind === "items" ? "items" : "orders"}`
           + (r.kind === "orders" && r.from ? ` from ${r.from}${r.to && r.to !== r.from ? ` to ${r.to}` : ""}` : "")
           + (r.skipped ? `, ${r.skipped} rows skipped (no name or date)` : "") + ".";
@@ -87,6 +88,7 @@ export default function PosImport({ locationId }: { locationId: string }) {
           <li><strong>Menu items</strong>: in Clover, <em>Items → ⋮ → Export</em>.</li>
           <li><strong>Orders and what sold</strong>: <em>Sales activity → Orders</em>, choose the dates, then <em>Export</em>.</li>
           <li><strong>A day's sales totals</strong>: <em>Reports → Sales</em>, choose one day, then <em>Export</em>.</li>
+          <li><strong>Which dishes sold</strong>: <em>Reports → Item sales</em>, choose one day, then <em>Export</em>.</li>
         </ol>
       </div>
       <div className="row">
@@ -121,6 +123,13 @@ export default function PosImport({ locationId }: { locationId: string }) {
                 <input className="input" type="date" style={{ width: "auto" }} value={day} onChange={(e) => setDay(e.target.value)} />
               </label>
             </>
+          )}
+
+          {preview.kind === "item_sales" && (
+            <label className="row small">
+              Which day are these sales for?
+              <input className="input" type="date" style={{ width: "auto" }} value={day} onChange={(e) => setDay(e.target.value)} />
+            </label>
           )}
 
           {preview.kind !== "sales_report" && preview.fields && preview.columns && (
@@ -158,8 +167,9 @@ export default function PosImport({ locationId }: { locationId: string }) {
           )}
 
           <button className="btn primary" style={{ alignSelf: "start" }}
-            disabled={busy || missing.length > 0 || (preview.kind === "sales_report" && !day)} onClick={() => void run()}>
+            disabled={busy || missing.length > 0 || ((preview.kind === "sales_report" || preview.kind === "item_sales") && !day)} onClick={() => void run()}>
             {busy ? "Importing…" : preview.kind === "sales_report" ? `Import sales${day ? ` for ${day}` : ""}`
+              : preview.kind === "item_sales" ? `Import item sales${day ? ` for ${day}` : ""}`
               : `Import ${preview.rows} ${preview.label}`}
           </button>
           {missing.length > 0 && <p className="small error" style={{ margin: 0 }}>Choose a column for: {missing.map((f) => f.label).join(", ")}.</p>}
