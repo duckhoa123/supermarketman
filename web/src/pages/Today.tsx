@@ -124,7 +124,7 @@ export default function Today() {
             <section className="panel">
               <div className="spread" style={{ marginBottom: 12 }}>
                 <h2 style={{ margin: 0 }}>Running low</h2>
-                <Link to="/stock" className="small">
+                <Link to="/inventory" className="small">
                   All stock
                 </Link>
               </div>

@@ -4,7 +4,8 @@ import { useApi } from "../hooks";
 import { ItemDialog } from "../components/PosDialogs";
 import { api, type InventoryItem, type Supplier } from "../lib/api";
 
-export default function Stock() {
+/** Every item, as it is in the POS: add, edit and delete menu items (in Clover too, when it's connected). */
+export default function Stock({ embedded = false }: { embedded?: boolean }) {
   const { location } = useApp();
   const [lowOnly, setLowOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -64,11 +65,15 @@ export default function Stock() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Stock</h1>
-          <p>Levels come from your POS. Set an alert level, and a supplier to have the order drafted for you.</p>
-        </div>
+      <div className={embedded ? "spread inv-toolbar" : "page-head"}>
+        {embedded ? (
+          <p className="small muted">All your items as they are in your POS. Add, edit or delete menu items here.</p>
+        ) : (
+          <div>
+            <h1>Stock</h1>
+            <p>Levels come from your POS. Set an alert level, and a supplier to have the order drafted for you.</p>
+          </div>
+        )}
         <div className="row">
           <input
             className="input"

@@ -9,7 +9,8 @@ const NEW = "__new__";
 const NONE = "__none__";
 
 type Imported = { lines: number; stock_updates: { item: string; added: number; unit?: string | null }[];
-  created_items: string[]; alerted: boolean };
+  created_items: string[]; alerted: boolean;
+  issues: { description: string; issue: string; invoiced: number; received: number }[] };
 
 function Change({ line }: { line: DraftLine }) {
   if (line.kind !== "item") return null;
@@ -246,7 +247,10 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                 {imported.stock_updates.length > 0 && (
                   <span>Stock went up: {imported.stock_updates.map((s) => `${s.item} +${s.added}${s.unit ? ` ${s.unit}` : ""}`).join(", ")}.</span>
                 )}
-                {imported.created_items.length > 0 && <span>New stock items: {imported.created_items.join(", ")}. Find them on the Stock page.</span>}
+                {imported.created_items.length > 0 && <span>New stock items: {imported.created_items.join(", ")}. Find them under Inventory.</span>}
+                {imported.issues?.length > 0 && (
+                  <span>Flagged: {imported.issues.map((x) => `${x.description} (${x.issue}: ${x.received} of ${x.invoiced})`).join(", ")}. Ask the supplier for a credit.</span>
+                )}
                 {imported.alerted && <span>Price changes were flagged to your team.</span>}
               </div>
             )}
@@ -327,6 +331,25 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                                 <span>Stock units in each</span>
                                 <input className="input" type="number" min={0.001} step="any" disabled={!editable} value={l.pack_size}
                                   onChange={(e) => setLine(i, { pack_size: Number(e.target.value) || 1 })} />
+                              </label>
+                            )}
+                            <label className="inv-arrived"><span>What arrived</span>
+                              <select className={`select ${l.issue ? "has-issue" : ""}`} disabled={!editable} value={l.issue ?? ""}
+                                onChange={(e) => {
+                                  const issue = (e.target.value || null) as DraftLine["issue"];
+                                  setLine(i, { issue, received_qty: issue ? (issue === "wrong" ? 0 : l.received_qty ?? l.qty) : null });
+                                }}>
+                                <option value="">✓ All of it, fine</option>
+                                <option value="short">Short: less arrived</option>
+                                <option value="damaged">Damaged</option>
+                                <option value="wrong">Substituted / wrong item</option>
+                              </select>
+                            </label>
+                            {l.issue && (
+                              <label className="inv-pack" title="How many good ones you're keeping, in invoice units. Stock goes up by this.">
+                                <span>Good qty received</span>
+                                <input className="input" type="number" min={0} step="any" disabled={!editable} value={l.received_qty ?? l.qty}
+                                  onChange={(e) => setLine(i, { received_qty: Math.max(0, Number(e.target.value) || 0) })} />
                               </label>
                             )}
                           </div>

@@ -155,7 +155,7 @@ export async function streamFrom(
 
 // --- Shapes returned by the API (only the fields the UI uses) ---------------------------------
 
-export type Location = { id: string; name: string; timezone: string; currency: string };
+export type Location = { id: string; name: string; timezone: string; currency: string; role?: "owner" | "manager" | "staff" | null };
 export type Me = {
   id: string;
   email: string;
@@ -468,6 +468,8 @@ export type DraftLine = {
   pack_size: number;
   match: string | null;
   create_item?: boolean;
+  received_qty?: number | null;
+  issue?: "short" | "damaged" | "wrong" | null;
   last_price_cents?: number | null;
   last_received_on?: string | null;
   change_pct?: number | null;
@@ -495,6 +497,10 @@ export type InvoiceScan = {
 
 export type LogLine = {
   id: string;
+  received_qty?: number | null;
+  issue?: "short" | "damaged" | "wrong" | null;
+  credit_status?: "open" | "resolved" | null;
+  credit_cents?: number | null;
   received_on: string;
   supplier: string | null;
   invoice_number: string | null;

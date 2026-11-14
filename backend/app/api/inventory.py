@@ -120,7 +120,8 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
             "editable_name": i.provider in ("pass", "demo"), "price_cents": i.price_cents,
             "last_count": {"qty": last[0], "at": last[1].isoformat()} if last else None,
             "daily_usage": round(daily, 4) if daily else None,
-            "days_of_cover": round(i.stock_qty / daily, 1) if daily and i.stock_qty is not None else None,
+            "days_of_cover": (round(max(i.stock_qty, 0) / daily, 1)
+                              if daily and i.stock_qty is not None else None),
             "avg_cost": None, "value_cents": None,
         }
         if manager:
@@ -682,6 +683,7 @@ async def recipe_detail(session: AsyncSession, location: Location, menu: Item) -
                                          .order_by(PlateCostHistory.created_at.desc()).limit(20)))
     target = inv.target_for(menu, location)
     out = {"id": menu.id, "name": menu.name, "category": menu.category, "price_cents": menu.price_cents,
+           "provider": menu.provider,
            "is_prep": inv.is_prep(menu), "batch_qty": menu.batch_qty, "unit": menu.unit,
            "q_factor_cents": menu.q_factor_cents, "q_factor_pct": menu.q_factor_pct, "recipe_notes": menu.recipe_notes,
            "item_target_pct": menu.target_food_cost_pct,

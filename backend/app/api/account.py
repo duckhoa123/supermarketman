@@ -23,7 +23,7 @@ from app.models import (
     utcnow,
 )
 from app.services.fleet import driver_for_user
-from app.tenancy import user_locations
+from app.tenancy import user_locations, user_role
 
 router = APIRouter(tags=["account"])
 
@@ -33,6 +33,7 @@ class LocationOut(BaseModel):
     name: str
     timezone: str
     currency: str
+    role: str | None = None  # owner | manager | staff
 
 
 class MeOut(BaseModel):
@@ -64,7 +65,8 @@ async def me(user: AuthUser = Depends(current_user), session: AsyncSession = Dep
         agents.append({**profiles["driver"], "ready": True})
     return MeOut(
         id=row.id, email=row.email, name=row.name, phone=row.phone,
-        locations=[LocationOut(id=x.id, name=x.name, timezone=x.timezone, currency=x.currency) for x in locs],
+        locations=[LocationOut(id=x.id, name=x.name, timezone=x.timezone, currency=x.currency,
+                               role=await user_role(session, user.id, x)) for x in locs],
         demo_available=get_settings().demo_data_enabled,
         agents=agents,
         is_driver=driver is not None,

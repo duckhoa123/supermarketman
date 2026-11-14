@@ -192,7 +192,7 @@ export function NewOrderDialog({ locationId, pos, onDone, onClose }: {
                 <span className="small">{i.price}</span>
               </button>
             ))}
-            {items.length === 0 && <p className="small muted">No items found. Add them on the Stock page.</p>}
+            {items.length === 0 && <p className="small muted">No items found. Add them under Inventory → Menu items.</p>}
           </div>
           <div className="row" style={{ flexWrap: "nowrap" }}>
             <input className="input" style={{ flex: 2 }} placeholder="Custom item" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />

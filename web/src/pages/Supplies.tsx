@@ -3,11 +3,12 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import InvoiceReview from "../components/InvoiceReview";
 import { useApp } from "../context";
 import { PurchasingPanel } from "./supplies/Purchasing";
-import { Invoices, LogSheet, PriceChanges } from "./supplies/Receiving";
+import { Credits, Invoices, LogSheet, PriceChanges } from "./supplies/Receiving";
 
-type Tab = "orders" | "deliveries" | "log" | "prices";
+type Tab = "orders" | "deliveries" | "log" | "credits" | "prices";
 const TABS: [Tab, string][] = [
-  ["orders", "Suppliers & orders"], ["deliveries", "Deliveries"], ["log", "Log sheet"], ["prices", "Price changes"],
+  ["orders", "Suppliers & orders"], ["deliveries", "Deliveries"], ["log", "Log sheet"], ["credits", "Credits"],
+  ["prices", "Price changes"],
 ];
 
 /** Purchasing and receiving in one place: order from suppliers, check in what arrives (scan the invoice: stock goes
@@ -43,6 +44,7 @@ export default function Supplies() {
         </>
       )}
       {tab === "log" && <LogSheet locationId={location.id} />}
+      {tab === "credits" && <Credits locationId={location.id} />}
       {tab === "prices" && <PriceChanges locationId={location.id} />}
     </>
   );

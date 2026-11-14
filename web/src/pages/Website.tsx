@@ -525,7 +525,7 @@ export default function Website() {
                 <ZonePanel zone={panel} site={site} draft={draft} change={change} fieldCtx={fieldCtx} />
               )}
               {panel === "menupage" && (
-                <MenuPagePanel site={site} draft={draft} change={change} fieldCtx={fieldCtx} onStock={() => navigate("/stock")} />
+                <MenuPagePanel site={site} draft={draft} change={change} fieldCtx={fieldCtx} onStock={() => navigate("/inventory")} />
               )}
             </Flyout>
           )}

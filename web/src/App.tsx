@@ -26,7 +26,7 @@ import Plan from "./pages/Plan";
 import Reviews from "./pages/Reviews";
 import Settings from "./pages/Settings";
 import Supplies, { OldSuppliesLink } from "./pages/Supplies";
-import Stock from "./pages/Stock";
+import Inventory, { OldStockLink } from "./pages/Inventory";
 import Tables from "./pages/Tables";
 import Today from "./pages/Today";
 import Updates from "./pages/Updates";
@@ -212,7 +212,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/plan", label: "Plan" },
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
-    { to: "/stock", label: "Stock" },
+    { to: "/inventory", label: "Inventory" },
     { to: "/supplies", label: "Supplies" },
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
@@ -243,7 +243,8 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
       <Route path="/plan" element={<Plan />} />
       <Route path="/app-orders" element={<AppOrders />} />
       <Route path="/bookings" element={<Bookings />} />
-      <Route path="/stock" element={<Stock />} />
+      <Route path="/inventory" element={<Inventory />} />
+      <Route path="/stock" element={<OldStockLink />} />
       <Route path="/supplies" element={<Supplies />} />
       <Route path="/receiving" element={<OldSuppliesLink from="receiving" />} />
       <Route path="/purchasing" element={<OldSuppliesLink from="purchasing" />} />
