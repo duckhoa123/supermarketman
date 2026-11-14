@@ -110,7 +110,7 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
         <table className="data inv-table">
           <thead>
             <tr>
-              <th>Item</th><th>Area</th><th className="num">Quantity</th><th className="num">Par · reorder at</th>
+              <th>Item</th><th>Area</th><th className="num">On hand</th><th className="num">Par · reorder at</th>
               <th>Last count</th><th className="num">Cover</th>
               {manage && <><th className="num">Cost</th><th className="num">Value</th></>}
               {manage && <th />}
@@ -135,7 +135,7 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
                     </select>
                   ) : (() => { const a = data.areas.find((x) => x.id === i.storage_area_id); return <span className="muted">{a ? `${areaIcon(a.name)} ${a.name}` : "–"}</span>; })()}
                 </td>
-                <td data-label="Quantity" className="num">
+                <td data-label="On hand" className="num">
                   {i.stock_qty == null ? <span className="muted">{i.is_prep ? "made to order" : "not counted"}</span> : (
                     <>
                       <strong>{qty(i.stock_qty)}</strong> <span className="muted">{i.unit ?? ""}</span>
@@ -237,7 +237,7 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     try {
       if (!item) {
         if (!f.name.trim()) throw new Error("Give the item a name.");
-        if (f.quantity.trim() && (qtyN == null || qtyN < 0)) throw new Error("Quantity must be a number.");
+        if (f.quantity.trim() && (qtyN == null || qtyN < 0)) throw new Error("On hand must be a number.");
         await api(`${base}/inventory/items`, { method: "POST", body: {
           ...common, name: f.name.trim(), unit_cost: f.prep ? null : costCents, qty: qtyN, batch_qty: f.prep ? batchN : null } });
         onDone(`${f.name.trim()} added to inventory.${f.prep ? " Add its recipe on the Recipes tab." : ""}`);
@@ -307,18 +307,18 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
               {unitSelect}
             </div>, "Its cost comes from its recipe, so it follows ingredient prices by itself.")
             : (
-              <div className="inv-form-row">
+              <>
                 {field("Cost", <div className="inv-amount">
                   <span className="inv-cur">$</span>
                   <input className="input" inputMode="decimal" value={f.cost} onChange={(e) => set({ cost: e.target.value })} placeholder="12.00" />
                   <span className="muted">/</span>
                   {unitSelect}
                 </div>, item ? `Updates itself from each delivery (${data.cost_method === "last" ? "latest price" : "weighted average"}). Change it only to correct it.` : undefined)}
-                {!item && field("Quantity", <div className="inv-amount">
+                {!item && field("On hand", <div className="inv-amount">
                   <input className="input" inputMode="decimal" value={f.quantity} onChange={(e) => set({ quantity: e.target.value })} placeholder="0" />
                   <span className="muted inv-unit-label">{unitShown}</span>
                 </div>)}
-              </div>
+              </>
             )}
           {field("Barcode", <input className="input" value={f.barcode} onChange={(e) => set({ barcode: e.target.value })} placeholder="Scan or type (optional)" />)}
         </section>
