@@ -218,3 +218,17 @@ export function loadDraft<T>(key: string): T | null {
 export function saveDraft(key: string, value: unknown) {
   try { if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
+
+/** A small picture for a storage area, from its name, so areas are easy to tell apart at a glance. */
+export function areaIcon(name: string | null | undefined): string {
+  const n = (name ?? "").toLowerCase();
+  if (/freez/.test(n)) return "❄️";
+  if (/walk|cool|fridge|chill|refrig/.test(n)) return "🧊";
+  if (/bar|wine|cellar|beer|bev|liquor|drink/.test(n)) return "🍷";
+  if (/dry|pantry|shelf|store|storage|stock/.test(n)) return "📦";
+  if (/line|kitchen|prep|pass|cook/.test(n)) return "🔪";
+  if (/bak|pastry|bread/.test(n)) return "🥖";
+  if (/clean|chem|janit/.test(n)) return "🧽";
+  if (/pack|dispos|takeaway|to-go/.test(n)) return "🥡";
+  return "📍";
+}

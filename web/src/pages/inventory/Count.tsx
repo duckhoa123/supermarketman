@@ -5,7 +5,7 @@ import { useApp } from "../../context";
 import { useApi } from "../../hooks";
 import { api } from "../../lib/api";
 import {
-  draftKey, loadDraft, money, newClientId, qty, saveDraft, sendOrQueue, type Count, type OnHand, type StockItem,
+  areaIcon, draftKey, loadDraft, money, newClientId, qty, saveDraft, sendOrQueue, type Count, type OnHand, type StockItem,
 } from "../../lib/inventory";
 
 const EVERYTHING = "__all__";
@@ -41,7 +41,12 @@ export default function CountPanel() {
 
   if (onHand.error) return <p className="error">{onHand.error}</p>;
   if (!data) return <p className="muted">Loading…</p>;
-  const areaName = (a: string) => a === EVERYTHING ? "Everything" : a === NO_AREA ? "No area" : data.areas.find((x) => x.id === a)?.name ?? "Area";
+  const areaName = (a: string) => {
+    if (a === EVERYTHING) return "Everything";
+    if (a === NO_AREA) return "No area";
+    const found = data.areas.find((x) => x.id === a);
+    return found ? `${areaIcon(found.name)} ${found.name}` : "Area";
+  };
   const waiting = (history.data?.counts ?? []).filter((c) => c.status === "submitted");
 
   if (draft) {
@@ -81,7 +86,7 @@ export default function CountPanel() {
         <div className="inv-count-areas">
           {data.areas.map((a) => (
             <button key={a.id} className="inv-count-area" onClick={() => start(a.id)} disabled={!inArea(a.id).length}>
-              <strong>{a.name}</strong><span className="small muted">{inArea(a.id).length} items</span>
+              <strong><span aria-hidden>{areaIcon(a.name)}</span> {a.name}</strong><span className="small muted">{inArea(a.id).length} items</span>
             </button>
           ))}
           {data.areas.length > 0 && inArea(NO_AREA).length > 0 && (
@@ -91,7 +96,7 @@ export default function CountPanel() {
             <strong>Everything</strong><span className="small muted">{countable.length} items · full count</span>
           </button>
         </div>
-        {!countable.length && <p className="small muted">Nothing to count yet: add items on the On hand tab.</p>}
+        {!countable.length && <p className="small muted">Nothing to count yet: add items on the Inventory items tab.</p>}
       </div>
 
       <div className="panel">

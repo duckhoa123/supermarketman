@@ -148,7 +148,7 @@ export default function Recipes() {
       <div className="panel stack">
         <div>
           <h2 style={{ margin: 0 }}>Prep items</h2>
-          <p className="small muted">Sauces, doughs, stocks: made in batches and used in other recipes. Add one on the On hand tab (tick “a prep item”).</p>
+          <p className="small muted">Sauces, doughs, stocks: made in batches and used in other recipes. Add one on the Inventory items tab (tick “a prep item”).</p>
         </div>
         {d.prep.length === 0 ? <p className="small muted">No prep items yet.</p> : (
           <div className="table-wrap">

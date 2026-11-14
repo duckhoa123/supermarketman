@@ -12,13 +12,13 @@ import WastePanel from "./inventory/Waste";
 
 type Tab = "onhand" | "count" | "waste" | "recipes" | "cost" | "ledger" | "menu";
 const TABS: [Tab, string][] = [
-  ["onhand", "On hand"], ["count", "Count"], ["waste", "Waste"], ["recipes", "Recipes"], ["cost", "Food cost"],
-  ["ledger", "Ledger"], ["menu", "Menu items"],
+  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["recipes", "Recipes"], ["cost", "Food cost"],
+  ["ledger", "History"], ["menu", "Menu items"],
 ];
 const STAFF_TABS: Tab[] = ["onhand", "count", "waste"];  // staff count and log waste; costs are for managers
 
 /** What's in stock and what it's worth, counts and waste (made for a phone in the walk-in, working offline),
- * recipes and plate costs, COGS and food cost %, and the ledger of every change. */
+ * recipes and plate costs, COGS and food cost %, and the history of every change. */
 export default function Inventory() {
   const { location } = useApp();
   const [params, setParams] = useSearchParams();

@@ -978,3 +978,11 @@ tr.inv-big td { background: var(--tomato-tint); }
   .inv-settings { gap: 10px; }
 }
 .nowrap { white-space: nowrap; }
+.inv-group { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.inv-group h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+.inv-amount { display: flex; align-items: center; gap: 6px; }
+.inv-amount .input { flex: 1; min-width: 0; }
+.inv-amount .inv-unit { width: auto; min-width: 84px; flex: 0 0 auto; }
+.inv-cur { color: var(--muted); font-weight: 600; }
+.inv-unit-label { min-width: 32px; }
+.inv-area-icon { width: 22px; text-align: center; }

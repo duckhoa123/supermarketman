@@ -3,9 +3,9 @@ import { useSearchParams } from "react-router-dom";
 import { Dialog } from "../../components/PosDialogs";
 import { useApp } from "../../context";
 import { useApi } from "../../hooks";
-import { api, type InventoryItem, type Supplier } from "../../lib/api";
+import { api, type Supplier } from "../../lib/api";
 import {
-  money, normUnit, qty, STATUS_LABEL, STATUS_PILL, unitCost, type Area, type Conversion, type OnHand, type StockItem,
+  areaIcon, money, normUnit, qty, STATUS_LABEL, STATUS_PILL, unitCost, type Area, type OnHand, type StockItem,
 } from "../../lib/inventory";
 
 const NO_AREA = "__none__";
@@ -91,7 +91,7 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
         <div className="chips" role="group" aria-label="Storage area">
           <button className={!area ? "chip on" : "chip"} onClick={() => setArea("")}>All <b>{data.items.length}</b></button>
           {data.areas.map((a) => (
-            <button key={a.id} className={area === a.id ? "chip on" : "chip"} onClick={() => setArea(a.id)}>{a.name} <b>{a.items}</b></button>
+            <button key={a.id} className={area === a.id ? "chip on" : "chip"} onClick={() => setArea(a.id)}><span aria-hidden>{areaIcon(a.name)}</span> {a.name} <b>{a.items}</b></button>
           ))}
           {data.areas.length > 0 && data.unassigned > 0 && (
             <button className={area === NO_AREA ? "chip on" : "chip"} onClick={() => setArea(NO_AREA)}>No area <b>{data.unassigned}</b></button>
@@ -110,7 +110,7 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
         <table className="data inv-table">
           <thead>
             <tr>
-              <th>Item</th><th>Area</th><th className="num">On hand</th><th className="num">Par · reorder at</th>
+              <th>Item</th><th>Area</th><th className="num">Quantity</th><th className="num">Par · reorder at</th>
               <th>Last count</th><th className="num">Cover</th>
               {manage && <><th className="num">Cost</th><th className="num">Value</th></>}
               {manage && <th />}
@@ -131,11 +131,11 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
                     <select className="select inv-area" aria-label={`Area for ${i.name}`} value={i.storage_area_id ?? ""}
                       onChange={(e) => void setItemArea(i, e.target.value)}>
                       <option value="">No area</option>
-                      {data.areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      {data.areas.map((a) => <option key={a.id} value={a.id}>{areaIcon(a.name)} {a.name}</option>)}
                     </select>
-                  ) : <span className="muted">{data.areas.find((a) => a.id === i.storage_area_id)?.name ?? "–"}</span>}
+                  ) : (() => { const a = data.areas.find((x) => x.id === i.storage_area_id); return <span className="muted">{a ? `${areaIcon(a.name)} ${a.name}` : "–"}</span>; })()}
                 </td>
-                <td data-label="On hand" className="num">
+                <td data-label="Quantity" className="num">
                   {i.stock_qty == null ? <span className="muted">{i.is_prep ? "made to order" : "not counted"}</span> : (
                     <>
                       <strong>{qty(i.stock_qty)}</strong> <span className="muted">{i.unit ?? ""}</span>
@@ -190,30 +190,28 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
   );
 }
 
-/** Add an ingredient, supply or prep item (or start counting an item already in Pass), or change one. */
+/** Add an ingredient, supply or prep item, or change one. Grouped: details, par, yield, supplier. */
 function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, onDone }: {
   base: string; item: StockItem | null; data: OnHand; suppliers: Supplier[]; defaultArea: string | null;
   onClose: () => void; onDone: (message: string) => void;
 }) {
-  const [mode, setMode] = useState<"new" | "existing">("new");
-  const others = useApi<{ items: InventoryItem[] }>(item ? null : `${base}/inventory?limit=1000`);
-  const [existingId, setExistingId] = useState("");
   const [f, setF] = useState({
-    name: item?.name ?? "", unit: item?.unit ?? "", category: item?.category ?? "", areaId: item?.storage_area_id ?? defaultArea ?? "",
+    name: item?.name ?? "", unit: normUnit(item?.unit) || "", category: item?.category ?? "",
+    areaId: item?.storage_area_id ?? defaultArea ?? "",
     cost: item?.avg_cost != null && !item.is_prep ? (item.avg_cost / 100).toFixed(item.avg_cost < 100 ? 4 : 2) : "",
-    onHand: "", par: item?.par_level != null ? String(item.par_level) : "", reorderAt: item?.reorder_point != null ? String(item.reorder_point) : "",
+    quantity: "", par: item?.par_level != null ? String(item.par_level) : "", reorderAt: item?.reorder_point != null ? String(item.reorder_point) : "",
     orderQty: item?.reorder_qty != null ? String(item.reorder_qty) : "", supplierId: item?.supplier_id ?? "", barcode: item?.barcode ?? "",
     yieldPct: item?.default_yield_pct != null ? String(item.default_yield_pct) : "",
     prep: item?.is_prep ?? false, batch: item?.batch_qty != null ? String(item.batch_qty) : "",
   });
-  const [conversions, setConversions] = useState<Conversion[]>(item?.conversions ?? []);
   const [yieldTest, setYieldTest] = useState<{ ap: string; ep: string; cooked: string } | null>(null);
   const [adjust, setAdjust] = useState({ mode: "set" as "set" | "add", amount: "", reason: "correction", note: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (patch: Partial<typeof f>) => setF((x) => ({ ...x, ...patch }));
-  const untracked = (others.data?.items ?? []).filter((i) => i.stock_qty == null);
-  const unitShown = normUnit(f.unit) || "unit";
+  const unitShown = f.unit || "unit";
+  const units = Array.from(new Set([...(f.unit ? [f.unit] : []), ...data.units]));
+  const inArea = !!defaultArea && f.areaId === defaultArea;  // already filtered to an area: no need to ask
 
   const ap = num(yieldTest?.ap ?? ""), ep = num(yieldTest?.ep ?? ""), cooked = num(yieldTest?.cooked ?? "");
   const tested = ap && ap > 0 ? Math.round((((cooked ?? ep) ?? 0) / ap) * 1000) / 10 : null;
@@ -222,44 +220,39 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     e.preventDefault();
     setError("");
     const costCents = dollarsToCents(f.cost);
-    if (f.cost.trim() && costCents == null) return setError("Enter the cost like 4.25.");
-    const parN = num(f.par), rpN = num(f.reorderAt), orderN = num(f.orderQty), qtyN = num(f.onHand);
+    if (f.cost.trim() && costCents == null) return setError("Enter the cost like 12.00.");
+    const parN = num(f.par), rpN = num(f.reorderAt), orderN = num(f.orderQty), qtyN = num(f.quantity);
     const yieldN = num(f.yieldPct), batchN = num(f.batch);
     if ([[f.par, parN], [f.reorderAt, rpN], [f.orderQty, orderN]].some(([t, n]) => (t as string).trim() && (n == null || (n as number) < 0))) {
       return setError("Par, reorder point and order amount must be numbers.");
     }
     if (f.yieldPct.trim() && (yieldN == null || yieldN < 1 || yieldN > 100)) return setError("Yield is a % between 1 and 100.");
     if (f.prep && (batchN == null || batchN <= 0)) return setError("Say how much one batch makes.");
-    const convs = conversions.filter((c) => c.unit && c.to_unit && c.qty > 0 && c.to_qty > 0);
     const common = {
-      unit: f.unit.trim() || null, category: f.category.trim() || null, storage_area_id: f.areaId || null,
+      unit: f.unit || null, category: f.category.trim() || null, storage_area_id: f.areaId || null,
       par_level: parN, reorder_point: rpN, reorder_qty: orderN, supplier_id: f.supplierId || null,
-      barcode: f.barcode.trim() || null, default_yield_pct: yieldN, conversions: convs,
+      barcode: f.barcode.trim() || null, default_yield_pct: yieldN,
     };
     setBusy(true);
     try {
-      if (!item && mode === "new") {
+      if (!item) {
         if (!f.name.trim()) throw new Error("Give the item a name.");
-        if (f.onHand.trim() && (qtyN == null || qtyN < 0)) throw new Error("On hand must be a number.");
+        if (f.quantity.trim() && (qtyN == null || qtyN < 0)) throw new Error("Quantity must be a number.");
         await api(`${base}/inventory/items`, { method: "POST", body: {
           ...common, name: f.name.trim(), unit_cost: f.prep ? null : costCents, qty: qtyN, batch_qty: f.prep ? batchN : null } });
         onDone(`${f.name.trim()} added to inventory.${f.prep ? " Add its recipe on the Recipes tab." : ""}`);
         return;
       }
-      const id = item?.id ?? existingId;
-      if (!id) throw new Error("Choose the item to start counting.");
-      await api(`${base}/inventory/items/${id}`, { method: "PUT", body: {
-        ...common, ...(item?.editable_name && f.name.trim() !== item.name ? { name: f.name.trim() } : {}),
-        ...(costCents != null && !f.prep ? { unit_cost: costCents } : {}), batch_qty: f.prep ? batchN : 0,
-        ...(!item ? { track: true } : {}) } });
-      const amountText = item ? adjust.amount : f.onHand;
-      const amount = num(amountText);
-      if (amount != null && amountText.trim()) {
-        await api(`${base}/stock-adjustments`, { method: "POST", body: item && adjust.mode === "add"
-          ? { item_id: id, qty_delta: amount, reason: adjust.reason, note: adjust.note || null }
-          : { item_id: id, set_to: amount, reason: item ? adjust.reason : "opening", note: item ? adjust.note || null : "Started counting" } });
+      await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: {
+        ...common, ...(item.editable_name && f.name.trim() !== item.name ? { name: f.name.trim() } : {}),
+        ...(costCents != null && !f.prep ? { unit_cost: costCents } : {}), batch_qty: f.prep ? batchN : 0 } });
+      const amount = num(adjust.amount);
+      if (amount != null && adjust.amount.trim()) {
+        await api(`${base}/stock-adjustments`, { method: "POST", body: adjust.mode === "add"
+          ? { item_id: item.id, qty_delta: amount, reason: adjust.reason, note: adjust.note || null }
+          : { item_id: item.id, set_to: amount, reason: adjust.reason, note: adjust.note || null } });
       }
-      onDone(item ? `${item.name} saved.` : "Now counting that item.");
+      onDone(`${item.name} saved.`);
     } catch (x) {
       setError(x instanceof Error ? x.message : "Couldn't save.");
       setBusy(false);
@@ -267,7 +260,7 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
   }
 
   async function stopCounting() {
-    if (!item || !window.confirm(`Stop counting ${item.name}? Its history stays in the ledger.`)) return;
+    if (!item || !window.confirm(`Stop counting ${item.name}? Its past changes stay in History.`)) return;
     await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { track: false } });
     onDone(`${item.name} is no longer counted.`);
   }
@@ -275,8 +268,14 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
   const field = (label: string, input: React.ReactNode, hint?: string) => (
     <label className="stack" style={{ gap: 4, flex: 1, minWidth: 0 }}><span className="small">{label}</span>{input}{hint && <small className="muted">{hint}</small>}</label>
   );
+  const unitSelect = (
+    <select className="select inv-unit" aria-label="Counted in" value={f.unit} onChange={(e) => set({ unit: e.target.value })}>
+      <option value="">unit…</option>
+      {units.map((u) => <option key={u} value={u}>{u}</option>)}
+    </select>
+  );
   return (
-    <Dialog title={item ? `Edit ${item.name}` : "Add to inventory"} onClose={onClose} width="min(560px, 100%)"
+    <Dialog title={item ? `Edit ${item.name}` : "Add an inventory item"} onClose={onClose} width="min(560px, 100%)"
       footer={<div className="row" style={{ width: "100%" }}>
         {item && item.stock_qty != null && <button type="button" className="btn danger" onClick={() => void stopCounting()}>Stop counting</button>}
         <span style={{ flex: 1 }} />
@@ -284,73 +283,63 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
         <button className="btn primary" form="stock-item-form" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
       </div>}>
       <form id="stock-item-form" className="stack" onSubmit={save}>
-        {!item && (
-          <div className="seg" role="tablist">
-            <button type="button" className={mode === "new" ? "on" : ""} onClick={() => setMode("new")}>A new ingredient</button>
-            <button type="button" className={mode === "existing" ? "on" : ""} onClick={() => setMode("existing")}>An item already in Pass</button>
-          </div>
-        )}
-        {!item && mode === "existing" ? field("Item",
-          <select className="select" value={existingId} onChange={(e) => {
-            setExistingId(e.target.value);
-            const it = untracked.find((u) => u.id === e.target.value);
-            if (it) set({ unit: it.unit ?? "", supplierId: it.supplier_id ?? "", category: it.category ?? "" });
-          }}>
-            <option value="">Choose…</option>
-            {untracked.map((u) => <option key={u.id} value={u.id}>{u.name}{u.category ? ` (${u.category})` : ""}</option>)}
-          </select>, "Bottled drinks and other things you sell as they come.")
-          : field("Name",
+        <section className="inv-group">
+          <h3>Details</h3>
+          {field("Name",
             <input className="input" value={f.name} maxLength={300} autoFocus={!item} disabled={!!item && !item.editable_name}
-              onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Chicken breast, boneless" />,
+              onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Salmon fillet" />,
             item && !item.editable_name ? "From your POS: rename it on the Menu items tab." : undefined)}
-        <div className="inv-form-row">
-          {field("Category", <><input className="input" list="inv-cats" value={f.category} onChange={(e) => set({ category: e.target.value })} placeholder="Produce, Protein…" />
-            <datalist id="inv-cats">{data.categories.map((c) => <option key={c} value={c} />)}</datalist></>)}
-          {field("Kept in", <select className="select" value={f.areaId} onChange={(e) => set({ areaId: e.target.value })}>
-            <option value="">No area</option>
-            {data.areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>)}
-        </div>
-        <div className="inv-form-row">
-          {field("Counted in", <><input className="input" list="inv-units" value={f.unit} onChange={(e) => set({ unit: e.target.value })} placeholder="lb, kg, l, each, bottle…" />
-            <datalist id="inv-units">{data.units.map((u) => <option key={u} value={u} />)}</datalist></>)}
+          <div className="inv-form-row">
+            {field("Category", <><input className="input" list="inv-cats" value={f.category} onChange={(e) => set({ category: e.target.value })} placeholder="Produce, Protein…" />
+              <datalist id="inv-cats">{data.categories.map((c) => <option key={c} value={c} />)}</datalist></>)}
+            {!inArea && field("Kept in", <select className="select" value={f.areaId} onChange={(e) => set({ areaId: e.target.value })}>
+              <option value="">No area</option>
+              {data.areas.map((a) => <option key={a.id} value={a.id}>{areaIcon(a.name)} {a.name}</option>)}
+            </select>)}
+          </div>
+          <label className="check small">
+            <input type="checkbox" checked={f.prep} onChange={(e) => set({ prep: e.target.checked })} />
+            A prep item made in the kitchen (sauce, dough, stock)
+          </label>
+          {f.prep ? field("One batch makes",
+            <div className="inv-amount">
+              <input className="input" inputMode="decimal" value={f.batch} onChange={(e) => set({ batch: e.target.value })} placeholder="e.g. 64" />
+              {unitSelect}
+            </div>, "Its cost comes from its recipe, so it follows ingredient prices by itself.")
+            : (
+              <div className="inv-form-row">
+                {field("Cost", <div className="inv-amount">
+                  <span className="inv-cur">$</span>
+                  <input className="input" inputMode="decimal" value={f.cost} onChange={(e) => set({ cost: e.target.value })} placeholder="12.00" />
+                  <span className="muted">/</span>
+                  {unitSelect}
+                </div>, item ? `Updates itself from each delivery (${data.cost_method === "last" ? "latest price" : "weighted average"}). Change it only to correct it.` : undefined)}
+                {!item && field("Quantity", <div className="inv-amount">
+                  <input className="input" inputMode="decimal" value={f.quantity} onChange={(e) => set({ quantity: e.target.value })} placeholder="0" />
+                  <span className="muted inv-unit-label">{unitShown}</span>
+                </div>)}
+              </div>
+            )}
           {field("Barcode", <input className="input" value={f.barcode} onChange={(e) => set({ barcode: e.target.value })} placeholder="Scan or type (optional)" />)}
-        </div>
+        </section>
 
-        <label className="check small">
-          <input type="checkbox" checked={f.prep} onChange={(e) => set({ prep: e.target.checked })} />
-          A prep item made in the kitchen (sauce, dough, stock)
-        </label>
-        {f.prep ? field(`One batch makes (${unitShown})`,
-          <input className="input" inputMode="decimal" value={f.batch} onChange={(e) => set({ batch: e.target.value })} placeholder="e.g. 64" />,
-          "Its cost comes from its recipe, so it follows ingredient prices by itself.")
-          : (
-            <div className="inv-form-row">
-              {field(`Cost per ${unitShown} ($)`, <input className="input" inputMode="decimal" value={f.cost} onChange={(e) => set({ cost: e.target.value })} placeholder="e.g. 3.10" />,
-                item ? `Updates itself from each delivery (${data.cost_method === "last" ? "latest price" : "weighted average"}). Change it here only to correct it.` : undefined)}
-              {!item && field("On hand now", <input className="input" inputMode="decimal" value={f.onHand} onChange={(e) => set({ onHand: e.target.value })} placeholder="0" />)}
-            </div>
-          )}
+        <section className="inv-group">
+          <h3>Par</h3>
+          <div className="inv-form-row">
+            {field(`Par level (${unitShown})`, <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery")}
+            {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when it gets here")}
+            {field("Order amount", <input className="input" inputMode="decimal" value={f.orderQty} onChange={(e) => set({ orderQty: e.target.value })} placeholder="Par − on hand" />)}
+          </div>
+        </section>
 
-        <div className="inv-form-row">
-          {field("Par level", <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery")}
-          {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when it gets here")}
-          {field("Order amount", <input className="input" inputMode="decimal" value={f.orderQty} onChange={(e) => set({ orderQty: e.target.value })} placeholder="Par − on hand" />)}
-        </div>
-        {field("Supplier", <select className="select" value={f.supplierId} onChange={(e) => set({ supplierId: e.target.value })}>
-          <option value="">No supplier</option>
-          {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>)}
-
-        <fieldset className="inv-adjust">
-          <legend className="small">Yield and units</legend>
-          <div className="inv-form-row" style={{ alignItems: "end" }}>
-            {field("Usual yield %", <input className="input" inputMode="decimal" value={f.yieldPct} onChange={(e) => set({ yieldPct: e.target.value })} placeholder="100" />,
-              "Usable after trimming and cooking. Recipes start from it.")}
+        <section className="inv-group">
+          <div className="spread"><h3>Yield</h3>
             <button type="button" className="btn small" onClick={() => setYieldTest(yieldTest ? null : { ap: "", ep: "", cooked: "" })}>
-              {yieldTest ? "Close the yield test" : "Work it out"}
+              {yieldTest ? "Close" : "Work it out"}
             </button>
           </div>
+          {field("Usual yield %", <input className="input" inputMode="decimal" value={f.yieldPct} onChange={(e) => set({ yieldPct: e.target.value })} placeholder="100" />,
+            "The share that's usable after trimming and cooking. Recipes start from it.")}
           {yieldTest && (
             <div className="inv-yield">
               <div className="inv-form-row">
@@ -365,25 +354,19 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
               </div>
             </div>
           )}
-          <span className="small">Other units it comes in or is measured in</span>
-          {conversions.map((c, n) => (
-            <div key={n} className="inv-conv">
-              <input className="input" inputMode="decimal" aria-label="Amount" value={c.qty} onChange={(e) => setConversions(conversions.map((x, j) => j === n ? { ...x, qty: Number(e.target.value) } : x))} />
-              <input className="input" list="inv-units" aria-label="Unit" value={c.unit} placeholder="case" onChange={(e) => setConversions(conversions.map((x, j) => j === n ? { ...x, unit: e.target.value } : x))} />
-              <span>=</span>
-              <input className="input" inputMode="decimal" aria-label="Equals amount" value={c.to_qty || ""} placeholder="40" onChange={(e) => setConversions(conversions.map((x, j) => j === n ? { ...x, to_qty: Number(e.target.value) } : x))} />
-              <input className="input" list="inv-units" aria-label="Equals unit" value={c.to_unit} placeholder={f.unit || "lb"} onChange={(e) => setConversions(conversions.map((x, j) => j === n ? { ...x, to_unit: e.target.value } : x))} />
-              <button type="button" className="sb-icon" aria-label="Remove" onClick={() => setConversions(conversions.filter((_, j) => j !== n))}>✕</button>
-            </div>
-          ))}
-          <button type="button" className="btn small" style={{ alignSelf: "start" }}
-            onClick={() => setConversions([...conversions, { qty: 1, unit: "case", to_qty: 0, to_unit: f.unit || "" }])}>+ Add a conversion</button>
-          <small className="muted">Like 1 case = 40 lb, or 1 cup = 4.25 oz (a density), so invoices and recipes in other units convert.</small>
-        </fieldset>
+        </section>
+
+        <section className="inv-group">
+          <h3>Supplier</h3>
+          <select className="select" aria-label="Supplier" value={f.supplierId} onChange={(e) => set({ supplierId: e.target.value })}>
+            <option value="">No supplier</option>
+            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </section>
 
         {item && !item.is_prep && (
-          <fieldset className="inv-adjust">
-            <legend className="small">Correct the amount on hand <span className="muted">(now {qty(item.stock_qty)} {item.unit ?? ""})</span></legend>
+          <section className="inv-group">
+            <h3>Correct the quantity <span className="muted small">(now {qty(item.stock_qty)} {item.unit ?? ""})</span></h3>
             <div className="row" style={{ flexWrap: "nowrap" }}>
               <select className="select" style={{ width: "auto" }} value={adjust.mode} aria-label="How"
                 onChange={(e) => setAdjust({ ...adjust, mode: e.target.value as "set" | "add" })}>
@@ -402,8 +385,8 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
               </select>
             </div>
             <input className="input" maxLength={500} placeholder="Note (optional)" value={adjust.note} onChange={(e) => setAdjust({ ...adjust, note: e.target.value })} />
-            <small className="muted">Saved in the ledger with your name. To log something thrown out, use the Waste tab.</small>
-          </fieldset>
+            <small className="muted">Saved in History with your name. To log something thrown out, use the Waste tab.</small>
+          </section>
         )}
         {error && <p className="small error">{error}</p>}
       </form>
@@ -453,6 +436,7 @@ function AreasDialog({ base, areas, onClose }: { base: string; areas: Area[]; on
       <ul className="inv-areas">
         {list.map((a, i) => (
           <li key={a.id}>
+            <span className="inv-area-icon" aria-hidden>{areaIcon(names[a.id] || a.name)}</span>
             <span className="inv-area-move">
               <button className="sb-icon" aria-label={`Move ${a.name} up`} disabled={i === 0} onClick={() => void move(i, -1)}>↑</button>
               <button className="sb-icon" aria-label={`Move ${a.name} down`} disabled={i === list.length - 1} onClick={() => void move(i, 1)}>↓</button>

@@ -30,7 +30,7 @@ export default function Ledger() {
       setRows((old) => (before ? [...old, ...r.movements] : r.movements));
       setMore(r.more);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't load the ledger.");
+      setError(e instanceof Error ? e.message : "Couldn't load the history.");
     }
   }
   useEffect(() => { if (view === "stock") void load(); }, [itemId, kind, view]); // eslint-disable-line react-hooks/exhaustive-deps
