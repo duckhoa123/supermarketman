@@ -332,7 +332,7 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         scan.supplier_id = supplier.id
     supplier_name = supplier.name if supplier else scan.supplier_name
     received_on = scan.invoice_date or utcnow().date()
-    changes, stock_updates, created, issues = [], [], [], []
+    changes, stock_updates, created, issues, cost_warnings = [], [], [], [], []
     for ln in lines:
         key = im.product_key(scan.supplier_name, ln["description"], ln.get("sku"))
         prev = await last_line(session, location.id, key, received_on, before_scan=scan.id)
@@ -349,9 +349,19 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         got = float(got) if got is not None and got != "" else None
         arrived = got if got is not None else float(ln.get("qty") or 0)
         if item is not None and item.location_id == location.id and ln.get("kind", "item") == "item":
-            # Stock and cost follow what actually arrived, at the price per stock unit.
+            # The item's own conversion (1 case = 40 lb) turns invoice units into count units, if no pack size
+            # was given; stock and cost follow what actually arrived, at the price per count unit.
+            if pack == 1 and ln.get("unit") and inventory.norm_unit(ln.get("unit")) != inventory.norm_unit(item.unit):
+                per = inventory.item_convert(1.0, ln.get("unit"), item)
+                if per:
+                    pack = per
             added = arrived * pack
             price = int(ln.get("unit_price_cents") or 0)
+            old_cost = item.avg_cost if item.avg_cost is not None else item.cost_cents
+            if price > 0 and old_cost and abs(price / pack - old_cost) / old_cost > 0.5:
+                cost_warnings.append(
+                    f"{item.name}: {fmt_money(round(price / pack), location.currency)} per {item.unit or 'unit'} "
+                    f"now, was {fmt_money(round(old_cost), location.currency)}. Check the pack size or unit.")
             if added:
                 await inventory.record(session, item, "receive", added,
                                        unit_cost=price / pack if price > 0 else None, source=f"invoice:{scan.id}",
@@ -361,9 +371,13 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
                                            + (f" #{scan.invoice_number}" if scan.invoice_number else ""),
                                            ISSUES.get(issue) if issue else None])))
             stock_updates.append({"item": item.name, "added": added, "now": item.stock_qty, "unit": item.unit})
-        if issue or (got is not None and got != float(ln.get("qty") or 0)):
-            issues.append({"description": ln["description"], "issue": issue or "short",
-                           "invoiced": float(ln.get("qty") or 0), "received": arrived})
+        invoiced = float(ln.get("qty") or 0)
+        credit = None
+        if issue or (got is not None and got < invoiced):
+            issue = issue or "short"
+            issues.append({"description": ln["description"], "issue": issue, "invoiced": invoiced, "received": arrived})
+            if arrived < invoiced and ln.get("kind", "item") == "item":
+                credit = round((invoiced - arrived) * int(ln.get("unit_price_cents") or 0))
         session.add(ReceivedLine(
             location_id=location.id, scan_id=scan.id, supplier_id=supplier.id if supplier else None,
             supplier_name=supplier_name, invoice_number=scan.invoice_number, received_on=received_on,
@@ -371,7 +385,8 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
             item_id=item.id if item is not None else None, qty=float(ln.get("qty") or 0), unit=ln.get("unit"),
             unit_price_cents=int(ln.get("unit_price_cents") or 0), line_total_cents=int(ln.get("line_total_cents") or 0),
             pack_size=pack, stock_added=added, previous_unit_price_cents=prev.unit_price_cents if prev else None,
-            price_change_pct=pct, received_qty=got, issue=issue))
+            price_change_pct=pct, received_qty=got, issue=issue,
+            credit_status="open" if credit else None, credit_cents=credit))
         if pct is not None and pct != 0:
             changes.append({"line": ln, "prev": prev, "pct": pct, "key": key, "pack": pack})
     if purchase_order_id:
@@ -388,6 +403,16 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
 
     limit = await threshold_pct(session, location)
     notable = [c for c in changes if limit is not None and abs(c["pct"]) >= limit]
+    # New prices change plate costs: keep their history, and tell the chef about dishes now over target.
+    dishes = await inventory.snapshot_costs(session, location, f"Invoice {scan.invoice_number or scan.id[:6]}")
+    over = [d for d in dishes if d["over_target"] and d["new_cents"] > d["old_cents"]]
+    if over:
+        await create_alert(
+            session, location, kind="menu_cost", title=f"Plate cost up on {len(over)} dish{'es' if len(over) > 1 else ''}",
+            body="; ".join(f"{d['name']}: {fmt_money(d['old_cents'], location.currency)} → "
+                           f"{fmt_money(d['new_cents'], location.currency)} ({d['food_cost_pct']:g}%, target "
+                           f"{d['target_pct']:g}%)" for d in over[:6]),
+            data={"items": [d["item_id"] for d in over]}, dedupe_key=f"menu_cost:{scan.id}")
     alert = None
     if notable:
         title, body, data = await price_alert_text(session, location, supplier_name, scan, notable)
@@ -396,7 +421,9 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
     await session.commit()
     return {"lines": len(lines), "stock_updates": stock_updates, "created_items": created, "issues": issues,
             "price_changes": [{"description": c["line"]["description"], "change_pct": c["pct"]} for c in changes],
-            "alerted": alert is not None}
+            "alerted": alert is not None, "cost_warnings": cost_warnings,
+            "dishes": [{k: d[k] for k in ("name", "old_cents", "new_cents", "food_cost_pct", "over_target")}
+                       for d in dishes]}
 
 
 async def new_stock_item(session: AsyncSession, location: Location, ln: dict, pack: float,
@@ -530,6 +557,30 @@ async def price_alert_text(session: AsyncSession, location: Location, supplier: 
 # --- Log sheet, price changes, price history -----------------------------------------------------------------
 
 
+async def credits(session: AsyncSession, location: Location, status: str | None = "open") -> dict:
+    """Short, damaged and wrong lines: what each supplier owes, open until someone marks it resolved."""
+    q = select(ReceivedLine).where(ReceivedLine.location_id == location.id, ReceivedLine.credit_status.is_not(None))
+    if status:
+        q = q.where(ReceivedLine.credit_status == status)
+    rows = list(await session.scalars(q.order_by(ReceivedLine.received_on.desc()).limit(300)))
+    return {"credits": [{**line_out(r, location.currency), "credit_status": r.credit_status,
+                         "credit_cents": r.credit_cents, "credit_note": r.credit_note,
+                         "credit_resolved_at": r.credit_resolved_at.isoformat() if r.credit_resolved_at else None}
+                        for r in rows],
+            "open_cents": sum(r.credit_cents or 0 for r in rows if r.credit_status == "open")}
+
+
+async def resolve_credit(session: AsyncSession, location: Location, line_id: str, user_id: str,
+                         note: str | None) -> ReceivedLine:
+    r = await session.get(ReceivedLine, line_id)
+    if r is None or r.location_id != location.id or r.credit_status is None:
+        raise ReceivingError("Credit not found")
+    r.credit_status, r.credit_note = "resolved", note or r.credit_note
+    r.credit_resolved_by, r.credit_resolved_at = user_id, utcnow()
+    await session.commit()
+    return r
+
+
 def line_out(r: ReceivedLine, currency: str, item_name: str | None = None) -> dict:
     return {"id": r.id, "received_on": r.received_on.isoformat(), "supplier": r.supplier_name,
             "invoice_number": r.invoice_number, "description": r.description, "sku": r.sku, "kind": r.kind,
@@ -540,12 +591,13 @@ def line_out(r: ReceivedLine, currency: str, item_name: str | None = None) -> di
             "previous_unit_price": fmt_money(r.previous_unit_price_cents, currency)
             if r.previous_unit_price_cents is not None else None,
             "price_change_pct": r.price_change_pct, "scan_id": r.scan_id,
-            "received_qty": r.received_qty, "issue": r.issue}
+            "received_qty": r.received_qty, "issue": r.issue, "credit_status": r.credit_status,
+            "credit_cents": r.credit_cents}
 
 
 async def log_lines(session: AsyncSession, location: Location, *, start: date | None = None, end: date | None = None,
                     supplier_id: str | None = None, search: str | None = None, item_id: str | None = None,
-                    changed_only: bool = False, limit: int = 500) -> dict:
+                    changed_only: bool = False, issue: str | None = None, limit: int = 500) -> dict:
     stmt = select(ReceivedLine, Item.name).outerjoin(Item, Item.id == ReceivedLine.item_id).where(
         ReceivedLine.location_id == location.id)
     if start:
@@ -561,6 +613,10 @@ async def log_lines(session: AsyncSession, location: Location, *, start: date | 
                               ReceivedLine.invoice_number.ilike(f"%{search}%")))
     if changed_only:
         stmt = stmt.where(ReceivedLine.price_change_pct.is_not(None), ReceivedLine.price_change_pct != 0)
+    if issue == "any":
+        stmt = stmt.where(ReceivedLine.issue.is_not(None))
+    elif issue:
+        stmt = stmt.where(ReceivedLine.issue == issue)
     rows = list(await session.execute(stmt.order_by(ReceivedLine.received_on.desc(), ReceivedLine.created_at)
                                       .limit(min(limit, 5000))))
     lines = [line_out(r, location.currency, n) for r, n in rows]

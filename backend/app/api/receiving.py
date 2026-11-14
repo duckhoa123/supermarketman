@@ -164,16 +164,38 @@ async def retry_invoice(scan_id: str, location: Location = Depends(require_locat
 @router.get("/receiving-log")
 async def receiving_log(start: date | None = None, end: date | None = None, supplier_id: str | None = None,
                         q: str | None = None, item_id: str | None = None, changed_only: bool = False,
+                        issue: str | None = Query(None, pattern="^(any|short|damaged|wrong)$"),
                         format: str = Query("json", pattern="^(json|csv)$"),
                         location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
     """Every line received, newest first. format=csv downloads it as a spreadsheet."""
     out = await receiving.log_lines(session, location, start=start, end=end, supplier_id=supplier_id, search=q,
-                                    item_id=item_id, changed_only=changed_only)
+                                    item_id=item_id, changed_only=changed_only, issue=issue)
     if format == "csv":
         name = f"receiving-log-{location.name.lower().replace(' ', '-')}.csv"
         return Response(receiving.to_csv(out["lines"]), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
     return out
+
+
+@router.get("/credits")
+async def list_credits(status: str | None = Query("open", pattern="^(open|resolved)$"),
+                       location: Location = Depends(require_location), session: AsyncSession = Depends(get_session)):
+    """Credits owed by suppliers for short, damaged or wrong deliveries."""
+    return await receiving.credits(session, location, status)
+
+
+class ResolveIn(BaseModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/credits/{line_id}/resolve")
+async def resolve_credit(line_id: str, body: ResolveIn, location: Location = Depends(require_location),
+                         user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    try:
+        await receiving.resolve_credit(session, location, line_id, user.id, body.note)
+    except receiving.ReceivingError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True}
 
 
 @router.get("/price-changes")

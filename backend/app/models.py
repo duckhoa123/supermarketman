@@ -97,6 +97,8 @@ class Location(TimestampMixin, Base):
     order_template: Mapped[str | None] = mapped_column(Text)  # message to suppliers; None = the default
     tax_rate_bp: Mapped[int] = mapped_column(Integer, default=500)  # BC restaurant meals: 5% GST
     target_food_cost_pct: Mapped[float] = mapped_column(Float, default=30.0)  # for suggested menu prices
+    target_beverage_cost_pct: Mapped[float] = mapped_column(Float, default=22.0)  # drinks
+    cost_method: Mapped[str] = mapped_column(String(16), default="average")  # average | last (latest price)
 
     organization: Mapped[Organization] = relationship(back_populates="locations")
 
@@ -160,6 +162,19 @@ class Item(TimestampMixin, Base):
     # counted, so sales before then don't take ingredients out of stock.
     q_factor_cents: Mapped[int | None] = mapped_column(BigInteger)
     recipe_since: Mapped[date | None] = mapped_column(Date)
+    # Par (what you want on hand after a delivery); low_stock_threshold is the reorder point (alert level).
+    par_level: Mapped[float | None] = mapped_column(Float)
+    barcode: Mapped[str | None] = mapped_column(String(64))
+    shelf_order: Mapped[int | None] = mapped_column(Integer)  # order on the count sheet, within its area
+    default_yield_pct: Mapped[float | None] = mapped_column(Float)  # recipes start from this; each can override
+    # Item-specific units: [{"qty": 1, "unit": "case", "to_qty": 40, "to_unit": "lb"}] (case → lb, cup → oz…)
+    conversions: Mapped[list | None] = mapped_column(JSON)
+    # A prep item (sauce, dough, stock): one batch of its recipe makes batch_qty batch_unit.
+    batch_qty: Mapped[float | None] = mapped_column(Float)
+    batch_unit: Mapped[str | None] = mapped_column(String(32))
+    target_food_cost_pct: Mapped[float | None] = mapped_column(Float)  # overrides the restaurant's default
+    q_factor_pct: Mapped[float | None] = mapped_column(Float)  # or the Q-factor as a % of the ingredients
+    recipe_notes: Mapped[str | None] = mapped_column(Text)  # plating and method, for the printed recipe card
 
 
 class DiningTable(TimestampMixin, Base):
@@ -718,7 +733,13 @@ class ReceivedLine(Base):
     price_change_pct: Mapped[float | None] = mapped_column(Float)
     # What actually arrived, when it differs from the invoice (in invoice units), and what was wrong.
     received_qty: Mapped[float | None] = mapped_column(Float)
-    issue: Mapped[str | None] = mapped_column(String(16))  # short | damaged | wrong
+    issue: Mapped[str | None] = mapped_column(String(16))  # short | damaged | wrong (substituted)
+    # A short or damaged line is a credit owed by the supplier, open until someone marks it resolved.
+    credit_status: Mapped[str | None] = mapped_column(String(16))  # open | resolved
+    credit_cents: Mapped[int | None] = mapped_column(BigInteger)
+    credit_note: Mapped[str | None] = mapped_column(Text)
+    credit_resolved_by: Mapped[str | None] = mapped_column(String(64))
+    credit_resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
@@ -782,6 +803,42 @@ class StockCount(Base):
     variance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     counted_by: Mapped[str | None] = mapped_column(String(64))
     counted_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    # submitted (by anyone) -> approved (owner or manager: the differences go in the ledger) | rejected
+    status: Mapped[str] = mapped_column(String(16), default="approved")
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())  # when the system amounts were frozen
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class PlateCostHistory(Base):
+    """A menu item's plate cost each time it changed (an invoice price, a recipe edit), for the menu cost report."""
+
+    __tablename__ = "plate_cost_history"
+    __table_args__ = (Index("ix_plate_cost_history_item_created", "menu_item_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    menu_item_id: Mapped[str] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
+    plate_cost_cents: Mapped[int] = mapped_column(BigInteger)
+    price_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    reason: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class InventoryAudit(Base):
+    """Who changed a recipe, par, yield or unit, when, and the old and new value. (Stock and cost changes are
+    in the stock ledger.)"""
+
+    __tablename__ = "inventory_audit"
+    __table_args__ = (Index("ix_inventory_audit_location_created", "location_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    item_id: Mapped[str | None] = mapped_column(ForeignKey("items.id", ondelete="SET NULL"), index=True)
+    item_name: Mapped[str] = mapped_column(String(300))
+    field: Mapped[str] = mapped_column(String(40))
+    old: Mapped[str | None] = mapped_column(Text)
+    new: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
