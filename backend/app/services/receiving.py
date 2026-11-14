@@ -32,11 +32,13 @@ from app.models import (
     utcnow,
 )
 from app.money import fmt_money
+from app.services import inventory
 from app.services import invoice_math as im
 from app.services.jobs import enqueue, handler
 
 log = logging.getLogger(__name__)
 
+ISSUES = {"short": "Short", "damaged": "Damaged", "wrong": "Wrong item"}  # flagged by the receiver
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 PDF_TYPE = "application/pdf"
 
@@ -330,7 +332,7 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         scan.supplier_id = supplier.id
     supplier_name = supplier.name if supplier else scan.supplier_name
     received_on = scan.invoice_date or utcnow().date()
-    changes, stock_updates, created = [], [], []
+    changes, stock_updates, created, issues = [], [], [], []
     for ln in lines:
         key = im.product_key(scan.supplier_name, ln["description"], ln.get("sku"))
         prev = await last_line(session, location.id, key, received_on, before_scan=scan.id)
@@ -342,11 +344,26 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
             item = await new_stock_item(session, location, ln, pack, supplier)
             created.append(item.name)
         added = None
-        if item is not None and item.location_id == location.id and ln.get("kind", "item") == "item" \
-                and item.stock_qty is not None:
-            added = float(ln.get("qty") or 0) * pack
-            item.stock_qty += added
+        issue = ln.get("issue") if ln.get("issue") in ISSUES else None
+        got = ln.get("received_qty")
+        got = float(got) if got is not None and got != "" else None
+        arrived = got if got is not None else float(ln.get("qty") or 0)
+        if item is not None and item.location_id == location.id and ln.get("kind", "item") == "item":
+            # Stock and cost follow what actually arrived, at the price per stock unit.
+            added = arrived * pack
+            price = int(ln.get("unit_price_cents") or 0)
+            if added:
+                await inventory.record(session, item, "receive", added,
+                                       unit_cost=price / pack if price > 0 else None, source=f"invoice:{scan.id}",
+                                       reason=issue, user_id=user_id,
+                                       note=" · ".join(filter(None, [
+                                           f"{supplier_name or 'Delivery'}"
+                                           + (f" #{scan.invoice_number}" if scan.invoice_number else ""),
+                                           ISSUES.get(issue) if issue else None])))
             stock_updates.append({"item": item.name, "added": added, "now": item.stock_qty, "unit": item.unit})
+        if issue or (got is not None and got != float(ln.get("qty") or 0)):
+            issues.append({"description": ln["description"], "issue": issue or "short",
+                           "invoiced": float(ln.get("qty") or 0), "received": arrived})
         session.add(ReceivedLine(
             location_id=location.id, scan_id=scan.id, supplier_id=supplier.id if supplier else None,
             supplier_name=supplier_name, invoice_number=scan.invoice_number, received_on=received_on,
@@ -354,7 +371,7 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
             item_id=item.id if item is not None else None, qty=float(ln.get("qty") or 0), unit=ln.get("unit"),
             unit_price_cents=int(ln.get("unit_price_cents") or 0), line_total_cents=int(ln.get("line_total_cents") or 0),
             pack_size=pack, stock_added=added, previous_unit_price_cents=prev.unit_price_cents if prev else None,
-            price_change_pct=pct))
+            price_change_pct=pct, received_qty=got, issue=issue))
         if pct is not None and pct != 0:
             changes.append({"line": ln, "prev": prev, "pct": pct, "key": key, "pack": pack})
     if purchase_order_id:
@@ -377,7 +394,7 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
         alert = await create_alert(session, location, kind="price_change", title=title, body=body, data=data,
                                    dedupe_key=f"price:{scan.id}")
     await session.commit()
-    return {"lines": len(lines), "stock_updates": stock_updates, "created_items": created,
+    return {"lines": len(lines), "stock_updates": stock_updates, "created_items": created, "issues": issues,
             "price_changes": [{"description": c["line"]["description"], "change_pct": c["pct"]} for c in changes],
             "alerted": alert is not None}
 
@@ -385,20 +402,17 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
 async def new_stock_item(session: AsyncSession, location: Location, ln: dict, pack: float,
                          supplier: Supplier | None) -> Item:
     """A supplier product that isn't in inventory yet becomes a stock item (an ingredient or supply, so it's kept
-    off the customer menu). Its stock starts at 0; the invoice adds the delivered amount."""
+    off the customer menu). The invoice line then puts the delivered amount and its cost in the ledger."""
     import uuid
 
     name = (ln.get("description") or "Item").strip()[:300]
     existing = await session.scalar(select(Item).where(Item.location_id == location.id,
                                                        func.lower(Item.name) == name.lower()))
     if existing is not None:
-        if existing.stock_qty is None:
-            existing.stock_qty = 0.0
         return existing
-    unit_price = int(ln.get("unit_price_cents") or 0)
     item = Item(location_id=location.id, provider="pass", external_id=f"pass-{uuid.uuid4().hex[:12]}", name=name,
-                category="Supplies", unit=(ln.get("unit") if pack == 1 else None), stock_qty=0.0,
-                cost_cents=round(unit_price / pack) if unit_price > 0 else None, price_cents=0,
+                category="Supplies", unit=(ln.get("unit") if pack == 1 else None), stock_qty=None,
+                cost_cents=None, price_cents=0,
                 supplier_id=supplier.id if supplier else None, orderable=False, active=True)
     session.add(item)
     await session.flush()
@@ -525,7 +539,8 @@ def line_out(r: ReceivedLine, currency: str, item_name: str | None = None) -> di
             "pack_size": r.pack_size, "stock_added": r.stock_added,
             "previous_unit_price": fmt_money(r.previous_unit_price_cents, currency)
             if r.previous_unit_price_cents is not None else None,
-            "price_change_pct": r.price_change_pct, "scan_id": r.scan_id}
+            "price_change_pct": r.price_change_pct, "scan_id": r.scan_id,
+            "received_qty": r.received_qty, "issue": r.issue}
 
 
 async def log_lines(session: AsyncSession, location: Location, *, start: date | None = None, end: date | None = None,
@@ -554,7 +569,8 @@ async def log_lines(session: AsyncSession, location: Location, *, start: date | 
 
 
 CSV_COLUMNS = ["received_on", "supplier", "invoice_number", "description", "sku", "kind", "item", "qty", "unit",
-               "unit_price", "line_total", "pack_size", "stock_added", "previous_unit_price", "price_change_pct"]
+               "unit_price", "line_total", "pack_size", "stock_added", "previous_unit_price", "price_change_pct",
+               "received_qty", "issue"]
 
 
 def to_csv(lines: list[dict]) -> str:

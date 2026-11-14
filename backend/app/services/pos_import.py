@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Item, Location, Order, OrderLine
+from app.services import inventory
 from app.services.sync import rebuild_rollups
 
 PROVIDER = "clover"
@@ -401,14 +402,17 @@ async def import_items(session: AsyncSession, location: Location, t: Table) -> d
         if price is not None:
             item.price_cents = max(0, price)
         cost = money(cell(row, m["cost"]))
-        if cost:  # Clover writes 0 when no cost was entered
+        if cost and item.avg_cost is None:  # Clover writes 0 when no cost was entered; costed deliveries win
             item.cost_cents = max(0, cost)
         cat = str(cell(row, m["category"]) or "").strip()
         if cat:
             item.category = re.split(r"[,;|]", cat)[0].strip()[:200]
         stock = number(cell(row, m["stock"]))
         if m["stock"] is not None and stock is not None:
-            item.stock_qty = stock
+            if item.id is None:
+                await session.flush()
+            await inventory.set_qty(session, item, float(stock), "import", source="import:clover-items",
+                                    note="Stock from a Clover items export")
         unit = str(cell(row, m["unit"]) or "").strip()
         if unit:
             item.unit = unit[:32]
@@ -712,6 +716,8 @@ async def import_item_sales(session: AsyncSession, location: Location, t: Table,
     for name, (cat, qty, cents) in totals.items():
         session.add(ItemSalesDaily(location_id=location.id, day=day, name=name, category=cat, qty=qty,
                                    revenue_cents=cents))
+    await session.flush()
+    await inventory.deplete_sales(session, location, {day})  # ingredients out of stock, through the recipes
     await session.commit()
     return {"kind": "item_sales", "day": day.isoformat(), "items": len(totals), "skipped": skipped,
             "qty": sum(v[1] for v in totals.values()), "sales_cents": sum(v[2] for v in totals.values())}

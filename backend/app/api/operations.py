@@ -412,15 +412,19 @@ async def cancel_po(po_id: str, location: Location = Depends(require_manager),
 
 @router.post("/purchase-orders/{po_id}/received")
 async def receive_po(po_id: str, location: Location = Depends(require_manager),
-                     session: AsyncSession = Depends(get_session)):
-    """Mark delivered and add the quantities to stock (POS-synced stock will be corrected on the next sync)."""
+                     user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Mark delivered and add the quantities to stock at the items' current cost (scanning the invoice instead
+    records what was paid). POS-synced stock will be corrected on the next sync."""
+    from app.services import inventory
+
     po = await _po(session, location, po_id)
     if po.status not in ("approved", "sent"):
         raise HTTPException(409, f"Can't receive a {po.status} order")
     for line in po.lines:
         item = await session.get(Item, line.get("item_id")) if line.get("item_id") else None
-        if item is not None and item.location_id == location.id and item.stock_qty is not None:
-            item.stock_qty += float(line["qty"])
+        if item is not None and item.location_id == location.id and float(line.get("qty") or 0) > 0:
+            await inventory.record(session, item, "receive", float(line["qty"]), source=f"po:{po.id}",
+                                   user_id=user.id, note="Order marked received (no invoice scanned)")
     po.status = "received"
     await session.commit()
     return {"ok": True}

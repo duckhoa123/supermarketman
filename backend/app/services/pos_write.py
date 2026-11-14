@@ -9,12 +9,14 @@ import uuid
 from datetime import date
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.pos.base import OutLine, POSWriteError
 from app.integrations.pos.registry import get_adapter
-from app.models import CustomerOrder, Integration, Item, Location, Order, OrderLine, PurchaseOrder, utcnow
+from app.models import (CustomerOrder, Integration, Item, Location, Order, OrderLine, PurchaseOrder, RecipeLine,
+                        StockMovement, utcnow)
+from app.services import inventory
 from app.services.integration_store import access_token, pos_integration
 from app.services.sync import rebuild_rollups
 
@@ -53,8 +55,11 @@ async def add_item(session: AsyncSession, location: Location, *, name: str, pric
     else:
         provider, external_id = LOCAL, f"pass-{uuid.uuid4().hex[:12]}"
     item = Item(location_id=location.id, provider=provider, external_id=external_id, name=name, category=category,
-                price_cents=price_cents, stock_qty=stock_qty, active=True)
+                price_cents=price_cents, active=True)
     session.add(item)
+    await session.flush()
+    if stock_qty is not None:
+        await inventory.set_qty(session, item, float(stock_qty), "adjust", note="Stock when the item was added")
     await session.commit()
     return item
 
@@ -77,8 +82,12 @@ async def edit_item(session: AsyncSession, location: Location, item: Item, chang
                                       stock_changed="stock_qty" in changes and changes["stock_qty"] != item.stock_qty)
         except POSWriteError as exc:
             raise PosError(str(exc)) from exc
-    for k, v in new.items():
-        setattr(item, k, v)
+    for k in ("name", "price_cents", "category"):
+        setattr(item, k, new[k])
+    if "stock_qty" in changes and changes["stock_qty"] is not None and changes["stock_qty"] != item.stock_qty:
+        await inventory.set_qty(session, item, float(changes["stock_qty"]), "adjust", note="Stock changed by hand")
+    elif "stock_qty" in changes and changes["stock_qty"] is None:
+        item.stock_qty = None  # no longer tracked; its ledger stays
     await session.commit()
     return item
 
@@ -190,6 +199,15 @@ async def delete_items(session: AsyncSession, location: Location, ids: list[str]
                     po.lines, po.message = kept, None
                 else:
                     await session.delete(po)
+        for item in gone:
+            if item.stock_qty:  # what it was worth leaves the inventory value with it
+                await inventory.record(session, item, "adjust", -item.stock_qty, reason="deleted",
+                                       note="Item deleted")
+        await session.flush()
+        # History stays (without the item); recipes that used it lose that ingredient.
+        await session.execute(update(StockMovement).where(StockMovement.item_id.in_(list(dead))).values(item_id=None))
+        await session.execute(delete(RecipeLine).where(
+            (RecipeLine.ingredient_id.in_(list(dead))) | (RecipeLine.menu_item_id.in_(list(dead)))))
         for item in gone:
             await session.delete(item)
     await session.commit()

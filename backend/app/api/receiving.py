@@ -78,6 +78,8 @@ class DraftLine(BaseModel):
     pack_size: float = Field(default=1, gt=0, le=10_000)
     match: str | None = Field(default=None, max_length=40)
     create_item: bool = False  # not matched: add it to inventory as a new stock item when the invoice is imported
+    received_qty: float | None = Field(default=None, ge=0, le=100_000)  # what arrived, if not what was invoiced
+    issue: str | None = Field(default=None, pattern="^(short|damaged|wrong)$")
 
 
 class DraftIn(BaseModel):

@@ -96,6 +96,7 @@ class Location(TimestampMixin, Base):
     accepts_bookings: Mapped[bool] = mapped_column(Boolean, default=False)
     order_template: Mapped[str | None] = mapped_column(Text)  # message to suppliers; None = the default
     tax_rate_bp: Mapped[int] = mapped_column(Integer, default=500)  # BC restaurant meals: 5% GST
+    target_food_cost_pct: Mapped[float] = mapped_column(Float, default=30.0)  # for suggested menu prices
 
     organization: Mapped[Organization] = relationship(back_populates="locations")
 
@@ -151,6 +152,14 @@ class Item(TimestampMixin, Base):
     fat_g: Mapped[float | None] = mapped_column(Float)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     orderable: Mapped[bool] = mapped_column(Boolean, default=True)  # shown on the customer menu
+    # Inventory: where it's kept, and its weighted-average cost in cents per stock unit (exact; cost_cents is the
+    # same rounded). Every change to stock_qty goes through services.inventory, which writes the stock ledger.
+    storage_area_id: Mapped[str | None] = mapped_column(ForeignKey("storage_areas.id", ondelete="SET NULL"))
+    avg_cost: Mapped[float | None] = mapped_column(Float)
+    # A menu item: oil, salt and garnish not worth listing (cents per plate), and the first day its recipe
+    # counted, so sales before then don't take ingredients out of stock.
+    q_factor_cents: Mapped[int | None] = mapped_column(BigInteger)
+    recipe_since: Mapped[date | None] = mapped_column(Date)
 
 
 class DiningTable(TimestampMixin, Base):
@@ -707,6 +716,87 @@ class ReceivedLine(Base):
     stock_added: Mapped[float | None] = mapped_column(Float)
     previous_unit_price_cents: Mapped[int | None] = mapped_column(BigInteger)
     price_change_pct: Mapped[float | None] = mapped_column(Float)
+    # What actually arrived, when it differs from the invoice (in invoice units), and what was wrong.
+    received_qty: Mapped[float | None] = mapped_column(Float)
+    issue: Mapped[str | None] = mapped_column(String(16))  # short | damaged | wrong
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+# --- Inventory ----------------------------------------------------------------------------------------------
+
+
+class StorageArea(Base):
+    """Where stock is kept (walk-in, dry storage, bar…). Counts are done one area at a time."""
+
+    __tablename__ = "storage_areas"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class StockMovement(Base):
+    """The stock ledger: one row per change to an item's stock. Append-only; a correction is a new row.
+
+    value_cents is the change in the item's value (qty × average cost), so the rows of an item add up to what it's
+    worth now, and the rows before a moment add up to what everything was worth then (used for COGS).
+    """
+
+    __tablename__ = "stock_movements"
+    __table_args__ = (
+        Index("ix_stock_movements_location_created", "location_id", "created_at"),
+        Index("ix_stock_movements_item_created", "item_id", "created_at"),
+        Index("ix_stock_movements_location_source", "location_id", "source"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"))
+    item_id: Mapped[str | None] = mapped_column(ForeignKey("items.id", ondelete="SET NULL"))
+    item_name: Mapped[str] = mapped_column(String(300))
+    # opening | receive | sale | waste | count | adjust | pos | import | revalue
+    kind: Mapped[str] = mapped_column(String(16))
+    qty_delta: Mapped[float] = mapped_column(Float, default=0)
+    qty_after: Mapped[float] = mapped_column(Float, default=0)
+    unit: Mapped[str | None] = mapped_column(String(32))
+    unit_cost: Mapped[float | None] = mapped_column(Float)  # cents per unit this moved at
+    value_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    source: Mapped[str | None] = mapped_column(String(100))  # e.g. "invoice:<id>", "count:<id>", "sales:2026-11-14"
+    reason: Mapped[str | None] = mapped_column(String(32))  # waste and adjustments: spoiled, dropped…
+    note: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class StockCount(Base):
+    """A finished physical count of one storage area (or everything). Its differences are in the ledger."""
+
+    __tablename__ = "stock_counts"
+    __table_args__ = (UniqueConstraint("location_id", "client_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    storage_area_id: Mapped[str | None] = mapped_column(ForeignKey("storage_areas.id", ondelete="SET NULL"))
+    area_name: Mapped[str | None] = mapped_column(String(100))
+    client_id: Mapped[str] = mapped_column(String(64))  # made on the phone, so a count synced twice is kept once
+    # [{"item_id","name","unit","expected","counted","delta","value_cents"}]
+    lines: Mapped[list] = mapped_column(JSON, default=list)
+    variance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    counted_by: Mapped[str | None] = mapped_column(String(64))
+    counted_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class RecipeLine(Base):
+    """One ingredient of a menu item: the edible portion on the plate, and the yield of the ingredient as bought."""
+
+    __tablename__ = "recipe_lines"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    menu_item_id: Mapped[str] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    ingredient_id: Mapped[str] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
+    qty: Mapped[float] = mapped_column(Float)  # EP portion, in `unit`
+    unit: Mapped[str | None] = mapped_column(String(32))
+    yield_pct: Mapped[float] = mapped_column(Float, default=100.0)  # EP weight ÷ AP weight
+    sort: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 

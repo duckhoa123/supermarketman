@@ -87,8 +87,13 @@ async def patch_item(item_id: str, body: ItemPatch, location: Location = Depends
             raise HTTPException(404, "Supplier not found")
     if "tags" in changes:
         changes["tags"] = sorted({t.strip().lower().replace(" ", "_") for t in changes["tags"] or [] if t.strip()})
+    cost = changes.pop("cost_cents", None)
     for key, value in changes.items():
         setattr(item, key, value)
+    if cost is not None and cost != item.cost_cents:
+        from app.services import inventory
+
+        await inventory.revalue(session, item, float(cost))  # a cost change is a ledger entry
     await session.commit()
     return {"ok": True}
 

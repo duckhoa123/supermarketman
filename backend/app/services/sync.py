@@ -39,6 +39,8 @@ async def upsert_items(session: AsyncSession, location: Location, provider: str,
             select(Item).where(Item.location_id == location.id, Item.provider == provider)
         )
     }
+    from app.services import inventory
+
     for n in items:
         row = existing.get(n.external_id)
         if row is None:
@@ -47,11 +49,18 @@ async def upsert_items(session: AsyncSession, location: Location, provider: str,
         row.name = n.name
         row.category = n.category
         row.price_cents = n.price_cents
-        row.cost_cents = n.cost_cents
-        row.stock_qty = n.stock_qty
-        row.unit = n.unit
+        if row.avg_cost is None:  # once deliveries are costed in Pass, the weighted average is kept
+            row.cost_cents = n.cost_cents
+        row.unit = n.unit or row.unit
         row.active = n.active
+        if n.stock_qty is not None:
+            # The POS keeps its own count of its items: the difference is a ledger entry.
+            if row.id is None:
+                await session.flush()
+            await inventory.set_qty(session, row, float(n.stock_qty), "pos", source=f"pos:{provider}",
+                                    note=f"Stock level from {provider.title()}")
     await session.flush()
+    await inventory.ensure_openings(session, location)
 
 
 async def upsert_orders(
@@ -169,6 +178,9 @@ async def rebuild_rollups(session: AsyncSession, location: Location, days: set[d
                     )
                 )
     await session.flush()
+    from app.services.inventory import deplete_sales
+
+    await deplete_sales(session, location, days)  # ingredients out of stock, through the recipes
 
 
 # --- Full / incremental sync ----------------------------------------------------------------------
