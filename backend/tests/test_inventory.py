@@ -230,6 +230,7 @@ async def test_every_stock_change_is_in_the_ledger(client, session, demo_locatio
 async def _add_staff(session, location_id: str) -> None:
     loc = await session.get(Location, location_id)
     session.add(User(id="dev-cook@example.com", email="cook@example.com"))
+    await session.flush()  # Postgres checks the member's user exists
     session.add(OrgMember(org_id=loc.org_id, user_id="dev-cook@example.com", role="staff"))
     await session.commit()
 
