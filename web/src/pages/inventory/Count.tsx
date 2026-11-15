@@ -28,7 +28,9 @@ export default function CountPanel() {
   const setDraft = useCallback((d: Draft | null) => { setDraftState(d); saveDraft(key, d); }, [key]);
 
   const data = onHand.data;
-  const countable = useMemo(() => (data?.items ?? []).filter((i) => !(i.is_prep && i.stock_qty == null)), [data]);
+  // Items you've stopped counting stay off the count sheets (ingredients used in a recipe still show).
+  const countable = useMemo(() => (data?.items ?? []).filter((i) =>
+    i.stock_qty != null || (!i.is_prep && i.used_in > 0)), [data]);
   const inArea = (area: string) => countable.filter((i) =>
     area === EVERYTHING || (area === NO_AREA ? !i.storage_area_id : i.storage_area_id === area));
 

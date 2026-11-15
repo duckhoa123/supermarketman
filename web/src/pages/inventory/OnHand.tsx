@@ -259,8 +259,14 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     }
   }
 
+  async function startCounting() {
+    if (!item) return;
+    await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { track: true } });
+    onDone(`Counting ${item.name} again. Set how much you have with Edit, or count it on the Count tab.`);
+  }
+
   async function stopCounting() {
-    if (!item || !window.confirm(`Stop counting ${item.name}? Its past changes stay in History.`)) return;
+    if (!item || !window.confirm(`Stop counting ${item.name}? It stays in the list as "not counted", and its past changes stay in History.`)) return;
     await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { track: false } });
     onDone(`${item.name} is no longer counted.`);
   }
@@ -282,6 +288,7 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     <Dialog title={item ? `Edit ${item.name}` : "Add an inventory item"} onClose={onClose} width="min(560px, 100%)"
       footer={<div className="row" style={{ width: "100%" }}>
         {item && item.stock_qty != null && <button type="button" className="btn danger" onClick={() => void stopCounting()}>Stop counting</button>}
+        {item && item.stock_qty == null && !item.is_prep && <button type="button" className="btn" onClick={() => void startCounting()}>Start counting</button>}
         <span style={{ flex: 1 }} />
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" form="stock-item-form" disabled={busy}>{busy ? "Saving…" : "Save"}</button>

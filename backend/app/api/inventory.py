@@ -84,7 +84,9 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
         .where(RecipeLine.location_id == location.id).group_by(RecipeLine.ingredient_id))).all())
     items = list(await session.scalars(
         select(Item).where(Item.location_id == location.id,
-                           (Item.stock_qty.is_not(None)) | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None))
+                           (Item.stock_qty.is_not(None)) | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None)
+                           # ingredients and supplies made in Pass stay listed when they're not being counted
+                           | ((Item.provider == "pass") & (Item.price_cents == 0)))
         .order_by(func.coalesce(Item.shelf_order, 1_000_000), func.lower(Item.name))))
     areas = list(await session.scalars(select(StorageArea).where(StorageArea.location_id == location.id)
                                        .order_by(StorageArea.sort, StorageArea.name)))
@@ -143,7 +145,7 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
         "areas": [{"id": a.id, "name": a.name, "sort": a.sort, "items": len(by_area.get(a.id, [])),
                    "value_cents": value(by_area.get(a.id, []))} for a in areas],
         "unassigned": len(by_area.get(None, [])),
-        "totals": {"items": len(rows), "value_cents": value(rows),
+        "totals": {"items": sum(r["stock_qty"] is not None for r in rows), "value_cents": value(rows),
                    **{f: sum(r["status"] == f for r in rows) for f in flags},
                    "no_cost": sum(r["avg_cost"] is None and r["stock_qty"] is not None for r in rows) if manager else 0},
         "untracked": untracked or 0, "can_manage": manager,

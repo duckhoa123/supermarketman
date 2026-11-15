@@ -371,3 +371,16 @@ async def test_case_conversion_last_price_and_credits(client, session, demo_loca
     assert (await client.get(f"{base}/credits", headers=OWNER)).json()["credits"] == []
     log = (await client.get(f"{base}/receiving-log?issue=any", headers=OWNER)).json()
     assert len(log["lines"]) == 1 and log["lines"][0]["credit_status"] == "resolved"
+
+
+async def test_stopping_an_item_keeps_it_listed(client, demo_location_id):
+    """Stop counting doesn't make an ingredient vanish: it stays as "not counted", and can be counted again."""
+    base = f"/locations/{demo_location_id}"
+    item = (await client.post(f"{base}/inventory/items", headers=OWNER, json={
+        "name": "Capers", "unit": "kg", "unit_cost": 900, "qty": 2})).json()["id"]
+    assert (await client.put(f"{base}/inventory/items/{item}", headers=OWNER, json={"track": False})).status_code == 200
+    row = next(i for i in (await client.get(f"{base}/inventory/on-hand", headers=OWNER)).json()["items"] if i["id"] == item)
+    assert row["stock_qty"] is None and row["status"] == "untracked"
+    assert (await client.put(f"{base}/inventory/items/{item}", headers=OWNER, json={"track": True})).status_code == 200
+    row = next(i for i in (await client.get(f"{base}/inventory/on-hand", headers=OWNER)).json()["items"] if i["id"] == item)
+    assert row["stock_qty"] == 0
