@@ -986,3 +986,10 @@ tr.inv-big td { background: var(--tomato-tint); }
 .inv-cur { color: var(--muted); font-weight: 600; }
 .inv-unit-label { min-width: 32px; }
 .inv-area-icon { width: 22px; text-align: center; }
+/* Field explanations: a tooltip on the field's name instead of text under it. */
+.tip { position: relative; align-self: flex-start; cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; outline: none; }
+.tip::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 250px;
+  background: var(--ink); color: var(--surface); font-size: 0.78rem; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none;
+  padding: 7px 9px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); white-space: normal;
+  opacity: 0; transform: translateY(-2px); pointer-events: none; transition: opacity 0.12s, transform 0.12s; }
+.tip:hover::after, .tip:focus::after { opacity: 1; transform: none; }

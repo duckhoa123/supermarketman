@@ -265,8 +265,12 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     onDone(`${item.name} is no longer counted.`);
   }
 
+  // A field's explanation shows as a tooltip on its name (hover, or tap on a phone), not under the field.
   const field = (label: string, input: React.ReactNode, hint?: string) => (
-    <label className="stack" style={{ gap: 4, flex: 1, minWidth: 0 }}><span className="small">{label}</span>{input}{hint && <small className="muted">{hint}</small>}</label>
+    <label className="stack" style={{ gap: 4, flex: 1, minWidth: 0 }}>
+      {hint ? <span className="small tip" tabIndex={0} data-tip={hint}>{label}</span> : <span className="small">{label}</span>}
+      {input}
+    </label>
   );
   const unitSelect = (
     <select className="select inv-unit" aria-label="Counted in" value={f.unit} onChange={(e) => set({ unit: e.target.value })}>
@@ -366,7 +370,7 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
 
         {item && !item.is_prep && (
           <section className="inv-group">
-            <h3>Correct the quantity <span className="muted small">(now {qty(item.stock_qty)} {item.unit ?? ""})</span></h3>
+            <h3><span className="tip" tabIndex={0} data-tip="Saved in History with your name. To log something thrown out, use the Waste tab.">Correct the quantity</span> <span className="muted small">(now {qty(item.stock_qty)} {item.unit ?? ""})</span></h3>
             <div className="row" style={{ flexWrap: "nowrap" }}>
               <select className="select" style={{ width: "auto" }} value={adjust.mode} aria-label="How"
                 onChange={(e) => setAdjust({ ...adjust, mode: e.target.value as "set" | "add" })}>
@@ -385,7 +389,6 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
               </select>
             </div>
             <input className="input" maxLength={500} placeholder="Note (optional)" value={adjust.note} onChange={(e) => setAdjust({ ...adjust, note: e.target.value })} />
-            <small className="muted">Saved in History with your name. To log something thrown out, use the Waste tab.</small>
           </section>
         )}
         {error && <p className="small error">{error}</p>}
