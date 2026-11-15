@@ -187,7 +187,8 @@ export default function Recipes() {
   );
 }
 
-type Line = { key: string; ingredient_id: string; qty: string; unit: string; yield_pct: string };
+type Line = { key: string; ingredient_id: string; qty: string; unit: string };
+const yieldOf = (i: StockItem | undefined) => i?.default_yield_pct ?? 100;  // set on the inventory item
 
 function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
   base: string; itemId: string; stock: StockItem[]; onClose: () => void; onSaved: (m: string) => void;
@@ -206,7 +207,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
 
   // Start the form from the saved recipe once it loads.
   if (d && lines === null) {
-    setLines(d.lines.map((l) => ({ key: l.id, ingredient_id: l.ingredient_id, qty: String(l.qty), unit: normUnit(l.unit) || "each", yield_pct: String(l.yield_pct) })));
+    setLines(d.lines.map((l) => ({ key: l.id, ingredient_id: l.ingredient_id, qty: String(l.qty), unit: normUnit(l.unit) || "each" })));
     setQ(d.q_factor_pct ? { mode: "pct", value: String(d.q_factor_pct) } : { mode: "cents", value: d.q_factor_cents ? (d.q_factor_cents / 100).toFixed(2) : "" });
     setPrice((d.price_cents / 100).toFixed(2));
     setTarget(d.item_target_pct != null ? String(d.item_target_pct) : "");
@@ -217,7 +218,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
   const live = useMemo(() => {
     const out = (lines ?? []).map((l) => {
       const ing = byId[l.ingredient_id];
-      const n = Number(l.qty), y = Number(l.yield_pct) || 100;
+      const n = Number(l.qty), y = yieldOf(ing);
       if (!ing || !(n > 0)) return { cost: null as number | null, problem: ing ? null : "Choose an ingredient", stockQty: null as number | null };
       const ep = convert(n, l.unit, ing.unit, ing.conversions);
       if (ep == null) return { cost: null, problem: `Can't turn ${l.unit} into ${ing.unit ?? "each"}: add a conversion to ${ing.name}`, stockQty: null };
@@ -245,7 +246,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
     try {
       const priceCents = Math.round(Number(price || 0) * 100);
       await api<RecipeDetail>(`${base}/recipes/${itemId}`, { method: "PUT", body: {
-        lines: clean.map((l) => ({ ingredient_id: l.ingredient_id, qty: Number(l.qty), unit: l.unit, yield_pct: Number(l.yield_pct) || 100 })),
+        lines: clean.map((l) => ({ ingredient_id: l.ingredient_id, qty: Number(l.qty), unit: l.unit })),
         q_factor_cents: q?.mode === "cents" && q.value ? Math.round(Number(q.value) * 100) : null,
         q_factor_pct: q?.mode === "pct" && q.value ? Number(q.value) : null,
         recipe_notes: notes, target_food_cost_pct: target ? Number(target) : null,
@@ -262,7 +263,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
     if (!d || !lines) return;
     const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
     const rowsHtml = lines.filter((l) => byId[l.ingredient_id]).map((l) =>
-      `<tr><td>${esc(qty(Number(l.qty)))} ${esc(l.unit)}</td><td>${esc(byId[l.ingredient_id].name)}</td><td>${Number(l.yield_pct) !== 100 ? `${esc(l.yield_pct)}% yield` : ""}</td></tr>`).join("");
+      `<tr><td>${esc(qty(Number(l.qty)))} ${esc(l.unit)}</td><td>${esc(byId[l.ingredient_id].name)}</td><td>${yieldOf(byId[l.ingredient_id]) !== 100 ? `${yieldOf(byId[l.ingredient_id])}% yield` : ""}</td></tr>`).join("");
     const w = window.open("", "_blank", "width=720,height=900");
     if (!w) return setError("Allow pop-ups to print the recipe card.");
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(d.name)}</title><style>
@@ -294,7 +295,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                 <span className="tip" tabIndex={0} data-tip={d.is_prep ? `What goes into one batch (it makes ${qty(d.batch_qty)} ${d.unit ?? ""})` : "What goes on one plate"}>Ingredient</span>
                 <span className="tip" tabIndex={0} data-tip="How much is on the plate, after trimming and cooking (edible portion)">Portion</span>
                 <span>Unit</span>
-                <span className="tip" tabIndex={0} data-tip="Share of the ingredient as bought that ends up usable. 80% means 10 oz bought gives 8 oz.">Yield %</span>
+                <span className="tip" tabIndex={0} data-tip="From the inventory item: the share that's usable after trimming and cooking. Change it on Inventory items.">Yield %</span>
                 <span className="num">Cost</span><span />
               </div>
               {lines.map((l, i) => {
@@ -305,8 +306,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                     <div className="rec-line">
                       <select className="select" aria-label="Ingredient" value={l.ingredient_id} onChange={(e) => {
                         const next = byId[e.target.value];
-                        setLine(i, { ingredient_id: e.target.value, unit: normUnit(next?.unit) || "each",
-                          yield_pct: next?.default_yield_pct != null ? String(next.default_yield_pct) : "100" });
+                        setLine(i, { ingredient_id: e.target.value, unit: normUnit(next?.unit) || "each" });
                       }}>
                         <option value="">Choose…</option>
                         {choices.map((s) => <option key={s.id} value={s.id}>{s.is_prep ? "▸ " : ""}{s.name}</option>)}
@@ -315,7 +315,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                       <select className="select" aria-label="Unit" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })}>
                         {unitsFor(ing?.unit ?? l.unit, ing?.conversions ?? []).map((u) => <option key={u} value={u}>{u}</option>)}
                       </select>
-                      <input className="input" inputMode="decimal" aria-label="Yield %" value={l.yield_pct} onChange={(e) => setLine(i, { yield_pct: e.target.value })} />
+                      <span className="rec-yield" aria-label="Yield %" title="Set on the inventory item">{ing ? `${yieldOf(ing)}%` : "–"}</span>
                       {ing && c?.stockQty != null && !c.problem ? (
                         <span className="num tip tip-left" tabIndex={0}
                           data-tip={`Takes ${qty(Math.round(c.stockQty * 1000) / 1000)} ${ing.unit ?? "each"} from stock${ing.avg_cost != null ? ` at ${unitCost(ing.avg_cost)}/${ing.unit ?? "each"}` : ""}`}>
@@ -330,7 +330,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
               })}
             </div>
             <span className="tip" tabIndex={-1} data-tip="Not in the list? Add it on the Inventory items tab first." style={{ textDecoration: "none" }}>
-              <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each", yield_pct: "100" }])}>+ Add an ingredient</button>
+              <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each" }])}>+ Add an ingredient</button>
             </span>
             <label className="stack" style={{ gap: 4 }}><span className="small tip" tabIndex={0} data-tip="Printed on the recipe card for the kitchen">Method and plating notes</span>
               <textarea className="textarea" rows={3} maxLength={5000} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Sear skin side down 4 minutes; plate rice left, asparagus fanned right." />

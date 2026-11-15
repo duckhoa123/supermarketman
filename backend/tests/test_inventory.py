@@ -34,14 +34,14 @@ def test_units_convert_within_mass_volume_and_count():
 def test_prd_salmon_example_plate_cost_and_pricing():
     """8 oz salmon bought at $12.00/lb with 80% yield costs $7.50; a $10.27 plate at $32 is 32.1%, and hitting
     30% means charging $34.23."""
-    salmon = Item(name="Salmon", unit="lb", avg_cost=1200.0)
-    line = RecipeLine(qty=8, unit="oz", yield_pct=80)
+    salmon = Item(name="Salmon", unit="lb", avg_cost=1200.0, default_yield_pct=80)
+    line = RecipeLine(qty=8, unit="oz")
     costed = inv.cost_line(line, salmon)
     assert costed.problem is None and round(costed.cost_cents, 2) == 750.0
     assert round(costed.stock_qty, 4) == 0.625  # taken from stock per plate: EP portion ÷ yield
     p = inv.pricing(3200, 1027, 30)
     assert p["food_cost_pct"] == 32.1 and p["suggested_price_cents"] == 3423 and p["margin_cents"] == 2173
-    bad = inv.cost_line(RecipeLine(qty=2, unit="g", yield_pct=100), Item(name="Eggs", unit="each", avg_cost=40.0))
+    bad = inv.cost_line(RecipeLine(qty=2, unit="g"), Item(name="Eggs", unit="each", avg_cost=40.0))
     assert bad.problem and "each" in bad.problem
 
 
@@ -78,7 +78,8 @@ async def test_recipe_sales_count_waste_and_cogs(client, session, demo_location_
     assert on_hand["totals"]["items"] > 0 and not on_hand["suggested_areas"]
 
     r = await client.post(f"{base}/inventory/items", headers=OWNER, json={
-        "name": "Salmon fillet", "unit": "lbs", "unit_cost": 1200, "qty": 20, "par_level": 30, "reorder_point": 5,
+        "name": "Salmon fillet", "unit": "lbs", "unit_cost": 1200, "qty": 20, "default_yield_pct": 80, "par_level": 30,
+        "reorder_point": 5,
         "storage_area_id": walk_in["id"]})
     assert r.status_code == 200, r.text
     salmon_id = r.json()["id"]
@@ -92,7 +93,7 @@ async def test_recipe_sales_count_waste_and_cogs(client, session, demo_location_
         "lines": [{"ingredient_id": salmon_id, "qty": 2, "unit": "each"}]})
     assert bad.status_code == 422 and "lb" in bad.json()["detail"]
     r = await client.put(f"{base}/recipes/{menu['id']}", headers=OWNER, json={
-        "lines": [{"ingredient_id": salmon_id, "qty": 8, "unit": "oz", "yield_pct": 80}], "q_factor_cents": 50})
+        "lines": [{"ingredient_id": salmon_id, "qty": 8, "unit": "oz"}], "q_factor_cents": 50})
     assert r.status_code == 200, r.text
     detail = r.json()
     assert detail["lines"][0]["cost_cents"] == 750 and detail["plate_cost_cents"] == 800
@@ -178,7 +179,7 @@ async def test_recipe_sales_count_waste_and_cogs(client, session, demo_location_
     assert s["value_cents"] == 26000 and s["used_in"] == 1 and s["status"] == "at_par"
     assert s["last_count"]["qty"] == 18 and s["days_of_cover"] is not None
     audit = (await client.get(f"{base}/inventory/audit?item_id={menu['id']}", headers=OWNER)).json()["changes"]
-    assert audit[0]["field"] in ("recipe", "q_factor") and any("8 oz Salmon fillet @ 80%" in (a["new"] or "")
+    assert audit[0]["field"] in ("recipe", "q_factor") and any("8 oz Salmon fillet" in (a["new"] or "")
                                                                for a in audit)
 
 
@@ -285,7 +286,7 @@ async def test_prd_grilled_salmon_with_a_sub_recipe(client, session, demo_locati
         return r.json()["id"]
 
     salmon = await add(name="Salmon side", unit="lb", unit_cost=1200, qty=50, default_yield_pct=80)
-    asparagus = await add(name="Asparagus", unit="lb", unit_cost=400, qty=20)
+    asparagus = await add(name="Asparagus", unit="lb", unit_cost=400, qty=20, default_yield_pct=55)
     rice = await add(name="Jasmine rice", unit="lb", unit_cost=160, qty=40)
     butter = await add(name="Unsalted butter", unit="lb", unit_cost=640, qty=10)
     # Lemon butter sauce: a batch of 32 oz costs $12.80 → $0.40 an oz.
@@ -297,8 +298,8 @@ async def test_prd_grilled_salmon_with_a_sub_recipe(client, session, demo_locati
                               json={"name": "PRD grilled salmon", "price_cents": 3200})).json()
     r = await client.put(f"{base}/recipes/{dish['id']}", headers=OWNER, json={
         "q_factor_cents": 30, "recipe_notes": "Skin side down, 4 minutes.", "lines": [
-            {"ingredient_id": salmon, "qty": 8, "unit": "oz", "yield_pct": 80},
-            {"ingredient_id": asparagus, "qty": 4, "unit": "oz", "yield_pct": 55},
+            {"ingredient_id": salmon, "qty": 8, "unit": "oz", "yield_pct": 100},  # ignored: the item's 80% is used
+            {"ingredient_id": asparagus, "qty": 4, "unit": "oz"},
             {"ingredient_id": rice, "qty": 2.5, "unit": "oz"},
             {"ingredient_id": sauce, "qty": 1, "unit": "oz"}]})
     d = r.json()

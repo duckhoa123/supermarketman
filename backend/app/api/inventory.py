@@ -674,7 +674,8 @@ async def recipe_detail(session: AsyncSession, location: Location, menu: Item) -
         ing = c.ingredient
         lines.append({"id": c.line.id, "ingredient_id": c.line.ingredient_id, "name": ing.name if ing else "(deleted)",
                       "qty": c.line.qty, "unit": c.line.unit or (ing.unit if ing else None),
-                      "stock_unit": ing.unit if ing else None, "yield_pct": c.line.yield_pct,
+                      "stock_unit": ing.unit if ing else None,
+                      "yield_pct": inv.ingredient_yield(ing) if ing else 100.0,
                       "is_prep": inv.is_prep(ing) if ing else False,
                       "conversions": (ing.conversions or []) if ing else [],
                       "stock_qty": round(c.stock_qty, 4) if c.stock_qty is not None else None,
@@ -710,7 +711,7 @@ class RecipeLineIn(BaseModel):
     ingredient_id: str
     qty: float = Field(gt=0, le=1_000_000)
     unit: str | None = Field(default=None, max_length=32)
-    yield_pct: float = Field(default=100, ge=1, le=100)
+    yield_pct: float | None = Field(default=None, ge=1, le=100)  # ignored: yield comes from the inventory item
 
 
 class RecipeIn(BaseModel):

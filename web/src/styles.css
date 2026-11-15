@@ -995,4 +995,5 @@ tr.inv-big td { background: var(--tomato-tint); }
 .tip:hover::after, .tip:focus::after { opacity: 1; transform: none; }
 .tip.tip-left::after { left: auto; right: 0; }
 .rec-head .tip::after { font-size: 0.78rem; }
-.rec-line > .tip { align-self: center; justify-self: end; }
+.rec-line > .tip.num { align-self: center; justify-self: end; }
+.rec-yield { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 34px; border-radius: var(--radius-s); background: var(--page); color: var(--muted); font-size: 0.9rem; }

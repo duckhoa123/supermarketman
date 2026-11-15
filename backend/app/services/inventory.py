@@ -342,7 +342,8 @@ class Costing:
             out.problem = (f"Can't turn {line.unit} into {ing.unit or 'each'} for {ing.name}: add a conversion "
                            f"(like 1 {line.unit} = … {ing.unit or 'each'}) or use {ing.unit or 'each'}")
             return out
-        out.stock_qty = ep / (max(line.yield_pct or 100.0, 1.0) / 100.0)
+        # Yield comes from the inventory item (one place to change it), not from each recipe.
+        out.stock_qty = ep / (max(ingredient_yield(ing), 1.0) / 100.0)
         out.unit_cost, problem = self.unit_cost(ing, seen)
         if out.unit_cost is not None:
             out.cost_cents = out.stock_qty * out.unit_cost
@@ -385,13 +386,17 @@ async def load_costing(session: AsyncSession, location: Location) -> Costing:
     return Costing(lines, items)
 
 
+def ingredient_yield(item: Item) -> float:
+    return float(item.default_yield_pct or 100.0)
+
+
 def cost_line(line: RecipeLine, ingredient: Item | None) -> CostedLine:
     """One recipe line on its own: EP portion → amount as bought (÷ yield), × the ingredient's cost."""
     if ingredient is None:
         return Costing([], {}).cost_line(line)
     key = ingredient.id or "_"
     return Costing([], {key: ingredient}).cost_line(
-        RecipeLine(ingredient_id=key, qty=line.qty, unit=line.unit, yield_pct=line.yield_pct))
+        RecipeLine(ingredient_id=key, qty=line.qty, unit=line.unit))
 
 
 def pricing(price_cents: int, plate_cents: float, target_pct: float) -> dict:
@@ -409,7 +414,7 @@ def pricing(price_cents: int, plate_cents: float, target_pct: float) -> dict:
 
 def _describe(lines: list[RecipeLine], items: dict[str, Item]) -> str:
     return "; ".join(f"{ln.qty:g} {ln.unit or ''} {items[ln.ingredient_id].name if ln.ingredient_id in items else '?'}"
-                     f"{f' @ {ln.yield_pct:g}%' if (ln.yield_pct or 100) != 100 else ''}".replace("  ", " ")
+                     .replace("  ", " ")
                      for ln in lines) or "(none)"
 
 
@@ -417,7 +422,7 @@ async def save_recipe(session: AsyncSession, location: Location, menu: Item, lin
                       q_factor_cents: int | None, q_factor_pct: float | None = None, *,
                       user_id: str | None = None) -> None:
     """Replace the recipe of a menu item (one plate) or a prep item (one batch).
-    lines: [{"ingredient_id", "qty", "unit", "yield_pct"}]."""
+    lines: [{"ingredient_id", "qty", "unit"}]. Each ingredient's yield is its own, from inventory."""
     costing = await load_costing(session, location)
     ids = {ln["ingredient_id"] for ln in lines}
     found = {i.id: i for i in await session.scalars(select(Item).where(Item.location_id == location.id,
@@ -440,7 +445,7 @@ async def save_recipe(session: AsyncSession, location: Location, menu: Item, lin
         await session.delete(o)
     new = [RecipeLine(location_id=location.id, menu_item_id=menu.id, ingredient_id=ln["ingredient_id"],
                       qty=float(ln["qty"]), unit=(ln.get("unit") or None),
-                      yield_pct=float(ln.get("yield_pct") or 100), sort=n) for n, ln in enumerate(lines)]
+                      yield_pct=ingredient_yield(found[ln["ingredient_id"]]), sort=n) for n, ln in enumerate(lines)]
     session.add_all(new)
     audit(session, menu, "recipe", before, _describe(new, found), user_id)
     audit(session, menu, "q_factor", menu.q_factor_cents if not menu.q_factor_pct else f"{menu.q_factor_pct:g}%",
