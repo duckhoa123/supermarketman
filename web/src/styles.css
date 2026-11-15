@@ -997,3 +997,9 @@ tr.inv-big td { background: var(--tomato-tint); }
 .rec-head .tip::after { font-size: 0.78rem; }
 .rec-line > .tip.num { align-self: center; justify-self: end; }
 .rec-yield { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 34px; border-radius: var(--radius-s); background: var(--page); color: var(--muted); font-size: 0.9rem; }
+.inv-advanced { border-top: 1px solid var(--line); padding-top: 10px; }
+.inv-advanced summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+.inv-advanced summary::-webkit-details-marker { display: none; }
+.inv-advanced summary::before { content: "▸"; transition: transform 0.15s; }
+.inv-advanced[open] summary::before { transform: rotate(90deg); }
+.inv-advanced[open] summary { margin-bottom: 10px; }

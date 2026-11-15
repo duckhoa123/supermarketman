@@ -204,8 +204,8 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     yieldPct: item?.default_yield_pct != null ? String(item.default_yield_pct) : "",
     prep: item?.is_prep ?? false, batch: item?.batch_qty != null ? String(item.batch_qty) : "",
   });
+  const [advanced, setAdvanced] = useState(!!(item?.par_level != null || item?.reorder_point != null || item?.reorder_qty != null));
   const [yieldTest, setYieldTest] = useState<{ ap: string; ep: string; cooked: string } | null>(null);
-  const [adjust, setAdjust] = useState({ mode: "set" as "set" | "add", amount: "", reason: "correction", note: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (patch: Partial<typeof f>) => setF((x) => ({ ...x, ...patch }));
@@ -246,12 +246,6 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
       await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: {
         ...common, ...(item.editable_name && f.name.trim() !== item.name ? { name: f.name.trim() } : {}),
         ...(costCents != null && !f.prep ? { unit_cost: costCents } : {}), batch_qty: f.prep ? batchN : 0 } });
-      const amount = num(adjust.amount);
-      if (amount != null && adjust.amount.trim()) {
-        await api(`${base}/stock-adjustments`, { method: "POST", body: adjust.mode === "add"
-          ? { item_id: item.id, qty_delta: amount, reason: adjust.reason, note: adjust.note || null }
-          : { item_id: item.id, set_to: amount, reason: adjust.reason, note: adjust.note || null } });
-      }
       onDone(`${item.name} saved.`);
     } catch (x) {
       setError(x instanceof Error ? x.message : "Couldn't save.");
@@ -294,8 +288,6 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
         <button className="btn primary" form="stock-item-form" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
       </div>}>
       <form id="stock-item-form" className="stack" onSubmit={save}>
-        <section className="inv-group">
-          <h3>Details</h3>
           {field("Name",
             <input className="input" value={f.name} maxLength={300} autoFocus={!item} disabled={!!item && !item.editable_name}
               onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Salmon fillet" />,
@@ -332,72 +324,40 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
               </>
             )}
           {field("Barcode", <input className="input" value={f.barcode} onChange={(e) => set({ barcode: e.target.value })} placeholder="Scan or type (optional)" />)}
-        </section>
 
-        <section className="inv-group">
-          <h3>Par</h3>
+        {field("Usual yield %", <div className="inv-amount">
+          <input className="input" inputMode="decimal" value={f.yieldPct} onChange={(e) => set({ yieldPct: e.target.value })} placeholder="100" />
+          <button type="button" className="btn small" onClick={() => setYieldTest(yieldTest ? null : { ap: "", ep: "", cooked: "" })}>
+            {yieldTest ? "Close" : "Work it out"}
+          </button>
+        </div>, "The share that's usable after trimming and cooking. Recipes use it.")}
+        {yieldTest && (
+          <div className="inv-yield">
+            <div className="inv-form-row">
+              {field("As bought", <input className="input" inputMode="decimal" value={yieldTest.ap} onChange={(e) => setYieldTest({ ...yieldTest, ap: e.target.value })} placeholder="10" />)}
+              {field("After trimming", <input className="input" inputMode="decimal" value={yieldTest.ep} onChange={(e) => setYieldTest({ ...yieldTest, ep: e.target.value })} placeholder="8.5" />)}
+              {field("After cooking", <input className="input" inputMode="decimal" value={yieldTest.cooked} onChange={(e) => setYieldTest({ ...yieldTest, cooked: e.target.value })} placeholder="optional" />)}
+            </div>
+            <div className="spread small">
+              <span>{tested != null ? <strong>Yield {tested}%</strong> : "Weigh it the same way each time."}</span>
+              <button type="button" className="btn small primary" disabled={tested == null || tested <= 0 || tested > 100}
+                onClick={() => { set({ yieldPct: String(tested) }); setYieldTest(null); }}>Use {tested ?? "–"}%</button>
+            </div>
+          </div>
+        )}
+        {field("Supplier", <select className="select" value={f.supplierId} onChange={(e) => set({ supplierId: e.target.value })}>
+          <option value="">No supplier</option>
+          {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>)}
+
+        <details className="inv-advanced" open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
+          <summary>Advanced</summary>
           <div className="inv-form-row">
             {field(`Par level (${unitShown})`, <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery")}
-            {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when it gets here")}
-            {field("Order amount", <input className="input" inputMode="decimal" value={f.orderQty} onChange={(e) => set({ orderQty: e.target.value })} placeholder="Par − on hand" />)}
+            {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when stock gets down to this")}
+            {field("Order amount", <input className="input" inputMode="decimal" value={f.orderQty} onChange={(e) => set({ orderQty: e.target.value })} placeholder="Par − on hand" />, "How much to order each time. Empty: top up to par.")}
           </div>
-        </section>
-
-        <section className="inv-group">
-          <div className="spread"><h3>Yield</h3>
-            <button type="button" className="btn small" onClick={() => setYieldTest(yieldTest ? null : { ap: "", ep: "", cooked: "" })}>
-              {yieldTest ? "Close" : "Work it out"}
-            </button>
-          </div>
-          {field("Usual yield %", <input className="input" inputMode="decimal" value={f.yieldPct} onChange={(e) => set({ yieldPct: e.target.value })} placeholder="100" />,
-            "The share that's usable after trimming and cooking. Recipes start from it.")}
-          {yieldTest && (
-            <div className="inv-yield">
-              <div className="inv-form-row">
-                {field("As bought", <input className="input" inputMode="decimal" value={yieldTest.ap} onChange={(e) => setYieldTest({ ...yieldTest, ap: e.target.value })} placeholder="10" />)}
-                {field("After trimming", <input className="input" inputMode="decimal" value={yieldTest.ep} onChange={(e) => setYieldTest({ ...yieldTest, ep: e.target.value })} placeholder="8.5" />)}
-                {field("After cooking (optional)", <input className="input" inputMode="decimal" value={yieldTest.cooked} onChange={(e) => setYieldTest({ ...yieldTest, cooked: e.target.value })} placeholder="–" />)}
-              </div>
-              <div className="spread small">
-                <span>Weigh it the same way each time. {tested != null ? <strong>Yield {tested}%</strong> : null}</span>
-                <button type="button" className="btn small primary" disabled={tested == null || tested <= 0 || tested > 100}
-                  onClick={() => { set({ yieldPct: String(tested) }); setYieldTest(null); }}>Use {tested ?? "–"}%</button>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="inv-group">
-          <h3>Supplier</h3>
-          <select className="select" aria-label="Supplier" value={f.supplierId} onChange={(e) => set({ supplierId: e.target.value })}>
-            <option value="">No supplier</option>
-            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </section>
-
-        {item && !item.is_prep && (
-          <section className="inv-group">
-            <h3><span className="tip" tabIndex={0} data-tip="Saved in History with your name. To log something thrown out, use the Waste tab.">Correct the quantity</span> <span className="muted small">(now {qty(item.stock_qty)} {item.unit ?? ""})</span></h3>
-            <div className="row" style={{ flexWrap: "nowrap" }}>
-              <select className="select" style={{ width: "auto" }} value={adjust.mode} aria-label="How"
-                onChange={(e) => setAdjust({ ...adjust, mode: e.target.value as "set" | "add" })}>
-                <option value="set">Set to</option>
-                <option value="add">Add (− to take away)</option>
-              </select>
-              <input className="input" inputMode="decimal" aria-label="Amount" value={adjust.amount} placeholder={adjust.mode === "set" ? qty(item.stock_qty) : "e.g. -2"}
-                onChange={(e) => setAdjust({ ...adjust, amount: e.target.value })} />
-              <select className="select" style={{ width: "auto" }} aria-label="Reason" value={adjust.reason}
-                onChange={(e) => setAdjust({ ...adjust, reason: e.target.value })}>
-                <option value="correction">Correction</option>
-                <option value="found">Found more</option>
-                <option value="returned">Returned to supplier</option>
-                <option value="transfer">Moved elsewhere</option>
-                <option value="missing">Missing</option>
-              </select>
-            </div>
-            <input className="input" maxLength={500} placeholder="Note (optional)" value={adjust.note} onChange={(e) => setAdjust({ ...adjust, note: e.target.value })} />
-          </section>
-        )}
+        </details>
         {error && <p className="small error">{error}</p>}
       </form>
     </Dialog>
