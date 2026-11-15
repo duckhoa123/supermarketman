@@ -175,10 +175,9 @@ export default function Recipes() {
       </div>
 
       {editing && (
-        <RecipeEditor base={base} itemId={editing} stock={onHand.data.items} units={onHand.data.units}
+        <RecipeEditor base={base} itemId={editing} stock={onHand.data.items}
           onClose={() => setEditing(null)}
-          onSaved={(m) => { setEditing(null); setNotice(m); void report.reload(); void onHand.reload(); }}
-          onIngredientAdded={() => void onHand.reload()} />
+          onSaved={(m) => { setEditing(null); setNotice(m); void report.reload(); void onHand.reload(); }} />
       )}
       {making && (
         <MakeDialog base={base} prep={making} onClose={() => setMaking(null)}
@@ -190,9 +189,8 @@ export default function Recipes() {
 
 type Line = { key: string; ingredient_id: string; qty: string; unit: string; yield_pct: string };
 
-function RecipeEditor({ base, itemId, stock, units, onClose, onSaved, onIngredientAdded }: {
-  base: string; itemId: string; stock: StockItem[]; units: string[]; onClose: () => void; onSaved: (m: string) => void;
-  onIngredientAdded: () => void;
+function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
+  base: string; itemId: string; stock: StockItem[]; onClose: () => void; onSaved: (m: string) => void;
 }) {
   const detail = useApi<RecipeDetail>(`${base}/recipes/${itemId}`);
   const [lines, setLines] = useState<Line[] | null>(null);
@@ -200,7 +198,6 @@ function RecipeEditor({ base, itemId, stock, units, onClose, onSaved, onIngredie
   const [price, setPrice] = useState<string | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [notes, setNotes] = useState<string | null>(null);
-  const [adding, setAdding] = useState<{ name: string; unit: string; cost: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const d = detail.data;
@@ -238,20 +235,6 @@ function RecipeEditor({ base, itemId, stock, units, onClose, onSaved, onIngredie
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((ls) => (ls ?? []).map((l, j) => (j === i ? { ...l, ...patch } : l)));
-  }
-
-  async function addIngredient() {
-    if (!adding?.name.trim()) return;
-    try {
-      const cost = Number(adding.cost.replace(/[$,\s]/g, ""));
-      const r = await api<{ id: string }>(`${base}/inventory/items`, { method: "POST", body: {
-        name: adding.name.trim(), unit: adding.unit || null, unit_cost: adding.cost.trim() && !Number.isNaN(cost) ? cost * 100 : null } });
-      onIngredientAdded();
-      setLines((ls) => [...(ls ?? []), { key: r.id + Date.now(), ingredient_id: r.id, qty: "", unit: normUnit(adding.unit) || "each", yield_pct: "100" }]);
-      setAdding(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't add the ingredient.");
-    }
   }
 
   async function save() {
@@ -342,20 +325,8 @@ function RecipeEditor({ base, itemId, stock, units, onClose, onSaved, onIngredie
                 );
               })}
             </div>
-            <div className="row">
-              <button className="btn small" onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each", yield_pct: "100" }])}>+ Add an ingredient</button>
-              {!adding && <button className="btn small" onClick={() => setAdding({ name: "", unit: "", cost: "" })}>+ New ingredient</button>}
-            </div>
-            {adding && (
-              <div className="rec-new row" style={{ flexWrap: "nowrap" }}>
-                <input className="input" placeholder="Name" value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} autoFocus />
-                <input className="input" list="rec-units" placeholder="Unit (lb)" style={{ width: 100 }} value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} />
-                <datalist id="rec-units">{units.map((u) => <option key={u} value={u} />)}</datalist>
-                <input className="input" inputMode="decimal" placeholder="$ per unit" style={{ width: 110 }} value={adding.cost} onChange={(e) => setAdding({ ...adding, cost: e.target.value })} />
-                <button className="btn small primary" onClick={() => void addIngredient()}>Add</button>
-                <button className="sb-icon" aria-label="Cancel" onClick={() => setAdding(null)}>✕</button>
-              </div>
-            )}
+            <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each", yield_pct: "100" }])}>+ Add an ingredient</button>
+            <p className="small muted" style={{ margin: 0 }}>Not in the list? Add it on the Inventory items tab first.</p>
             <label className="stack" style={{ gap: 4 }}><span className="small">Method and plating notes (on the printed card)</span>
               <textarea className="textarea" rows={3} maxLength={5000} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Sear skin side down 4 minutes; plate rice left, asparagus fanned right." />
             </label>
