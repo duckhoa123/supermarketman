@@ -289,12 +289,14 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
       {!d || !lines ? <p className="muted">Loading…</p> : (
         <div className="rec-grid">
           <section className="stack" style={{ gap: 10, minWidth: 0 }}>
-            <p className="small muted" style={{ margin: 0 }}>
-              {d.is_prep ? `One batch makes ${qty(d.batch_qty)} ${d.unit ?? ""}. List what goes into one batch.`
-                : "Each ingredient as it goes on the plate (edible portion), and the yield of the ingredient as bought."}
-            </p>
             <div className="rec-lines">
-              <div className="rec-line rec-head small muted"><span>Ingredient</span><span>Portion</span><span>Unit</span><span>Yield %</span><span className="num">Cost</span><span /></div>
+              <div className="rec-line rec-head small muted">
+                <span className="tip" tabIndex={0} data-tip={d.is_prep ? `What goes into one batch (it makes ${qty(d.batch_qty)} ${d.unit ?? ""})` : "What goes on one plate"}>Ingredient</span>
+                <span className="tip" tabIndex={0} data-tip="How much is on the plate, after trimming and cooking (edible portion)">Portion</span>
+                <span>Unit</span>
+                <span className="tip" tabIndex={0} data-tip="Share of the ingredient as bought that ends up usable. 80% means 10 oz bought gives 8 oz.">Yield %</span>
+                <span className="num">Cost</span><span />
+              </div>
               {lines.map((l, i) => {
                 const ing = byId[l.ingredient_id];
                 const c = live.out[i];
@@ -314,20 +316,23 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                         {unitsFor(ing?.unit ?? l.unit, ing?.conversions ?? []).map((u) => <option key={u} value={u}>{u}</option>)}
                       </select>
                       <input className="input" inputMode="decimal" aria-label="Yield %" value={l.yield_pct} onChange={(e) => setLine(i, { yield_pct: e.target.value })} />
-                      <span className="num">{c?.cost != null ? money(c.cost) : "–"}</span>
+                      {ing && c?.stockQty != null && !c.problem ? (
+                        <span className="num tip tip-left" tabIndex={0}
+                          data-tip={`Takes ${qty(Math.round(c.stockQty * 1000) / 1000)} ${ing.unit ?? "each"} from stock${ing.avg_cost != null ? ` at ${unitCost(ing.avg_cost)}/${ing.unit ?? "each"}` : ""}`}>
+                          {c.cost != null ? money(c.cost) : "–"}
+                        </span>
+                      ) : <span className="num">{c?.cost != null ? money(c.cost) : "–"}</span>}
                       <button className="sb-icon" aria-label="Remove ingredient" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>
                     </div>
                     {c?.problem && l.ingredient_id && <small className="warn-text">{c.problem}</small>}
-                    {ing && c?.stockQty != null && !c.problem && (
-                      <small className="muted">Takes {qty(Math.round(c.stockQty * 1000) / 1000)} {ing.unit ?? "each"} from stock{ing.avg_cost != null ? ` at ${unitCost(ing.avg_cost)}/${ing.unit ?? "each"}` : ""}</small>
-                    )}
                   </div>
                 );
               })}
             </div>
-            <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each", yield_pct: "100" }])}>+ Add an ingredient</button>
-            <p className="small muted" style={{ margin: 0 }}>Not in the list? Add it on the Inventory items tab first.</p>
-            <label className="stack" style={{ gap: 4 }}><span className="small">Method and plating notes (on the printed card)</span>
+            <span className="tip" tabIndex={-1} data-tip="Not in the list? Add it on the Inventory items tab first." style={{ textDecoration: "none" }}>
+              <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each", yield_pct: "100" }])}>+ Add an ingredient</button>
+            </span>
+            <label className="stack" style={{ gap: 4 }}><span className="small tip" tabIndex={0} data-tip="Printed on the recipe card for the kitchen">Method and plating notes</span>
               <textarea className="textarea" rows={3} maxLength={5000} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Sear skin side down 4 minutes; plate rice left, asparagus fanned right." />
             </label>
           </section>
@@ -336,7 +341,7 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
             <div className="rec-total">
               <div className="spread small"><span>Ingredients</span><span>{money(live.ingredients)}</span></div>
               <div className="spread small">
-                <span className="row" style={{ gap: 6 }}>Q-factor
+                <span className="row" style={{ gap: 6 }}><span className="tip" tabIndex={0} data-tip="Oil, salt, garnish: too small to list. A fixed $ per plate, or a % of the ingredients.">Q-factor</span>
                   <input className="input num-in" inputMode="decimal" aria-label="Q-factor" value={q?.value ?? ""} placeholder="0" onChange={(e) => setQ({ mode: q?.mode ?? "cents", value: e.target.value })} />
                   <select className="select" style={{ width: "auto", padding: "2px 6px" }} aria-label="Q-factor as" value={q?.mode ?? "cents"} onChange={(e) => setQ({ mode: e.target.value as "cents" | "pct", value: q?.value ?? "" })}>
                     <option value="cents">$</option><option value="pct">%</option>
@@ -349,18 +354,16 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
             </div>
             {!d.is_prep && (
               <div className="rec-total">
-                <label className="spread small"><span>{canPrice ? "Menu price" : "Try a price"}</span>
+                <label className="spread small">{canPrice ? <span>Menu price</span>
+                  : <span className="tip" tabIndex={0} data-tip={`What-if only: the real price (${money(d.price_cents)}) is set in your POS`}>Try a price</span>}
                   <input className="input num-in" style={{ width: 90 }} inputMode="decimal" value={price ?? ""} onChange={(e) => setPrice(e.target.value)} />
                 </label>
-                {!canPrice && Math.round(Number(price || 0) * 100) !== d.price_cents && (
-                  <small className="muted">What-if only: the real price ({money(d.price_cents)}) is set in your POS.</small>
-                )}
                 <div className="spread"><span>Food cost</span>
                   <strong className={pctClass(live.pct, live.target)}>{live.pct != null ? `${Math.round(live.pct * 10) / 10}%` : "–"}</strong></div>
-                <label className="spread small"><span>Target</span>
+                <label className="spread small"><span className="tip" tabIndex={0} data-tip="Food cost % to aim for. Empty uses your restaurant's default.">Target</span>
                   <span className="row" style={{ gap: 4 }}><input className="input num-in" inputMode="decimal" value={target ?? ""} placeholder={String(d.target_food_cost_pct)} onChange={(e) => setTarget(e.target.value)} />%</span>
                 </label>
-                <div className="spread small"><span>Price for target</span><span>{live.plate > 0 ? money(Math.round(live.plate / (live.target / 100))) : "–"}</span></div>
+                <div className="spread small"><span className="tip" tabIndex={0} data-tip="The menu price that would bring this dish to its target food cost">Price for target</span><span>{live.plate > 0 ? money(Math.round(live.plate / (live.target / 100))) : "–"}</span></div>
                 <div className="spread small"><span>Margin</span><span>{live.price ? money(live.price - Math.round(live.plate)) : "–"}</span></div>
               </div>
             )}

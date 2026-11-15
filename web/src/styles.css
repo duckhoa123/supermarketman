@@ -993,3 +993,6 @@ tr.inv-big td { background: var(--tomato-tint); }
   padding: 7px 9px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); white-space: normal;
   opacity: 0; transform: translateY(-2px); pointer-events: none; transition: opacity 0.12s, transform 0.12s; }
 .tip:hover::after, .tip:focus::after { opacity: 1; transform: none; }
+.tip.tip-left::after { left: auto; right: 0; }
+.rec-head .tip::after { font-size: 0.78rem; }
+.rec-line > .tip { align-self: center; justify-self: end; }
