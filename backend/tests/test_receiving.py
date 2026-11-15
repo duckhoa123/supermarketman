@@ -129,7 +129,7 @@ async def test_scan_review_confirm_then_price_change_alert(client, session, demo
     assert "8.4" in csv_r.text and "12.0" in csv_r.text
 
     # The Restaurant Manager answers from the same data.
-    llm = fake_llm([tool_result("get_price_changes", {"days": 30}), text_result("Burrata went up 12%.")])
+    llm = fake_llm([tool_result("get_price_changes", {"days": 365}), text_result("Burrata went up 12%.")])
     events = parse_sse((await client.post(f"/locations/{demo_location_id}/chat", headers=OWNER,
                                           json={"message": "Did any supplier prices go up?"})).text)
     assert {"type": "tool", "name": "get_price_changes"} in events
