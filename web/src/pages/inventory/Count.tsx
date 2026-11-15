@@ -34,11 +34,18 @@ export default function CountPanel() {
   const inArea = (area: string) => countable.filter((i) =>
     area === EVERYTHING || (area === NO_AREA ? !i.storage_area_id : i.storage_area_id === area));
 
-  function start(area: string) {
+  async function start(area: string) {
+    // Freeze the amounts as they are right now, not as they were when this page was opened (sales may have
+    // come in since). With no signal, the last amounts loaded are used.
+    let live: Record<string, number | null> = {};
+    try {
+      const fresh = await api<OnHand>(`${base}/inventory/on-hand`);
+      live = Object.fromEntries(fresh.items.map((i) => [i.id, i.stock_qty]));
+    } catch { /* offline: fall back to what's on screen */ }
     const items = inArea(area);
     setResult(null);
     setDraft({ client_id: newClientId("count"), area, started_at: new Date().toISOString(),
-      expected: Object.fromEntries(items.map((i) => [i.id, i.stock_qty])), counts: {} });
+      expected: Object.fromEntries(items.map((i) => [i.id, i.id in live ? live[i.id] : i.stock_qty])), counts: {} });
   }
 
   if (onHand.error) return <p className="error">{onHand.error}</p>;
@@ -87,14 +94,14 @@ export default function CountPanel() {
         </div>
         <div className="inv-count-areas">
           {data.areas.map((a) => (
-            <button key={a.id} className="inv-count-area" onClick={() => start(a.id)} disabled={!inArea(a.id).length}>
+            <button key={a.id} className="inv-count-area" onClick={() => void start(a.id)} disabled={!inArea(a.id).length}>
               <strong><span aria-hidden>{areaIcon(a.name)}</span> {a.name}</strong><span className="small muted">{inArea(a.id).length} items</span>
             </button>
           ))}
           {data.areas.length > 0 && inArea(NO_AREA).length > 0 && (
-            <button className="inv-count-area" onClick={() => start(NO_AREA)}><strong>No area</strong><span className="small muted">{inArea(NO_AREA).length} items</span></button>
+            <button className="inv-count-area" onClick={() => void start(NO_AREA)}><strong>No area</strong><span className="small muted">{inArea(NO_AREA).length} items</span></button>
           )}
-          <button className="inv-count-area" onClick={() => start(EVERYTHING)} disabled={!countable.length}>
+          <button className="inv-count-area" onClick={() => void start(EVERYTHING)} disabled={!countable.length}>
             <strong>Everything</strong><span className="small muted">{countable.length} items · full count</span>
           </button>
         </div>
