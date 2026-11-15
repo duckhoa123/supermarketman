@@ -1,196 +1,17 @@
 import { useMemo, useState } from "react";
-import { Dialog } from "../../components/PosDialogs";
-import { useApp } from "../../context";
-import { useApi } from "../../hooks";
-import { api } from "../../lib/api";
-import {
-  convert, money, normUnit, qty, unitCost, unitsFor, type MenuCost, type OnHand, type PrepCost, type RecipeDetail,
-  type RecipeReport, type StockItem,
-} from "../../lib/inventory";
+import { useApi } from "../hooks";
+import { api } from "../lib/api";
+import { convert, money, normUnit, qty, unitCost, unitsFor, type RecipeDetail, type StockItem } from "../lib/inventory";
+import { Dialog } from "./PosDialogs";
 
-type SortKey = "name" | "price" | "plate" | "pct" | "margin" | "sold" | "change";
-type Filter = "all" | "over" | "none";
+export const pctClass = (pct: number | null, target: number) => pct == null ? "" : pct > target + 0.05 ? "error" : "good-text";
 
-const pctClass = (pct: number | null, target: number) => pct == null ? "" : pct > target + 0.05 ? "error" : "good-text";
-
-export default function Recipes() {
-  const { location } = useApp();
-  const base = `/locations/${location.id}`;
-  const report = useApi<RecipeReport>(`${base}/recipes`);
-  const onHand = useApi<OnHand>(`${base}/inventory/on-hand`);
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sold", desc: true });
-  const [filter, setFilter] = useState<Filter>("all");
-  const [search, setSearch] = useState("");
-  const [editing, setEditing] = useState<string | null>(null);
-  const [making, setMaking] = useState<PrepCost | null>(null);
-  const [notice, setNotice] = useState("");
-
-  const rows = useMemo(() => {
-    const val = (r: MenuCost): number | string => ({
-      name: r.name.toLowerCase(), price: r.price_cents, plate: r.plate_cost_cents ?? -1, pct: r.food_cost_pct ?? -1,
-      margin: r.margin_cents ?? -1, sold: r.sold_30d,
-      change: r.previous_cost_cents != null && r.plate_cost_cents != null ? r.plate_cost_cents - r.previous_cost_cents : -1e9,
-    })[sort.key];
-    const q = search.trim().toLowerCase();
-    return (report.data?.menu ?? [])
-      .filter((r) => (filter === "all" || (filter === "over" ? r.over_target : !r.has_recipe)) && (!q || r.name.toLowerCase().includes(q)))
-      .sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.desc ? -1 : 1); });
-  }, [report.data, sort, filter, search]);
-
-  async function setting(body: Record<string, unknown>) {
-    await api(`${base}/inventory/settings`, { method: "PUT", body });
-    await Promise.all([report.reload(), onHand.reload()]);
-  }
-
-  if (report.error) return <p className="error">{report.error}</p>;
-  if (!report.data || !onHand.data) return <p className="muted">Loading…</p>;
-  const d = report.data;
-  const th = (key: SortKey, label: string, num = true) => (
-    <th className={`${num ? "num" : ""} sortable`} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
-      onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key !== "name" })}>
-      {label}{sort.key === key ? (sort.desc ? " ↓" : " ↑") : ""}
-    </th>
-  );
-
-  return (
-    <div className="stack">
-      <div className="figures">
-        <div className="figure"><div className="label">Dishes with a recipe</div><div className="value">{d.with_recipe}<span className="small muted"> / {d.menu.length}</span></div>
-          <div className="small muted">{d.todo.length ? `${d.todo.length} selling dish${d.todo.length === 1 ? "" : "es"} without one` : "every seller is costed"}</div></div>
-        <div className="figure"><div className="label">Theoretical food cost</div>
-          <div className={`value ${pctClass(d.theoretical_pct, d.target_food_cost_pct)}`}>{d.theoretical_pct != null ? `${d.theoretical_pct}%` : "–"}</div>
-          <div className="small muted">what the recipes say, weighted by last 30 days' sales</div></div>
-        <div className="figure"><div className="label">Over target</div><div className={`value ${d.over_target ? "error" : ""}`}>{d.over_target}</div>
-          <div className="small muted">dishes above their target %</div></div>
-      </div>
-
-      <div className="panel inv-settings">
-        <label className="row small">Food target
-          <input className="input num-in" type="number" min={5} max={90} step={0.5} defaultValue={d.target_food_cost_pct}
-            onBlur={(e) => Number(e.target.value) !== d.target_food_cost_pct && void setting({ target_food_cost_pct: Number(e.target.value) })} />%
-        </label>
-        <label className="row small">Drinks target
-          <input className="input num-in" type="number" min={5} max={90} step={0.5} defaultValue={d.target_beverage_cost_pct}
-            onBlur={(e) => Number(e.target.value) !== d.target_beverage_cost_pct && void setting({ target_beverage_cost_pct: Number(e.target.value) })} />%
-        </label>
-        <label className="row small">Cost ingredients at
-          <select className="select" style={{ width: "auto" }} value={onHand.data.cost_method} onChange={(e) => void setting({ cost_method: e.target.value })}>
-            <option value="average">Weighted average</option>
-            <option value="last">Latest invoice price</option>
-          </select>
-        </label>
-      </div>
-
-      {notice && <p className="notice small">{notice}</p>}
-
-      {d.todo.length > 0 && (
-        <div className="panel stack" style={{ gap: 8 }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Recipes to do</h2>
-            <p className="small muted">These sell but have no recipe, so their cost and the ingredients they use aren't counted. Best sellers first.</p>
-          </div>
-          <div className="inv-todo">
-            {d.todo.slice(0, 12).map((r) => (
-              <button key={r.id} className="inv-todo-item" onClick={() => setEditing(r.id)}>
-                <strong>{r.name}</strong><span className="small muted">{qty(r.sold_30d)} sold · {money(r.revenue_30d_cents, 0)}</span>
-                <span className="small linkish">+ Add recipe</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="panel stack">
-        <div className="spread">
-          <h2 style={{ margin: 0 }}>Menu cost report</h2>
-          <div className="row">
-            <input className="input" style={{ width: 160 }} placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <div className="seg">
-              {(["all", "over", "none"] as Filter[]).map((f) => (
-                <button key={f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>{f === "all" ? "All" : f === "over" ? "Over target" : "No recipe"}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table className="data inv-cost-table">
-            <thead><tr>{th("name", "Dish", false)}{th("price", "Price")}{th("plate", "Plate cost")}{th("pct", "Food cost")}
-              <th className="num">Suggested</th>{th("margin", "Margin")}{th("change", "Change")}{th("sold", "Sold 30d")}<th /></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className={r.over_target ? "inv-over" : ""}>
-                  <td data-label="Dish"><strong>{r.name}</strong>{r.category && <div className="small muted">{r.category}</div>}</td>
-                  <td data-label="Price" className="num">{money(r.price_cents)}</td>
-                  <td data-label="Plate cost" className="num">{r.has_recipe ? <>{money(r.plate_cost_cents)}{!r.complete && <span className="pill warn" title="Some ingredients have no cost" style={{ marginLeft: 4 }}>!</span>}</> : <span className="muted">–</span>}</td>
-                  <td data-label="Food cost" className={`num ${pctClass(r.food_cost_pct, r.target_pct)}`}>
-                    {r.food_cost_pct != null ? <><strong>{r.food_cost_pct}%</strong> <span className="small muted">/ {r.target_pct}%</span></> : "–"}
-                  </td>
-                  <td data-label="Suggested" className="num">{r.over_target ? money(r.suggested_price_cents) : <span className="muted">{r.has_recipe ? "–" : ""}</span>}</td>
-                  <td data-label="Margin" className="num">{money(r.margin_cents)}</td>
-                  <td data-label="Change" className="num">
-                    {r.previous_cost_cents != null && r.plate_cost_cents != null ? (
-                      <span className={r.plate_cost_cents > r.previous_cost_cents ? "error" : "good-text"}
-                        title={`Was ${money(r.previous_cost_cents)}${r.previous_at ? ` until ${new Date(r.previous_at).toLocaleDateString()}` : ""}`}>
-                        {r.plate_cost_cents > r.previous_cost_cents ? "+" : "−"}{money(Math.abs(r.plate_cost_cents - r.previous_cost_cents))}
-                      </span>
-                    ) : <span className="muted">–</span>}
-                  </td>
-                  <td data-label="Sold 30d" className="num">{qty(r.sold_30d)}</td>
-                  <td className="num"><button className="btn small" onClick={() => setEditing(r.id)}>{r.has_recipe ? "Recipe" : "+ Recipe"}</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 && <p className="empty">{d.menu.length ? "No dishes match." : "No menu items with a price yet."}</p>}
-        </div>
-      </div>
-
-      <div className="panel stack">
-        <div>
-          <h2 style={{ margin: 0 }}>Prep items</h2>
-          <p className="small muted">Sauces, doughs, stocks: made in batches and used in other recipes. Add one on the Inventory items tab (tick “a prep item”).</p>
-        </div>
-        {d.prep.length === 0 ? <p className="small muted">No prep items yet.</p> : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead><tr><th>Prep item</th><th className="num">One batch</th><th className="num">Batch cost</th><th className="num">Cost</th><th className="num">On hand</th><th /></tr></thead>
-              <tbody>
-                {d.prep.map((p) => (
-                  <tr key={p.id}>
-                    <td data-label="Prep item"><strong>{p.name}</strong>{!p.has_recipe && <div className="small warn-text">No recipe yet</div>}</td>
-                    <td data-label="One batch" className="num">{qty(p.batch_qty)} {p.unit ?? ""}</td>
-                    <td data-label="Batch cost" className="num">{money(p.batch_cost_cents)}</td>
-                    <td data-label="Cost" className="num">{p.unit_cost != null ? <>{unitCost(p.unit_cost)}<span className="small muted">/{p.unit ?? "each"}</span></> : "–"}</td>
-                    <td data-label="On hand" className="num">{p.stock_qty != null ? `${qty(p.stock_qty)} ${p.unit ?? ""}` : <span className="muted small">not kept: sales use its ingredients</span>}</td>
-                    <td className="num inv-actions">
-                      <button className="btn small" onClick={() => setEditing(p.id)}>Recipe</button>
-                      {p.has_recipe && <button className="btn small" onClick={() => setMaking(p)}>Made a batch</button>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {editing && (
-        <RecipeEditor base={base} itemId={editing} stock={onHand.data.items}
-          onClose={() => setEditing(null)}
-          onSaved={(m) => { setEditing(null); setNotice(m); void report.reload(); void onHand.reload(); }} />
-      )}
-      {making && (
-        <MakeDialog base={base} prep={making} onClose={() => setMaking(null)}
-          onDone={(m) => { setMaking(null); setNotice(m); void report.reload(); void onHand.reload(); }} />
-      )}
-    </div>
-  );
-}
-
+/** The recipe of a menu item (one plate) or a prep item (one batch), costed live as you edit; and recording a
+ * batch of prep made. Opened from Menu items and from Inventory items. */
 type Line = { key: string; ingredient_id: string; qty: string; unit: string };
 const yieldOf = (i: StockItem | undefined) => i?.default_yield_pct ?? 100;  // set on the inventory item
 
-function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
+export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
   base: string; itemId: string; stock: StockItem[]; onClose: () => void; onSaved: (m: string) => void;
 }) {
   const detail = useApi<RecipeDetail>(`${base}/recipes/${itemId}`);
@@ -383,7 +204,9 @@ function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
   );
 }
 
-function MakeDialog({ base, prep, onClose, onDone }: { base: string; prep: PrepCost; onClose: () => void; onDone: (m: string) => void }) {
+export function MakeDialog({ base, prep, onClose, onDone }: {
+  base: string; prep: { id: string; name: string; unit: string | null; batch_qty: number }; onClose: () => void; onDone: (m: string) => void;
+}) {
   const [batches, setBatches] = useState("1");
   const [error, setError] = useState("");
   async function make() {

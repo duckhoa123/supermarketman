@@ -1003,3 +1003,13 @@ tr.inv-big td { background: var(--tomato-tint); }
 .inv-advanced summary::before { content: "▸"; transition: transform 0.15s; }
 .inv-advanced[open] summary::before { transform: rotate(90deg); }
 .inv-advanced[open] summary { margin-bottom: 10px; }
+@media (max-width: 760px) {
+  .inv-cost-table th:first-child, .inv-cost-table td.menu-pick { display: none; }
+  .inv-cost-table td[data-label="Dish"] { grid-column: 1 / -1; }
+  .inv-cost-table td[data-label="Dish"]::before { display: none; }
+  .inv-cost-table td:first-child { grid-column: auto; }
+}
+@media (max-width: 760px) {
+  table.data.inv-table td, table.data.inv-cost-table td, table.data.inv-ledger td { border-bottom: 0; }
+  table.data.inv-cost-table td.m-hide { display: none; }
+}

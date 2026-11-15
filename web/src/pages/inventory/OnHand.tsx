@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Dialog } from "../../components/PosDialogs";
+import { MakeDialog, RecipeEditor } from "../../components/RecipeEditor";
 import { useApp } from "../../context";
 import { useApi } from "../../hooks";
 import { api, type Supplier } from "../../lib/api";
@@ -35,6 +36,8 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
   const [onlyAlerts, setOnlyAlerts] = useState(false);
   const [editing, setEditing] = useState<StockItem | "new" | null>(null);
   const [areasOpen, setAreasOpen] = useState(false);
+  const [recipeFor, setRecipeFor] = useState<string | null>(null);
+  const [making, setMaking] = useState<StockItem | null>(null);
   const [notice, setNotice] = useState("");
 
   const items = useMemo(() => {
@@ -157,6 +160,8 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
                     <td data-label="Cost" className="num">{i.avg_cost == null ? <span className="muted">–</span> : <>{unitCost(i.avg_cost)}<span className="muted small">/{i.unit ?? "each"}</span></>}</td>
                     <td data-label="Value" className="num">{i.avg_cost == null ? "–" : money(i.value_cents)}</td>
                     <td className="num inv-actions">
+                      {i.is_prep && <button className={`btn small ${i.has_recipe ? "" : "primary"}`} onClick={() => setRecipeFor(i.id)}>{i.has_recipe ? "Recipe" : "+ Recipe"}</button>}
+                      {i.is_prep && i.has_recipe && <button className="btn small" onClick={() => setMaking(i)}>Made a batch</button>}
                       <button className="btn small" onClick={() => setEditing(i)}>Edit</button>
                       <button className="btn small" onClick={() => setParams({ tab: "ledger", item: i.id })}>History</button>
                     </td>
@@ -184,6 +189,14 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
           suppliers={suppliers.data ?? []} defaultArea={area && area !== NO_AREA ? area : null}
           onClose={() => setEditing(null)}
           onDone={(m) => { setEditing(null); setNotice(m); void reload(); }} />
+      )}
+      {recipeFor && (
+        <RecipeEditor base={base} itemId={recipeFor} stock={data.items} onClose={() => setRecipeFor(null)}
+          onSaved={(m) => { setRecipeFor(null); setNotice(m); void reload(); }} />
+      )}
+      {making && making.batch_qty && (
+        <MakeDialog base={base} prep={{ id: making.id, name: making.name, unit: making.unit, batch_qty: making.batch_qty }}
+          onClose={() => setMaking(null)} onDone={(m) => { setMaking(null); setNotice(m); void reload(); }} />
       )}
       {areasOpen && <AreasDialog base={base} areas={data.areas} onClose={() => { setAreasOpen(false); void reload(); }} />}
     </div>
@@ -240,7 +253,7 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
         if (f.quantity.trim() && (qtyN == null || qtyN < 0)) throw new Error("On hand must be a number.");
         await api(`${base}/inventory/items`, { method: "POST", body: {
           ...common, name: f.name.trim(), unit_cost: f.prep ? null : costCents, qty: qtyN, batch_qty: f.prep ? batchN : null } });
-        onDone(`${f.name.trim()} added to inventory.${f.prep ? " Add its recipe on the Recipes tab." : ""}`);
+        onDone(`${f.name.trim()} added to inventory.${f.prep ? " Add its recipe with its Recipe button." : ""}`);
         return;
       }
       await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: {

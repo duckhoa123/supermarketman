@@ -2,28 +2,28 @@ import { useEffect, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { flushQueue, pendingCount } from "../lib/inventory";
-import Stock from "./Stock";
 import CountPanel from "./inventory/Count";
 import FoodCost from "./inventory/FoodCost";
 import Ledger from "./inventory/Ledger";
+import MenuItems from "./inventory/MenuItems";
 import OnHandPanel from "./inventory/OnHand";
-import Recipes from "./inventory/Recipes";
 import WastePanel from "./inventory/Waste";
 
-type Tab = "onhand" | "count" | "waste" | "recipes" | "cost" | "ledger" | "menu";
+type Tab = "onhand" | "count" | "waste" | "menu" | "cost" | "ledger";
 const TABS: [Tab, string][] = [
-  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["recipes", "Recipes"], ["cost", "Food cost"],
-  ["ledger", "History"], ["menu", "Menu items"],
+  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["menu", "Menu items"], ["cost", "Food cost"],
+  ["ledger", "History"],
 ];
 const STAFF_TABS: Tab[] = ["onhand", "count", "waste"];  // staff count and log waste; costs are for managers
 
 /** What's in stock and what it's worth, counts and waste (made for a phone in the walk-in, working offline),
- * recipes and plate costs, COGS and food cost %, and the history of every change. */
+ * menu items with their recipes and plate costs, COGS and food cost %, and the history of every change. */
 export default function Inventory() {
   const { location } = useApp();
   const [params, setParams] = useSearchParams();
   const tabs = location.role === "staff" ? TABS.filter(([t]) => STAFF_TABS.includes(t)) : TABS;
-  const tab = (tabs.some(([t]) => t === params.get("tab")) ? params.get("tab") : "onhand") as Tab;
+  const asked = params.get("tab") === "recipes" ? "menu" : params.get("tab");  // Recipes now live on Menu items
+  const tab = (tabs.some(([t]) => t === asked) ? asked : "onhand") as Tab;
   const [pending, setPending] = useState(pendingCount());
   const [synced, setSynced] = useState("");
 
@@ -73,10 +73,9 @@ export default function Inventory() {
       {tab === "onhand" && <OnHandPanel onCount={() => setParams({ tab: "count" })} />}
       {tab === "count" && <CountPanel />}
       {tab === "waste" && <WastePanel />}
-      {tab === "recipes" && <Recipes />}
       {tab === "cost" && <FoodCost />}
       {tab === "ledger" && <Ledger />}
-      {tab === "menu" && <Stock embedded />}
+      {tab === "menu" && <MenuItems />}
     </>
   );
 }
