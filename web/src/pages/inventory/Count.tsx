@@ -28,9 +28,9 @@ export default function CountPanel() {
   const setDraft = useCallback((d: Draft | null) => { setDraftState(d); saveDraft(key, d); }, [key]);
 
   const data = onHand.data;
-  // Items you've stopped counting stay off the count sheets (ingredients used in a recipe still show).
-  const countable = useMemo(() => (data?.items ?? []).filter((i) =>
-    i.stock_qty != null || (!i.is_prep && i.used_in > 0)), [data]);
+  // Every inventory item can be counted; counting one with no amount yet gives it its first amount. Prep items
+  // that aren't kept as stock (made to order) are left off.
+  const countable = useMemo(() => (data?.items ?? []).filter((i) => !(i.is_prep && i.stock_qty == null)), [data]);
   const inArea = (area: string) => countable.filter((i) =>
     area === EVERYTHING || (area === NO_AREA ? !i.storage_area_id : i.storage_area_id === area));
 
