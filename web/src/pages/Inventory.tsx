@@ -70,7 +70,7 @@ export default function Inventory() {
             onClick={() => setParams({ tab: t })}>{label}</button>
         ))}
       </div>
-      {tab === "onhand" && <OnHandPanel onCount={() => setParams({ tab: "count" })} />}
+      {tab === "onhand" && <OnHandPanel />}
       {tab === "count" && <CountPanel />}
       {tab === "waste" && <WastePanel />}
       {tab === "cost" && <FoodCost />}

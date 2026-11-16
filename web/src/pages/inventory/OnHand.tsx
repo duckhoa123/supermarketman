@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import FilterBar, { applyFilters, type Condition, type FilterField } from "../../components/FilterBar";
 import { Dialog } from "../../components/PosDialogs";
 import { MakeDialog, RecipeEditor } from "../../components/RecipeEditor";
 import { useApp } from "../../context";
@@ -10,7 +11,6 @@ import {
 } from "../../lib/inventory";
 
 const NO_AREA = "__none__";
-const FLAGGED = ["approaching", "at_par", "below_par", "out", "negative"];
 
 function dollarsToCents(text: string): number | null {
   const n = Number(text.replace(/[$,\s]/g, ""));
@@ -25,7 +25,7 @@ const ago = (iso: string) => {
   return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
 };
 
-export default function OnHandPanel({ onCount }: { onCount: () => void }) {
+export default function OnHandPanel() {
   const { location } = useApp();
   const base = `/locations/${location.id}`;
   const { data, error, reload } = useApi<OnHand>(`${base}/inventory/on-hand`);
@@ -33,20 +33,53 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
   const [, setParams] = useSearchParams();
   const [area, setArea] = useState<string>("");
   const [search, setSearch] = useState("");
-  const [onlyAlerts, setOnlyAlerts] = useState(false);
+  const filterKey = `pass.inventory.filters.${location.id}`;
+  const [conditions, setConditionsState] = useState<Condition[]>(() => {
+    try { return JSON.parse(localStorage.getItem(filterKey) || "[]") as Condition[]; } catch { return []; }
+  });
+  function setConditions(c: Condition[]) {
+    setConditionsState(c);
+    try { localStorage.setItem(filterKey, JSON.stringify(c)); } catch { /* storage blocked */ }
+  }
   const [editing, setEditing] = useState<StockItem | "new" | null>(null);
   const [areasOpen, setAreasOpen] = useState(false);
   const [recipeFor, setRecipeFor] = useState<string | null>(null);
   const [making, setMaking] = useState<StockItem | null>(null);
   const [notice, setNotice] = useState("");
 
+  // Every column can be filtered on, with conditions that fit its type.
+  const fields = useMemo<FilterField<StockItem>[]>(() => {
+    const areaName = (id: string | null) => data?.areas.find((a) => a.id === id)?.name ?? null;
+    const list: FilterField<StockItem>[] = [
+      { key: "name", label: "Name", type: "text", get: (i) => i.name },
+      { key: "category", label: "Category", type: "text", get: (i) => i.category },
+      { key: "area", label: "Area", type: "choice", get: (i) => areaName(i.storage_area_id), options: (data?.areas ?? []).map((a) => a.name) },
+      { key: "status", label: "Status", type: "choice", get: (i) => STATUS_LABEL[i.status], options: Object.values(STATUS_LABEL) },
+      { key: "on_hand", label: "On hand", type: "number", get: (i) => i.stock_qty },
+      { key: "unit", label: "Unit", type: "text", get: (i) => i.unit },
+      { key: "par", label: "Par level", type: "number", get: (i) => i.par_level },
+      { key: "reorder", label: "Reorder point", type: "number", get: (i) => i.reorder_point },
+      { key: "last_count", label: "Last counted", type: "date", get: (i) => i.last_count ? new Date(i.last_count.at).toLocaleDateString("en-CA") : null },
+      { key: "cover", label: "Days of cover", type: "number", get: (i) => i.days_of_cover },
+      { key: "supplier", label: "Supplier", type: "choice", get: (i) => i.supplier, options: Array.from(new Set((data?.items ?? []).map((i) => i.supplier).filter(Boolean) as string[])).sort() },
+      { key: "barcode", label: "Barcode", type: "text", get: (i) => i.barcode },
+      { key: "recipes", label: "Used in recipes", type: "number", get: (i) => i.used_in },
+      { key: "prep", label: "Prep item", type: "choice", get: (i) => (i.is_prep ? "Yes" : "No"), options: ["Yes", "No"] },
+    ];
+    if (data?.can_manage) {
+      list.splice(9, 0,
+        { key: "cost", label: "Cost per unit", type: "number", prefix: "$", get: (i) => (i.avg_cost == null ? null : Math.round(i.avg_cost) / 100) },
+        { key: "value", label: "Value", type: "number", prefix: "$", get: (i) => (i.value_cents == null || i.avg_cost == null ? null : i.value_cents / 100) });
+    }
+    return list;
+  }, [data]);
+
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (data?.items ?? []).filter((i) =>
+    return applyFilters((data?.items ?? []).filter((i) =>
       (!area || (area === NO_AREA ? !i.storage_area_id : i.storage_area_id === area))
-      && (!q || i.name.toLowerCase().includes(q) || i.barcode === search.trim())
-      && (!onlyAlerts || FLAGGED.includes(i.status)));
-  }, [data, area, search, onlyAlerts]);
+      && (!q || i.name.toLowerCase().includes(q) || i.barcode === search.trim())), fields, conditions);
+  }, [data, area, search, fields, conditions]);
 
   async function setItemArea(item: StockItem, id: string) {
     await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { storage_area_id: id || null } });
@@ -57,24 +90,8 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
   if (!data) return <p className="muted">Loading…</p>;
   const t = data.totals;
   const manage = data.can_manage;
-  const short = t.below_par + t.out;
   return (
     <div className="stack">
-      <div className="figures">
-        {manage && (
-          <div className="figure"><div className="label">Inventory value</div><div className="value">{money(t.value_cents, 0)}</div>
-            <div className="small muted">at {data.cost_method === "last" ? "latest price" : "average cost"}</div></div>
-        )}
-        <div className="figure"><div className="label">Items counted</div><div className="value">{t.items}</div>
-          <div className="small muted">{data.untracked ? `${data.untracked} not counted yet` : "ingredients, supplies and prep"}</div></div>
-        <div className="figure"><div className="label">Below par or out</div>
-          <div className={`value ${short ? "error" : ""}`}>{short}</div>
-          <div className="small muted">{t.at_par} at par · {t.approaching} near par</div></div>
-        <div className="figure"><div className="label">Below zero</div>
-          <div className={`value ${t.negative ? "error" : ""}`}>{t.negative}</div>
-          <div className="small muted">sold before the delivery was entered</div></div>
-      </div>
-
       {manage && data.suggested_areas.length > 0 && (
         <div className="notice">
           <strong>Set up your storage areas</strong>
@@ -99,22 +116,25 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
           {data.areas.length > 0 && data.unassigned > 0 && (
             <button className={area === NO_AREA ? "chip on" : "chip"} onClick={() => setArea(NO_AREA)}>No area <b>{data.unassigned}</b></button>
           )}
+          {manage && data.areas.length > 0 && (
+            <button className="chip chip-edit tip" data-tip="Add, rename or reorder areas" aria-label="Edit areas" onClick={() => setAreasOpen(true)}>✎</button>
+          )}
         </div>
         <div className="row">
-          <input className="input" style={{ width: 170 }} placeholder="Search or scan" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <label className="check small"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} />Needs ordering</label>
-          {manage && <button className="btn" onClick={() => setAreasOpen(true)}>Areas</button>}
-          <button className="btn" onClick={onCount}>Start a count</button>
+          <input className="input" style={{ width: 200 }} placeholder="Search or scan" value={search} onChange={(e) => setSearch(e.target.value)} />
           {manage && <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>}
         </div>
       </div>
+      <FilterBar fields={fields} conditions={conditions} onChange={setConditions} />
 
       <div className="panel table-wrap inv-table-wrap">
         <table className="data inv-table">
           <thead>
             <tr>
-              <th>Item</th><th>Area</th><th className="num">On hand</th><th className="num">Par · reorder at</th>
-              <th>Last count</th><th className="num">Cover</th>
+              <th>Item</th><th>Area</th><th className="num">On hand</th>
+              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="Par: wanted on hand after a delivery. Reorder point: order when it gets down to this.">Par · reorder at</span></th>
+              <th>Last count</th>
+              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="How many days the stock lasts at the last four weeks' usage">Cover</span></th>
               {manage && <><th className="num">Cost</th><th className="num">Value</th></>}
               {manage && <th />}
             </tr>
@@ -175,14 +195,10 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
           <p className="empty">
             {data.items.length === 0
               ? "Nothing is being counted yet. Add your ingredients with + Add item, or scan a delivery invoice under Supplies."
-              : "No items match."}
+              : conditions.length ? "No items match these filters." : "No items match."}
           </p>
         )}
       </div>
-      <p className="small muted">
-        Par is what you want on hand after a delivery; the reorder point is when to order again. Cover is how many days
-        the stock lasts at the last four weeks' usage.
-      </p>
 
       {editing && (
         <StockItemDialog base={base} item={editing === "new" ? null : editing} data={data}
