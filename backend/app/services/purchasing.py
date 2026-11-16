@@ -17,11 +17,14 @@ from app.services.jobs import enqueue, handler
 
 
 def order_qty(item: Item) -> float:
-    """How much to order: the item's reorder quantity, else enough to reach twice the alert level."""
+    """How much to order: the item's set order amount; else top up to its par level; else enough to reach twice
+    the reorder point."""
     if item.reorder_qty:
         return float(item.reorder_qty)
-    threshold = item.low_stock_threshold or 0
     stock = max(0.0, item.stock_qty or 0)
+    if item.par_level:
+        return float(max(1, math.ceil(item.par_level - stock)))
+    threshold = item.low_stock_threshold or 0
     return float(max(1, math.ceil(threshold * 2 - stock)))
 
 

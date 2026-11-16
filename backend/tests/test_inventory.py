@@ -386,3 +386,11 @@ async def test_stopping_an_item_keeps_it_listed(client, demo_location_id):
     assert (await client.put(f"{base}/inventory/items/{item}", headers=OWNER, json={"track": True})).status_code == 200
     row = next(i for i in (await client.get(f"{base}/inventory/on-hand", headers=OWNER)).json()["items"] if i["id"] == item)
     assert row["stock_qty"] == 0
+
+
+def test_order_amount_tops_up_to_par():
+    from app.services.purchasing import order_qty
+
+    assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15)) == 28  # par − on hand
+    assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15, reorder_qty=30)) == 30  # set amount wins
+    assert order_qty(Item(stock_qty=4, low_stock_threshold=10)) == 16  # no par: twice the reorder point
