@@ -50,16 +50,32 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
 }) {
   const badge = (n: NavItem) => (n.badge ? <span className="badge">{n.badge}</span> : null);
   const hidden = useHideOnScroll();
+  // The side menu can fold down to just its icons; remembered on this device.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("pass.railCollapsed") === "1"; } catch { return false; }
+  });
+  function toggle() {
+    setCollapsed((c) => {
+      try { localStorage.setItem("pass.railCollapsed", c ? "0" : "1"); } catch { /* storage blocked */ }
+      return !c;
+    });
+  }
   const screensBadge = screens.reduce((sum, n) => sum + (n.badge ?? 0), 0);
   return (
-    <div className="shell">
+    <div className={`shell ${collapsed ? "rail-collapsed" : ""}`}>
       <aside className="rail">
+        <button className="rail-toggle" onClick={toggle} aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand the menu" : "Collapse the menu"} title={collapsed ? "Expand" : "Collapse"}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
         <div className="brand">
           <img src="/icon.svg" alt="" />
-          Pass
+          <span className="brand-name">Pass</span>
         </div>
         {profile && (
-          <button className="agent-switch" onClick={onSwitchAgent} title="Switch agent or customise">
+          <button className="agent-switch" onClick={onSwitchAgent} title={collapsed ? `${profile.display_name}: switch agent or customise` : "Switch agent or customise"}>
             <Avatar profile={profile} size={30} />
             <span>
               <strong>{profile.display_name}</strong>
@@ -69,7 +85,7 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
         )}
         <nav className="nav" aria-label={profile?.display_name ?? "Agent"}>
           {primary.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end}>
+            <NavLink key={n.to} to={n.to} end={n.end} title={collapsed ? n.label : undefined}>
               <NavIcon label={n.label} />
               <span className="nav-label">{n.label}</span>
               {badge(n)}
@@ -81,7 +97,7 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
             <p className="rail-h">Screens</p>
             <nav className="nav nav-screens" aria-label="Screens">
               {screens.map((n) => (
-                <NavLink key={n.to} to={n.to} end={n.end}>
+                <NavLink key={n.to} to={n.to} end={n.end} title={collapsed ? n.label : undefined}>
                   <NavIcon label={n.label} />
                   <span className="nav-label">{n.label}</span>
                   {badge(n)}
@@ -91,9 +107,14 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
           </>
         )}
         <div className="rail-foot">
-          {footer}
-          <button className="btn small" onClick={() => void signOut().then(() => window.location.assign("/"))}>
-            Sign out
+          {!collapsed && footer}
+          <button className="btn small rail-signout" onClick={() => void signOut().then(() => window.location.assign("/"))}
+            title={collapsed ? "Sign out" : undefined} aria-label="Sign out">
+            {collapsed ? (
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l-5-5 5-5" /><path d="M5 12h11" />
+              </svg>
+            ) : "Sign out"}
           </button>
         </div>
       </aside>

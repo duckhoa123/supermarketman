@@ -1019,3 +1019,23 @@ tr.inv-big td { background: var(--tomato-tint); }
 .nav-icon { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.85; }
 .nav a.active .nav-icon { opacity: 1; }
 .more-link { display: flex; align-items: center; gap: 10px; }
+/* Folding side menu: a round button on its edge; folded, it shows just the icons. */
+.shell { transition: grid-template-columns 0.18s ease; }
+.shell.rail-collapsed { grid-template-columns: 68px 1fr; }
+.rail-toggle { position: absolute; top: 26px; right: -13px; z-index: 30; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted); display: grid; place-items: center;
+  padding: 0; cursor: pointer; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08); }
+.rail-toggle:hover { color: var(--ink); border-color: var(--muted); }
+.rail-toggle svg { width: 14px; height: 14px; transition: transform 0.18s ease; }
+.rail-collapsed .rail-toggle svg { transform: rotate(180deg); }
+.rail-collapsed .rail { padding: 20px 10px; }
+.rail-collapsed .brand { justify-content: center; padding: 4px 0 18px; }
+.rail-collapsed .brand-name, .rail-collapsed .agent-switch > span:last-child, .rail-collapsed .rail-h { display: none; }
+.rail-collapsed .agent-switch { justify-content: center; padding: 6px; }
+.rail-collapsed .nav a { justify-content: center; padding: 10px 0; position: relative; }
+.rail-collapsed .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rail-collapsed .nav-icon { width: 20px; height: 20px; flex-basis: 20px; }
+.rail-collapsed .nav .badge { position: absolute; top: 3px; right: 6px; min-width: 16px; line-height: 16px; padding: 0 4px; font-size: 0.65rem; }
+.rail-collapsed .rail-foot { padding: 8px 0; align-items: center; }
+.rail-collapsed .rail-signout { width: 40px; height: 36px; padding: 0; display: grid; place-items: center; }
+@media (prefers-reduced-motion: reduce) { .shell, .rail-toggle svg { transition: none; } }
