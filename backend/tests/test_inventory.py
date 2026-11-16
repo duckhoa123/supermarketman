@@ -392,5 +392,6 @@ def test_order_amount_tops_up_to_par():
     from app.services.purchasing import order_qty
 
     assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15)) == 28  # par − on hand
-    assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15, reorder_qty=30)) == 30  # set amount wins
+    assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15, reorder_qty=30)) == 28  # par wins
+    assert order_qty(Item(stock_qty=4, low_stock_threshold=10, reorder_qty=30)) == 30  # older items without a par
     assert order_qty(Item(stock_qty=4, low_stock_threshold=10)) == 16  # no par: twice the reorder point

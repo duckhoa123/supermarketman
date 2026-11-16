@@ -42,6 +42,7 @@ class Product:
     deliveries: list[tuple[date, float]] = field(default_factory=list)  # (day, qty in supplier units)
     stock: float | None = None  # stock units
     low_level: float | None = None
+    par_level: float | None = None
     reorder_qty: float | None = None
     low: bool = False
 
@@ -106,6 +107,7 @@ async def facts(session: AsyncSession, location: Location, supplier: Supplier) -
         it = items.get(p.item_id) if p.item_id else None
         if it is not None:
             p.stock, p.low_level, p.reorder_qty = it.stock_qty, it.low_stock_threshold, it.reorder_qty
+            p.par_level = it.par_level
             p.low = (it.stock_qty is not None and it.low_stock_threshold is not None
                      and it.stock_qty <= it.low_stock_threshold)
             if not p.deliveries:
@@ -162,6 +164,7 @@ class _Fake:
 
     def __init__(self, p: Product):
         self.reorder_qty, self.low_stock_threshold, self.stock_qty = p.reorder_qty, p.low_level, p.stock
+        self.par_level = p.par_level
 
 
 def _facts_text(f: dict) -> str:
@@ -169,7 +172,8 @@ def _facts_text(f: dict) -> str:
     for p in f["products"]:
         hist = ", ".join(f"{d.isoformat()}: {q:g}" for d, q in p.deliveries[-8:]) or "never delivered (linked on Stock)"
         stock = f"{p.stock:g} stock units" if p.stock is not None else "not tracked"
-        extra = f", low-stock level {p.low_level:g}" if p.low_level is not None else ""
+        extra = f", reorder point {p.low_level:g}" if p.low_level is not None else ""
+        extra += f", par {p.par_level:g} (top up to this)" if p.par_level is not None else ""
         extra += " (LOW NOW)" if p.low else ""
         pack = f", {p.pack_size:g} stock units per {p.unit or 'unit'}" if p.pack_size != 1 else ""
         lines.append(f'- key "{p.key}": {p.name} (unit: {p.unit or "each"}{pack}); deliveries {hist}; stock {stock}{extra}')

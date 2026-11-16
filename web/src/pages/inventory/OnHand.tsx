@@ -222,11 +222,11 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     areaId: item?.storage_area_id ?? defaultArea ?? "",
     cost: item?.avg_cost != null && !item.is_prep ? (item.avg_cost / 100).toFixed(item.avg_cost < 100 ? 4 : 2) : "",
     quantity: "", par: item?.par_level != null ? String(item.par_level) : "", reorderAt: item?.reorder_point != null ? String(item.reorder_point) : "",
-    orderQty: item?.reorder_qty != null ? String(item.reorder_qty) : "", supplierId: item?.supplier_id ?? "", barcode: item?.barcode ?? "",
+    supplierId: item?.supplier_id ?? "", barcode: item?.barcode ?? "",
     yieldPct: item?.default_yield_pct != null ? String(item.default_yield_pct) : "",
     prep: item?.is_prep ?? false, batch: item?.batch_qty != null ? String(item.batch_qty) : "",
   });
-  const [advanced, setAdvanced] = useState(!!(item?.par_level != null || item?.reorder_point != null || item?.reorder_qty != null));
+  const [advanced, setAdvanced] = useState(!!(item?.par_level != null || item?.reorder_point != null));
   const [yieldTest, setYieldTest] = useState<{ ap: string; ep: string; cooked: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -243,16 +243,16 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     setError("");
     const costCents = dollarsToCents(f.cost);
     if (f.cost.trim() && costCents == null) return setError("Enter the cost like 12.00.");
-    const parN = num(f.par), rpN = num(f.reorderAt), orderN = num(f.orderQty), qtyN = num(f.quantity);
+    const parN = num(f.par), rpN = num(f.reorderAt), qtyN = num(f.quantity);
     const yieldN = num(f.yieldPct), batchN = num(f.batch);
-    if ([[f.par, parN], [f.reorderAt, rpN], [f.orderQty, orderN]].some(([t, n]) => (t as string).trim() && (n == null || (n as number) < 0))) {
-      return setError("Par, reorder point and order amount must be numbers.");
+    if ([[f.par, parN], [f.reorderAt, rpN]].some(([t, n]) => (t as string).trim() && (n == null || (n as number) < 0))) {
+      return setError("Par level and reorder point must be numbers.");
     }
     if (f.yieldPct.trim() && (yieldN == null || yieldN < 1 || yieldN > 100)) return setError("Yield is a % between 1 and 100.");
     if (f.prep && (batchN == null || batchN <= 0)) return setError("Say how much one batch makes.");
     const common = {
       unit: f.unit || null, category: f.category.trim() || null, storage_area_id: f.areaId || null,
-      par_level: parN, reorder_point: rpN, reorder_qty: orderN, supplier_id: f.supplierId || null,
+      par_level: parN, reorder_point: rpN, supplier_id: f.supplierId || null,
       barcode: f.barcode.trim() || null, default_yield_pct: yieldN,
     };
     setBusy(true);
@@ -375,9 +375,8 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
         <details className="inv-advanced" open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
           <summary>Advanced</summary>
           <div className="inv-form-row">
-            {field(`Par level (${unitShown})`, <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery")}
+            {field(`Par level (${unitShown})`, <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery. Orders top up to this.")}
             {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when stock gets down to this")}
-            {field("Order amount", <input className="input" inputMode="decimal" value={f.orderQty} onChange={(e) => set({ orderQty: e.target.value })} placeholder="Par − on hand" />, "How much to order each time. Empty: top up to par.")}
           </div>
         </details>
         {error && <p className="small error">{error}</p>}
