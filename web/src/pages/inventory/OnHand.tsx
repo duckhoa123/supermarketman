@@ -10,7 +10,6 @@ import {
   areaIcon, money, normUnit, qty, STATUS_LABEL, STATUS_PILL, unitCost, type Area, type OnHand, type StockItem,
 } from "../../lib/inventory";
 
-const NO_AREA = "__none__";
 
 function dollarsToCents(text: string): number | null {
   const n = Number(text.replace(/[$,\s]/g, ""));
@@ -31,7 +30,6 @@ export default function OnHandPanel() {
   const { data, error, reload } = useApi<OnHand>(`${base}/inventory/on-hand`);
   const suppliers = useApi<Supplier[]>(`${base}/suppliers`);
   const [, setParams] = useSearchParams();
-  const [area, setArea] = useState<string>("");
   const [search, setSearch] = useState("");
   const filterKey = `pass.inventory.filters.${location.id}`;
   const [conditions, setConditionsState] = useState<Condition[]>(() => {
@@ -77,9 +75,13 @@ export default function OnHandPanel() {
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
     return applyFilters((data?.items ?? []).filter((i) =>
-      (!area || (area === NO_AREA ? !i.storage_area_id : i.storage_area_id === area))
-      && (!q || i.name.toLowerCase().includes(q) || i.barcode === search.trim())), fields, conditions);
-  }, [data, area, search, fields, conditions]);
+      !q || i.name.toLowerCase().includes(q) || i.barcode === search.trim()), fields, conditions);
+  }, [data, search, fields, conditions]);
+  // Filtered to one area ("Area is Walk-in cooler"): new items go there, without asking.
+  const filteredArea = useMemo(() => {
+    const c = conditions.find((x) => x.field === "area" && x.op === "eq");
+    return c ? data?.areas.find((a) => a.name.toLowerCase() === c.value.toLowerCase())?.id ?? null : null;
+  }, [conditions, data]);
 
   async function setItemArea(item: StockItem, id: string) {
     await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { storage_area_id: id || null } });
@@ -108,30 +110,20 @@ export default function OnHandPanel() {
       {notice && <p className="notice small">{notice}</p>}
 
       <div className="spread inv-toolbar">
-        <div className="chips" role="group" aria-label="Storage area">
-          <button className={!area ? "chip on" : "chip"} onClick={() => setArea("")}>All <b>{data.items.length}</b></button>
-          {data.areas.map((a) => (
-            <button key={a.id} className={area === a.id ? "chip on" : "chip"} onClick={() => setArea(a.id)}><span aria-hidden>{areaIcon(a.name)}</span> {a.name} <b>{a.items}</b></button>
-          ))}
-          {data.areas.length > 0 && data.unassigned > 0 && (
-            <button className={area === NO_AREA ? "chip on" : "chip"} onClick={() => setArea(NO_AREA)}>No area <b>{data.unassigned}</b></button>
-          )}
-          {manage && data.areas.length > 0 && (
-            <button className="chip chip-edit tip" data-tip="Add, rename or reorder areas" aria-label="Edit areas" onClick={() => setAreasOpen(true)}>✎</button>
-          )}
-        </div>
+        <FilterBar fields={fields} conditions={conditions} onChange={setConditions} />
         <div className="row">
           <input className="input" style={{ width: 200 }} placeholder="Search or scan" value={search} onChange={(e) => setSearch(e.target.value)} />
           {manage && <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>}
         </div>
       </div>
-      <FilterBar fields={fields} conditions={conditions} onChange={setConditions} />
 
       <div className="panel table-wrap inv-table-wrap">
         <table className="data inv-table">
           <thead>
             <tr>
-              <th>Item</th><th>Area</th><th className="num">On hand</th>
+              <th>Item</th>
+              <th>Area{manage && <button className="sb-icon th-edit tip" data-tip="Add, rename or reorder areas" aria-label="Edit areas" onClick={() => setAreasOpen(true)}>✎</button>}</th>
+              <th className="num">On hand</th>
               <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="Par: wanted on hand after a delivery. Reorder point: order when it gets down to this.">Par · reorder at</span></th>
               <th>Last count</th>
               <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="How many days the stock lasts at the last four weeks' usage">Cover</span></th>
@@ -202,7 +194,7 @@ export default function OnHandPanel() {
 
       {editing && (
         <StockItemDialog base={base} item={editing === "new" ? null : editing} data={data}
-          suppliers={suppliers.data ?? []} defaultArea={area && area !== NO_AREA ? area : null}
+          suppliers={suppliers.data ?? []} defaultArea={filteredArea}
           onClose={() => setEditing(null)}
           onDone={(m) => { setEditing(null); setNotice(m); void reload(); }} />
       )}

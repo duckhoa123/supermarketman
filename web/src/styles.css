@@ -1051,3 +1051,7 @@ tr.inv-big td { background: var(--tomato-tint); }
 .fb-panel .select, .fb-panel .input { width: auto; min-width: 140px; }
 .chip-edit { padding: 4px 9px; text-decoration: none; }
 @media (max-width: 760px) { .fb-panel .select, .fb-panel .input { flex: 1 1 100%; } }
+.inv-toolbar > .fb { flex: 1; min-width: 0; }
+.th-edit { margin-left: 4px; width: 22px; height: 22px; font-size: 0.8rem; vertical-align: middle; text-decoration: none; }
+.inv-toolbar:has(> .fb) { align-items: flex-start; }
+th:has(> .th-edit) { white-space: nowrap; }
