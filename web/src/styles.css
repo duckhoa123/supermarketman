@@ -1013,3 +1013,9 @@ tr.inv-big td { background: var(--tomato-tint); }
   table.data.inv-table td, table.data.inv-cost-table td, table.data.inv-ledger td { border-bottom: 0; }
   table.data.inv-cost-table td.m-hide { display: none; }
 }
+/* Menu icons */
+.nav a { justify-content: flex-start; gap: 10px; }
+.nav-label { flex: 1; min-width: 0; }
+.nav-icon { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.85; }
+.nav a.active .nav-icon { opacity: 1; }
+.more-link { display: flex; align-items: center; gap: 10px; }

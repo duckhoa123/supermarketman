@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import NavIcon from "../components/NavIcon";
 import { signOut } from "../lib/auth";
 
 /** Phone-only page with the classic screens: everything the agent reads from, to look at yourself. */
@@ -16,7 +17,7 @@ export default function More({ links, children }: { links: { to: string; label: 
         <ul className="list">
           {links.map((l) => (
             <li key={l.to}>
-              <Link to={l.to}>{l.label}</Link>
+              <Link to={l.to} className="more-link"><NavIcon label={l.label} />{l.label}</Link>
             </li>
           ))}
           {children}

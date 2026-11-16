@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import NavIcon from "./NavIcon";
 import Avatar from "./Avatar";
 import { signOut } from "../lib/auth";
 import type { AgentProfile } from "../lib/api";
@@ -69,7 +70,8 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
         <nav className="nav" aria-label={profile?.display_name ?? "Agent"}>
           {primary.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end}>
-              {n.label}
+              <NavIcon label={n.label} />
+              <span className="nav-label">{n.label}</span>
               {badge(n)}
             </NavLink>
           ))}
@@ -80,7 +82,8 @@ export default function Shell({ primary, screens, profile, footer, onSwitchAgent
             <nav className="nav nav-screens" aria-label="Screens">
               {screens.map((n) => (
                 <NavLink key={n.to} to={n.to} end={n.end}>
-                  {n.label}
+                  <NavIcon label={n.label} />
+                  <span className="nav-label">{n.label}</span>
                   {badge(n)}
                 </NavLink>
               ))}
