@@ -66,7 +66,7 @@ export default function OnHandPanel({ onCount }: { onCount: () => void }) {
             <div className="small muted">at {data.cost_method === "last" ? "latest price" : "average cost"}</div></div>
         )}
         <div className="figure"><div className="label">Items counted</div><div className="value">{t.items}</div>
-          <div className="small muted">{data.untracked} more not counted</div></div>
+          <div className="small muted">{data.untracked ? `${data.untracked} not counted yet` : "ingredients, supplies and prep"}</div></div>
         <div className="figure"><div className="label">Below par or out</div>
           <div className={`value ${short ? "error" : ""}`}>{short}</div>
           <div className="small muted">{t.at_par} at par · {t.approaching} near par</div></div>

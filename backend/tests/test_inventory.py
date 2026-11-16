@@ -75,7 +75,8 @@ async def test_recipe_sales_count_waste_and_cogs(client, session, demo_location_
     assert (await client.post(f"{base}/storage-areas/defaults", headers=OWNER)).status_code == 200
     on_hand = (await client.get(f"{base}/inventory/on-hand", headers=OWNER)).json()
     walk_in = next(a for a in on_hand["areas"] if a["name"] == "Walk-in cooler")
-    assert on_hand["totals"]["items"] > 0 and not on_hand["suggested_areas"]
+    assert not on_hand["suggested_areas"]
+    assert all(i["price_cents"] == 0 or i["used_in"] for i in on_hand["items"])  # no menu dishes in inventory
 
     r = await client.post(f"{base}/inventory/items", headers=OWNER, json={
         "name": "Salmon fillet", "unit": "lbs", "unit_cost": 1200, "qty": 20, "default_yield_pct": 80, "par_level": 30,

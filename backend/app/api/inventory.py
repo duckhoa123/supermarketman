@@ -74,8 +74,8 @@ async def _names(session: AsyncSession, ids: set) -> dict[str, str]:
 @router.get("/inventory/on-hand")
 async def on_hand(location: Location = Depends(require_location), user: AuthUser = Depends(current_user),
                   session: AsyncSession = Depends(get_session)):
-    """Counted items (and every ingredient used in a recipe), in count-sheet order, with par status, last count,
-    days of cover and value."""
+    """What you stock (ingredients, supplies, prep items, and anything used in a recipe), never the dishes you sell,
+    in count-sheet order, with par status, last count, days of cover and value."""
     manager = await _manager(session, user, location)
     await inv.ensure_openings(session, location)
     await session.commit()
@@ -84,9 +84,8 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
         .where(RecipeLine.location_id == location.id).group_by(RecipeLine.ingredient_id))).all())
     items = list(await session.scalars(
         select(Item).where(Item.location_id == location.id,
-                           (Item.stock_qty.is_not(None)) | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None)
-                           # ingredients and supplies made in Pass stay listed when they're not being counted
-                           | ((Item.provider == "pass") & (Item.price_cents == 0)))
+                           # Menu items (anything with a price) live on Menu items, unless a recipe uses them.
+                           (Item.price_cents == 0) | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None))
         .order_by(func.coalesce(Item.shelf_order, 1_000_000), func.lower(Item.name))))
     areas = list(await session.scalars(select(StorageArea).where(StorageArea.location_id == location.id)
                                        .order_by(StorageArea.sort, StorageArea.name)))
@@ -133,11 +132,11 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
     by_area: dict[str | None, list[dict]] = {}
     for r in rows:
         by_area.setdefault(r["storage_area_id"], []).append(r)
-    untracked = await session.scalar(select(func.count(Item.id)).where(
-        Item.location_id == location.id, Item.stock_qty.is_(None), Item.active.is_(True)))
+    untracked = sum(r["stock_qty"] is None and not r["is_prep"] for r in rows)
 
     def value(rs: list[dict]) -> int | None:
-        return sum(r["value_cents"] or 0 for r in rs) if manager else None
+        # Below-zero items are flagged on their own; they don't make the stock worth less than nothing.
+        return sum(max(0, r["value_cents"] or 0) for r in rs) if manager else None
 
     flags = ("approaching", "at_par", "below_par", "out", "negative")
     return {
