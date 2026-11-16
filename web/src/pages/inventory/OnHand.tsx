@@ -110,9 +110,10 @@ export default function OnHandPanel() {
       {notice && <p className="notice small">{notice}</p>}
 
       <div className="spread inv-toolbar">
-        <FilterBar fields={fields} conditions={conditions} onChange={setConditions} />
+        <FilterBar fields={fields} conditions={conditions} onChange={setConditions}>
+          <input className="input fb-search" placeholder="Search or scan" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </FilterBar>
         <div className="row">
-          <input className="input" style={{ width: 200 }} placeholder="Search or scan" value={search} onChange={(e) => setSearch(e.target.value)} />
           {manage && <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>}
         </div>
       </div>

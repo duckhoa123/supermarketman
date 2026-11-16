@@ -1055,3 +1055,6 @@ tr.inv-big td { background: var(--tomato-tint); }
 .th-edit { margin-left: 4px; width: 22px; height: 22px; font-size: 0.8rem; vertical-align: middle; text-decoration: none; }
 .inv-toolbar:has(> .fb) { align-items: flex-start; }
 th:has(> .th-edit) { white-space: nowrap; }
+.fb-search { width: 220px; }
+@media (max-width: 760px) { .fb-search { width: auto; flex: 1; min-width: 0; } }
+.sb-icon.th-edit { display: inline-grid; place-items: center; }

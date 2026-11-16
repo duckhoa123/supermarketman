@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 /** Filter a list by any of its fields: pick a field, a condition that fits its type (text, number, date or a fixed
  * choice), and a value. Conditions add up (all must match) and show as chips you can remove. */
@@ -78,8 +78,9 @@ export function describe<T>(c: Condition, fields: FilterField<T>[]): string {
   return c.op === "between" ? `${f.label} between ${v(c.value)} and ${v(c.value2 ?? "")}` : `${f.label} ${op} ${v(c.value)}`;
 }
 
-export default function FilterBar<T>({ fields, conditions, onChange }: {
+export default function FilterBar<T>({ fields, conditions, onChange, children }: {
   fields: FilterField<T>[]; conditions: Condition[]; onChange: (c: Condition[]) => void;
+  children?: ReactNode;  // shown next to the Filter button, e.g. a search box
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Condition>({ field: fields[0]?.key ?? "", op: OPS[fields[0]?.type ?? "text"][0][0], value: "" });
@@ -116,6 +117,7 @@ export default function FilterBar<T>({ fields, conditions, onChange }: {
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 5h18l-7 8v6l-4 2v-8Z" /></svg>
           Filter{conditions.length ? ` (${conditions.length})` : ""}
         </button>
+        {children}
         {conditions.map((c, i) => (
           <span key={i} className="fb-chip">
             {describe(c, fields)}
