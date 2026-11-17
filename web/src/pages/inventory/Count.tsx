@@ -141,14 +141,12 @@ function CountSheet({ base, data, draft, items: initial, title, canApprove, onCh
   base: string; data: OnHand; draft: Draft; items: StockItem[]; title: string; canApprove: boolean;
   onChange: (d: Draft) => void; onCancel: () => void; onDone: (r: Count | "queued") => void;
 }) {
-  const [items, setItems] = useState(initial);
+  const items = initial;
   const [search, setSearch] = useState("");
-  const [arranging, setArranging] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [approve, setApprove] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [dragId, setDragId] = useState<string | null>(null);
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
   const counted = items.filter((i) => (draft.counts[i.id] ?? "").trim() !== "").length;
 
@@ -166,19 +164,6 @@ function CountSheet({ base, data, draft, items: initial, title, canApprove, onCh
 
   function setCount(id: string, value: string) {
     onChange({ ...draft, counts: { ...draft.counts, [id]: value } });
-  }
-
-  function move(from: number, to: number) {
-    if (to < 0 || to >= items.length) return;
-    const next = [...items];
-    const [x] = next.splice(from, 1);
-    next.splice(to, 0, x);
-    setItems(next);
-  }
-
-  async function saveOrder() {
-    await api(`${base}/storage-areas/order`, { method: "POST", body: { item_ids: items.map((i) => i.id) } });
-    setArranging(false);
   }
 
   async function submit() {
@@ -202,7 +187,7 @@ function CountSheet({ base, data, draft, items: initial, title, canApprove, onCh
     }
   }
 
-  const shown = arranging ? items : items.filter((i) => !search.trim() || i.name.toLowerCase().includes(search.trim().toLowerCase()) || i.barcode === search.trim());
+  const shown = items.filter((i) => !search.trim() || i.name.toLowerCase().includes(search.trim().toLowerCase()) || i.barcode === search.trim());
   return (
     <div className="stack inv-sheet">
       <div className="spread">
@@ -211,54 +196,34 @@ function CountSheet({ base, data, draft, items: initial, title, canApprove, onCh
           <p className="small muted">Started {new Date(draft.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Count what's on the shelf; part units are fine (0.4 of a bottle, 3.5 lb). Saved on this phone as you go.</p>
         </div>
         <div className="row">
-          {canApprove && !arranging && <button className="btn small" onClick={() => setArranging(true)}>Change order</button>}
           <button className="btn small danger" onClick={onCancel}>Cancel count</button>
         </div>
       </div>
-      {arranging ? (
-        <div className="notice small">
-          <span>Drag items (or use the arrows) into the order they sit on the shelves. Every count sheet uses this order.</span>
-          <div className="row"><button className="btn small primary" onClick={() => void saveOrder()}>Save order</button>
-            <button className="btn small" onClick={() => { setItems(initial); setArranging(false); }}>Cancel</button></div>
-        </div>
-      ) : (
         <form className="row" style={{ flexWrap: "nowrap" }} onSubmit={(e) => { e.preventDefault(); find(search); }}>
           <input className="input" placeholder="Find an item, or scan its barcode" value={search} onChange={(e) => setSearch(e.target.value)} />
           {canScan() && <button type="button" className="btn" onClick={() => setScanning(true)} aria-label="Scan a barcode">Scan</button>}
         </form>
-      )}
       {error && <p className="small error">{error}</p>}
-      <ol className={`inv-sheet-list ${arranging ? "arranging" : ""}`}>
+      <ol className="inv-sheet-list">
         {shown.map((i) => {
-          const n = items.indexOf(i);
           const value = draft.counts[i.id] ?? "";
           return (
-            <li key={i.id} draggable={arranging} className={dragId === i.id ? "dragging" : ""}
-              onDragStart={() => setDragId(i.id)} onDragEnd={() => setDragId(null)}
-              onDragOver={(e) => { if (arranging && dragId && dragId !== i.id) { e.preventDefault(); move(items.findIndex((x) => x.id === dragId), n); } }}>
-              {arranging && <span className="inv-grip" aria-hidden>⠿</span>}
+            <li key={i.id}>
               <div className="inv-sheet-name">
                 <strong>{i.name}</strong>
                 <span className="small muted">{[i.unit ?? "each", data.areas.find((a) => a.id === i.storage_area_id)?.name].filter(Boolean).join(" · ")}</span>
               </div>
-              {arranging ? (
-                <span className="row" style={{ gap: 4 }}>
-                  <button className="sb-icon" aria-label={`Move ${i.name} up`} disabled={n === 0} onClick={() => move(n, n - 1)}>↑</button>
-                  <button className="sb-icon" aria-label={`Move ${i.name} down`} disabled={n === items.length - 1} onClick={() => move(n, n + 1)}>↓</button>
-                </span>
-              ) : (
                 <label className="inv-sheet-qty">
                   <input ref={(el) => { inputs.current[i.id] = el; }} className={`input ${value.trim() ? "done" : ""}`} inputMode="decimal"
                     aria-label={`${i.name}, ${i.unit ?? "each"}`} placeholder="–" value={value}
                     onChange={(e) => setCount(i.id, e.target.value.replace(",", "."))} />
                   <span className="small muted">{i.unit ?? "each"}</span>
                 </label>
-              )}
             </li>
           );
         })}
       </ol>
-      {!arranging && (
+      {(
         <div className="inv-sheet-foot">
           <span className="small"><strong>{counted}</strong> of {items.length} counted</span>
           <div className="row">
