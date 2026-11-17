@@ -634,6 +634,32 @@ async def submit_count(session: AsyncSession, location: Location, *, client_id: 
     return count
 
 
+async def changes_during(session: AsyncSession, count: StockCount) -> dict[str, list[StockMovement]]:
+    """Per item, what moved its stock while the count was going on (sales, deliveries, waste…): between the moment
+    the count started and the moment it was sent. These are why "expected" and "now" differ."""
+    start = count.started_at or count.counted_at
+    ids = [ln["item_id"] for ln in count.lines or []]
+    if not ids or start is None:
+        return {}
+    rows = await session.scalars(select(StockMovement).where(
+        StockMovement.item_id.in_(ids), StockMovement.created_at >= start,
+        StockMovement.created_at <= count.counted_at, StockMovement.kind.not_in(("count", "opening")))
+        .order_by(StockMovement.created_at))
+    out: dict[str, list[StockMovement]] = {}
+    for m in rows:
+        out.setdefault(m.item_id, []).append(m)
+    return out
+
+
+async def count_day(session: AsyncSession, location: Location, day: date) -> list[StockCount]:
+    """Every count sent on a local day, all areas, oldest first."""
+    tz = ZoneInfo(location.timezone)
+    t0 = datetime.combine(day, time(0), tzinfo=tz)
+    return list(await session.scalars(select(StockCount).where(
+        StockCount.location_id == location.id, StockCount.counted_at >= t0,
+        StockCount.counted_at < t0 + timedelta(days=1)).order_by(StockCount.counted_at)))
+
+
 async def approve_count(session: AsyncSession, count: StockCount, user_id: str | None) -> StockCount:
     """Post the count's differences to the ledger. Each item moves by counted − the amount frozen at the start, so
     sales and deliveries recorded while people were counting still count."""

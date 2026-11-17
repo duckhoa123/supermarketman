@@ -7,6 +7,7 @@ adjustments need an owner or manager; staff see quantities without costs.
 
 import uuid
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -450,8 +451,26 @@ async def submit_count(body: CountIn, location: Location = Depends(require_locat
                                        approve=body.approve and manager)
     except inv.InventoryError as exc:
         raise _422(exc) from exc
+    names = await _names(session, {user.id})
+    if count.status == "submitted":
+        await _tell_managers_count(session, location, count, names.get(user.id) or "Someone")
     await session.commit()
-    return count_out(count, await _names(session, {user.id}), manager)
+    return count_out(count, names, manager)
+
+
+async def _tell_managers_count(session: AsyncSession, location: Location, count: StockCount, who: str) -> None:
+    from app.money import fmt_money
+    from app.services.alerts import create_alert
+
+    changed = sum(1 for ln in count.lines or [] if abs(ln.get("delta") or 0) > 1e-9)
+    big = sum(1 for ln in count.lines or [] if ln.get("big"))
+    day = count.counted_at.astimezone(ZoneInfo(location.timezone)).date().isoformat()
+    body = (f"{changed} of {len(count.lines or [])} items differ from the system"
+            + (f", {big} big gap{'s' if big != 1 else ''}" if big else "")
+            + f" ({fmt_money(count.variance_cents, location.currency)}). Review and approve it.")
+    await create_alert(session, location, kind="count_submitted", title=f"{who} finished counting {count.area_name}",
+                       body=body, data={"count_id": count.id, "link": f"/inventory?tab=count&day={day}"},
+                       dedupe_key=f"count:{count.id}", channels=["push"])
 
 
 @router.get("/stock-counts")
@@ -487,16 +506,86 @@ async def approve_count(count_id: str, location: Location = Depends(require_mana
     return count_out(count, await _names(session, {count.counted_by, user.id}), True)
 
 
+class RecountIn(BaseModel):
+    note: str | None = Field(default=None, max_length=300)
+
+
 @router.post("/stock-counts/{count_id}/reject")
-async def reject_count(count_id: str, location: Location = Depends(require_manager),
+async def reject_count(count_id: str, body: RecountIn | None = None, location: Location = Depends(require_manager),
                        session: AsyncSession = Depends(get_session)):
-    """Throw the count away (counted the wrong shelf, say). Stock doesn't change."""
+    """Ask for a recount: this count is set aside (stock doesn't change) and the team is told to count again."""
+    from app.services.alerts import create_alert
+
     count = await _count(session, location, count_id)
     if count.status != "submitted":
         raise HTTPException(409, f"This count is already {count.status}")
     count.status = "rejected"
+    note = (body.note or "").strip() if body else ""
+    await create_alert(session, location, kind="count_recount", title=f"Please count {count.area_name} again",
+                       body=note or "The manager asked for a recount. Start a new count of this area.",
+                       data={"count_id": count.id, "link": "/inventory?tab=count"},
+                       dedupe_key=f"recount:{count.id}", channels=["push"])
     await session.commit()
     return {"ok": True}
+
+
+class ApproveIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=200)
+
+
+@router.post("/stock-counts/approve")
+async def approve_counts(body: ApproveIn, location: Location = Depends(require_manager),
+                         user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Approve several counts at once (the day's report): each one's differences go in the ledger."""
+    done = 0
+    for count in await session.scalars(select(StockCount).where(StockCount.location_id == location.id,
+                                                                StockCount.id.in_(body.ids),
+                                                                StockCount.status == "submitted")
+                                       .order_by(StockCount.counted_at)):
+        await inv.approve_count(session, count, user.id)
+        done += 1
+    await session.commit()
+    return {"approved": done}
+
+
+@router.get("/stock-counts/report")
+async def count_report(day: date | None = None, location: Location = Depends(require_manager),
+                       session: AsyncSession = Depends(get_session)):
+    """All areas counted on a day, each item with: the amount when the count started, what changed while it was being
+    counted (and the entries behind it), what was counted, the difference and its value, and what stock becomes."""
+    day = day or inv.local_today(location)
+    counts = await inv.count_day(session, location, day)
+    item_ids = {ln["item_id"] for c in counts for ln in c.lines or []}
+    items = {i.id: i for i in await session.scalars(select(Item).where(Item.id.in_(item_ids)))} if item_ids else {}
+    user_ids = {c.counted_by for c in counts} | {c.approved_by for c in counts}
+    out = []
+    for c in counts:
+        during = await inv.changes_during(session, c)
+        user_ids |= {m.user_id for ms in during.values() for m in ms}
+        lines = []
+        for ln in c.lines or []:
+            moves = during.get(ln["item_id"], [])
+            item = items.get(ln["item_id"])
+            now = item.stock_qty if item is not None else None
+            lines.append({**ln, "during_qty": round(sum(m.qty_delta for m in moves), 6), "during": [
+                {"kind": m.kind, "qty_delta": m.qty_delta, "at": m.created_at.isoformat(), "note": m.note,
+                 "reason": m.reason, "user_id": m.user_id} for m in moves[:30]],
+                "now": now, "after": (round((now or 0) + (ln.get("delta") or 0), 6)
+                                      if c.status == "submitted" and now is not None else None)})
+        lines.sort(key=lambda x: (not x.get("big"), -abs(x.get("value_cents") or 0)))
+        out.append({**count_out(c, {}, True), "lines": lines})
+    names = await _names(session, user_ids)
+    for c, row in zip(counts, out, strict=True):
+        row["counted_by"], row["approved_by"] = names.get(c.counted_by or ""), names.get(c.approved_by or "")
+        for ln in row["lines"]:
+            for m in ln["during"]:
+                m["user"] = names.get(m.pop("user_id") or "")
+    recent = list(await session.scalars(select(StockCount.counted_at).where(
+        StockCount.location_id == location.id).order_by(StockCount.counted_at.desc()).limit(200)))
+    tz = ZoneInfo(location.timezone)
+    days = sorted({d.astimezone(tz).date().isoformat() for d in recent}, reverse=True)[:30]
+    return {"day": day.isoformat(), "counts": out, "waiting": sum(c.status == "submitted" for c in counts),
+            "days": days}
 
 
 # --- Waste --------------------------------------------------------------------------------------------------------

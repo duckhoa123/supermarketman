@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import BarcodeScan, { canScan } from "../../components/BarcodeScan";
+import CountReport from "./CountReport";
 import { Dialog } from "../../components/PosDialogs";
 import { useApp } from "../../context";
 import { useApi } from "../../hooks";
@@ -25,6 +27,10 @@ export default function CountPanel() {
   const [draft, setDraftState] = useState<Draft | null>(() => loadDraft<Draft>(key));
   const [result, setResult] = useState<Count | "queued" | null>(null);
   const [reviewing, setReviewing] = useState<Count | null>(null);
+  const [params, setParams] = useSearchParams();
+  const localDay = (iso?: string) => (iso ? new Date(iso) : new Date()).toLocaleDateString("en-CA");
+  const reportDay = params.get("day") || "";  // empty: today, in the restaurant's own time zone
+  const [reportKey, setReportKey] = useState(0);
   const setDraft = useCallback((d: Draft | null) => { setDraftState(d); saveDraft(key, d); }, [key]);
 
   const data = onHand.data;
@@ -56,14 +62,13 @@ export default function CountPanel() {
     const found = data.areas.find((x) => x.id === a);
     return found ? `${areaIcon(found.name)} ${found.name}` : "Area";
   };
-  const waiting = (history.data?.counts ?? []).filter((c) => c.status === "submitted");
 
   if (draft) {
     return (
       <CountSheet base={base} data={data} draft={draft} items={countable.filter((i) => i.id in draft.expected)}
         title={areaName(draft.area)} canApprove={data.can_manage} onChange={setDraft}
         onCancel={() => { if (window.confirm("Throw this count away? Nothing you've entered is kept.")) setDraft(null); }}
-        onDone={(r) => { setDraft(null); setResult(r); void history.reload(); void onHand.reload(); }} />
+        onDone={(r) => { setDraft(null); setResult(r); void history.reload(); void onHand.reload(); setReportKey((k) => k + 1); }} />
     );
   }
 
@@ -74,17 +79,10 @@ export default function CountPanel() {
       )}
       {result && result !== "queued" && <CountResult count={result} manage={data.can_manage} />}
 
-      {waiting.length > 0 && history.data?.can_approve && (
-        <div className="panel stack" style={{ gap: 8 }}>
-          <h2 style={{ margin: 0 }}>Waiting for your approval</h2>
-          {waiting.map((c) => (
-            <div key={c.id} className="spread inv-count-row">
-              <span><strong>{c.area}</strong> <span className="small muted">by {c.counted_by ?? "someone"}, {new Date(c.counted_at).toLocaleString()} · {c.changed} of {c.items} different{c.big ? ` · ${c.big} big gap${c.big === 1 ? "" : "s"}` : ""}</span></span>
-              <span className="row"><span className={c.variance_cents && c.variance_cents < 0 ? "error" : ""}>{money(c.variance_cents)}</span>
-                <button className="btn small primary" onClick={() => setReviewing(c)}>Review</button></span>
-            </div>
-          ))}
-        </div>
+      {data.can_manage && (
+        <CountReport key={`${reportDay}:${reportKey}`} base={base} day={reportDay}
+          onDay={(d) => setParams({ tab: "count", day: d })}
+          onChanged={() => { void history.reload(); void onHand.reload(); }} />
       )}
 
       <div className="panel stack">
@@ -117,7 +115,10 @@ export default function CountPanel() {
                 {data.can_manage && <th className="num">Difference</th>}<th>Status</th></tr></thead>
               <tbody>
                 {history.data!.counts.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => setReviewing(c)}>
+                  <tr key={c.id} className="clickable" onClick={() => {
+                    if (data.can_manage) { setParams({ tab: "count", day: localDay(c.counted_at) }); window.scrollTo({ top: 0, behavior: "smooth" }); }
+                    else setReviewing(c);
+                  }}>
                     <td>{new Date(c.counted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                     <td>{c.area}</td><td>{c.counted_by ?? "–"}</td><td className="num">{c.items}</td><td className="num">{c.changed}</td>
                     {data.can_manage && <td className={`num ${c.variance_cents && c.variance_cents < 0 ? "error" : ""}`}>{money(c.variance_cents)}</td>}

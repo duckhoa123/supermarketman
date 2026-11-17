@@ -395,3 +395,48 @@ def test_order_amount_tops_up_to_par():
     assert order_qty(Item(stock_qty=12, par_level=40, low_stock_threshold=15, reorder_qty=30)) == 28  # par wins
     assert order_qty(Item(stock_qty=4, low_stock_threshold=10, reorder_qty=30)) == 30  # older items without a par
     assert order_qty(Item(stock_qty=4, low_stock_threshold=10)) == 16  # no par: twice the reorder point
+
+
+async def test_count_report_alerts_and_recount(client, session, demo_location_id):
+    """A staff count alerts the managers; the day's report shows what changed while it was being counted; approve
+    all applies the differences; a recount request tells the team."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Alert
+
+    base = f"/locations/{demo_location_id}"
+    await _add_staff(session, demo_location_id)
+    salmon = (await client.post(f"{base}/inventory/items", headers=OWNER, json={
+        "name": "Count salmon", "unit": "lb", "unit_cost": 1200, "qty": 20})).json()["id"]
+    rice = (await client.post(f"{base}/inventory/items", headers=OWNER, json={
+        "name": "Count rice", "unit": "kg", "unit_cost": 300, "qty": 10})).json()["id"]
+    started = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    # While the walk-in is being counted, 1 lb of salmon is thrown out.
+    await client.post(f"{base}/waste", headers=OWNER, json={"item_id": salmon, "qty": 1, "reason": "dropped"})
+    r = await client.post(f"{base}/stock-counts", headers=STAFF, json={
+        "client_id": "count-report-1", "started_at": started,
+        "lines": [{"item_id": salmon, "qty": 17, "expected": 20}, {"item_id": rice, "qty": 10, "expected": 10}]})
+    assert r.json()["status"] == "submitted"
+    alert = await session.scalar(select(Alert).where(Alert.kind == "count_submitted"))
+    assert alert.title == "cook finished counting Everything" and "1 of 2 items differ" in alert.body
+    assert alert.data["link"].startswith("/inventory?tab=count&day=")
+
+    report = (await client.get(f"{base}/stock-counts/report", headers=OWNER)).json()
+    assert report["waiting"] == 1 and report["days"][0] == report["day"]
+    line = next(ln for ln in report["counts"][0]["lines"] if ln["item_id"] == salmon)
+    assert line["during_qty"] == -1 and line["during"][0]["kind"] == "waste" and line["during"][0]["user"] == "Demo Owner"
+    assert line["now"] == 19 and line["delta"] == -3 and line["after"] == 16  # 20 → counted 17: −3 on top of now
+    assert (await client.get(f"{base}/stock-counts/report", headers=STAFF)).status_code == 403
+
+    r = await client.post(f"{base}/stock-counts/approve", headers=OWNER, json={"ids": [report["counts"][0]["id"]]})
+    assert r.json()["approved"] == 1
+    session.expire_all()
+    assert (await session.get(Item, salmon)).stock_qty == 16
+
+    r = await client.post(f"{base}/stock-counts", headers=STAFF, json={
+        "client_id": "count-report-2", "lines": [{"item_id": rice, "qty": 2}]})
+    r = await client.post(f"{base}/stock-counts/{r.json()['id']}/reject", headers=OWNER,
+                          json={"note": "Check the top shelf"})
+    assert r.status_code == 200
+    recount = await session.scalar(select(Alert).where(Alert.kind == "count_recount"))
+    assert recount.title == "Please count Everything again" and recount.body == "Check the top shelf"

@@ -217,7 +217,8 @@ export type Dashboard = {
   trend_28d: { day: string; gross_cents: number }[];
 };
 
-export type AlertRow = { id: string; kind: string; title: string; body: string; created_at: string; read: boolean };
+export type AlertRow = { id: string; kind: string; title: string; body: string; created_at: string; read: boolean;
+  data?: { link?: string } & Record<string, unknown> };
 export type IntegrationRow = {
   provider: string;
   status: string;

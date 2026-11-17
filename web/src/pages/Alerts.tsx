@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
 import { api, type AlertRow } from "../lib/api";
@@ -10,6 +11,10 @@ const KIND: Record<string, { label: string; tone: string }> = {
   sales_drop: { label: "Sales", tone: "low" },
   daily_digest: { label: "Daily summary", tone: "good" },
   integration_error: { label: "Connection", tone: "low" },
+  count_submitted: { label: "Count", tone: "warn" },
+  count_recount: { label: "Recount", tone: "low" },
+  menu_cost: { label: "Plate cost", tone: "low" },
+  price_change: { label: "Price", tone: "warn" },
 };
 
 export default function Alerts() {
@@ -50,6 +55,7 @@ export default function Alerts() {
                 <p className="muted" style={{ whiteSpace: "pre-wrap" }}>
                   {a.body}
                 </p>
+                {a.data?.link && <Link to={a.data.link} className="btn small" style={{ alignSelf: "start" }}>Open</Link>}
               </li>
             ))}
           </ul>
