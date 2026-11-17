@@ -82,11 +82,6 @@ export default function OnHandPanel() {
     return c ? data?.areas.find((a) => a.name.toLowerCase() === c.value.toLowerCase())?.id ?? null : null;
   }, [conditions, data]);
 
-  async function setItemArea(item: StockItem, id: string) {
-    await api(`${base}/inventory/items/${item.id}`, { method: "PUT", body: { storage_area_id: id || null } });
-    await reload();
-  }
-
   if (error) return <p className="error">{error}</p>;
   if (!data) return <p className="muted">Loading…</p>;
   const t = data.totals;
@@ -142,13 +137,7 @@ export default function OnHandPanel() {
                   </div>
                 </td>
                 <td data-label="Area">
-                  {manage ? (
-                    <select className="select inv-area" aria-label={`Area for ${i.name}`} value={i.storage_area_id ?? ""}
-                      onChange={(e) => void setItemArea(i, e.target.value)}>
-                      <option value="">No area</option>
-                      {data.areas.map((a) => <option key={a.id} value={a.id}>{areaIcon(a.name)} {a.name}</option>)}
-                    </select>
-                  ) : (() => { const a = data.areas.find((x) => x.id === i.storage_area_id); return <span className="muted">{a ? `${areaIcon(a.name)} ${a.name}` : "–"}</span>; })()}
+                  {(() => { const a = data.areas.find((x) => x.id === i.storage_area_id); return a ? <span className="nowrap">{areaIcon(a.name)} {a.name}</span> : <span className="muted">No area</span>; })()}
                 </td>
                 <td data-label="On hand" className="num">
                   {i.stock_qty == null ? <span className="muted">{i.is_prep ? "made to order" : "not counted"}</span> : (
@@ -229,7 +218,8 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
   const set = (patch: Partial<typeof f>) => setF((x) => ({ ...x, ...patch }));
   const unitShown = f.unit || "unit";
   const units = Array.from(new Set([...(f.unit ? [f.unit] : []), ...data.units]));
-  const inArea = !!defaultArea && f.areaId === defaultArea;  // already filtered to an area: no need to ask
+  // Adding while filtered to one area: it goes there, no need to ask. Editing always shows it (the only place to move it).
+  const inArea = !item && !!defaultArea && f.areaId === defaultArea;
 
   const ap = num(yieldTest?.ap ?? ""), ep = num(yieldTest?.ep ?? ""), cooked = num(yieldTest?.cooked ?? "");
   const tested = ap && ap > 0 ? Math.round((((cooked ?? ep) ?? 0) / ap) * 1000) / 10 : null;

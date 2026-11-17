@@ -85,7 +85,9 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
     items = list(await session.scalars(
         select(Item).where(Item.location_id == location.id,
                            # Menu items (anything with a price) live on Menu items, unless a recipe uses them.
-                           (Item.price_cents == 0) | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None))
+                           # $0 items from the POS (gift cards, open-price items) aren't stock either.
+                           ((Item.price_cents == 0) & Item.provider.in_(("pass", "demo")))
+                           | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None))
         .order_by(func.coalesce(Item.shelf_order, 1_000_000), func.lower(Item.name))))
     areas = list(await session.scalars(select(StorageArea).where(StorageArea.location_id == location.id)
                                        .order_by(StorageArea.sort, StorageArea.name)))
