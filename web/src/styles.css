@@ -1058,3 +1058,4 @@ th:has(> .th-edit) { white-space: nowrap; }
 .fb-search { width: 220px; }
 @media (max-width: 760px) { .fb-search { width: auto; flex: 1; min-width: 0; } }
 .sb-icon.th-edit { display: inline-grid; place-items: center; }
+.inv-table th { white-space: nowrap; }

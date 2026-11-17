@@ -58,7 +58,6 @@ export default function OnHandPanel() {
       { key: "par", label: "Par level", type: "number", get: (i) => i.par_level },
       { key: "reorder", label: "Reorder point", type: "number", get: (i) => i.reorder_point },
       { key: "last_count", label: "Last counted", type: "date", get: (i) => i.last_count ? new Date(i.last_count.at).toLocaleDateString("en-CA") : null },
-      { key: "cover", label: "Days of cover", type: "number", get: (i) => i.days_of_cover },
       { key: "supplier", label: "Supplier", type: "choice", get: (i) => i.supplier, options: Array.from(new Set((data?.items ?? []).map((i) => i.supplier).filter(Boolean) as string[])).sort() },
       { key: "barcode", label: "Barcode", type: "text", get: (i) => i.barcode },
       { key: "recipes", label: "Used in recipes", type: "number", get: (i) => i.used_in },
@@ -125,9 +124,9 @@ export default function OnHandPanel() {
               <th>Item</th>
               <th>Area{manage && <button className="sb-icon th-edit tip" data-tip="Add, rename or reorder areas" aria-label="Edit areas" onClick={() => setAreasOpen(true)}>✎</button>}</th>
               <th className="num">On hand</th>
-              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="Par: wanted on hand after a delivery. Reorder point: order when it gets down to this.">Par · reorder at</span></th>
+              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="Wanted on hand after a delivery. Orders top up to this.">Par</span></th>
+              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="When stock gets down to this, you're alerted and it's added to a draft order.">Reorder at</span></th>
               <th>Last count</th>
-              <th className="num"><span className="tip tip-left" tabIndex={0} data-tip="How many days the stock lasts at the last four weeks' usage">Cover</span></th>
               {manage && <><th className="num">Cost</th><th className="num">Value</th></>}
               {manage && <th />}
             </tr>
@@ -159,15 +158,12 @@ export default function OnHandPanel() {
                     </>
                   )}
                 </td>
-                <td data-label="Par · reorder at" className="num">
-                  {i.par_level == null && i.reorder_point == null ? <span className="muted">–</span>
-                    : <>{qty(i.par_level)} <span className="muted">·</span> {qty(i.reorder_point)}</>}
-                </td>
+                <td data-label="Par" className="num">{i.par_level == null ? <span className="muted">–</span> : qty(i.par_level)}</td>
+                <td data-label="Reorder at" className="num">{i.reorder_point == null ? <span className="muted">–</span> : qty(i.reorder_point)}</td>
                 <td data-label="Last count">
                   {i.last_count ? <span title={new Date(i.last_count.at).toLocaleString()}>{qty(i.last_count.qty)} <span className="muted small">{ago(i.last_count.at)}</span></span>
                     : <span className="muted">never</span>}
                 </td>
-                <td data-label="Cover" className="num nowrap">{i.days_of_cover == null ? <span className="muted">–</span> : `${i.days_of_cover} d`}</td>
                 {manage && (
                   <>
                     <td data-label="Cost" className="num">{i.avg_cost == null ? <span className="muted">–</span> : <>{unitCost(i.avg_cost)}<span className="muted small">/{i.unit ?? "each"}</span></>}</td>
