@@ -591,6 +591,37 @@ def _gap(expected: float | None, delta: float, value: int) -> bool:
     return bool(expected and abs(delta) / abs(expected) * 100 >= BIG_GAP_PCT and abs(delta) >= 1e-6)
 
 
+def _when(v) -> datetime | None:
+    if v is None or isinstance(v, datetime):
+        return v
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=ZoneInfo("UTC"))
+
+
+async def moved_between(session: AsyncSession, item_id: str, start: datetime | None, end: datetime | None) -> float:
+    """How much an item's stock moved (sales, deliveries, waste…) between two moments, counts and openings aside."""
+    if start is None or end is None or end <= start:
+        return 0.0
+    return float(await session.scalar(select(func.coalesce(func.sum(StockMovement.qty_delta), 0.0)).where(
+        StockMovement.item_id == item_id, StockMovement.created_at > start, StockMovement.created_at <= end,
+        StockMovement.kind.not_in(("count", "opening")))) or 0.0)
+
+
+async def line_difference(session: AsyncSession, count: StockCount, ln: dict) -> tuple[float, float]:
+    """(moved before this item was counted, real difference). What was on the shelf when the item was counted
+    already reflects any sale or waste before that moment, so the comparison is with what Pass had then:
+    the amount at the start plus what moved before the item was counted."""
+    start = count.started_at
+    at = _when(ln.get("item_counted_at")) or count.counted_at
+    if count.counted_at is not None and at is not None:
+        at = min(at, count.counted_at)
+    before = await moved_between(session, ln["item_id"], start, at) if ln.get("expected") is not None else 0.0
+    return before, float(ln["counted"]) - (float(ln.get("expected") or 0.0) + before)
+
+
 async def submit_count(session: AsyncSession, location: Location, *, client_id: str, area_id: str | None,
                        lines: list[dict], user_id: str | None, counted_at: datetime | None = None,
                        started_at: datetime | None = None, approve: bool = False) -> StockCount:
@@ -607,6 +638,11 @@ async def submit_count(session: AsyncSession, location: Location, *, client_id: 
     ids = [ln["item_id"] for ln in lines]
     items = {i.id: i for i in await session.scalars(select(Item).where(Item.location_id == location.id,
                                                                        Item.id.in_(ids)))} if ids else {}
+    now = utcnow()
+    count = StockCount(location_id=location.id, storage_area_id=area.id if area else None,
+                       area_name=area.name if area else "Everything", client_id=client_id, counted_by=user_id,
+                       counted_at=min(counted_at or now, now), started_at=min(started_at, now) if started_at else None,
+                       status="submitted", lines=[], variance_cents=0)
     out, variance = [], 0
     for ln in lines:
         item = items.get(ln["item_id"])
@@ -614,19 +650,16 @@ async def submit_count(session: AsyncSession, location: Location, *, client_id: 
             continue
         expected = ln.get("expected")
         expected = float(expected) if expected is not None else item.stock_qty
-        counted = float(ln["qty"])
-        delta = counted - (expected or 0.0)
+        at = _when(ln.get("counted_at"))
+        line = {"item_id": item.id, "name": item.name, "unit": item.unit, "expected": expected,
+                "counted": float(ln["qty"]), "item_counted_at": at.isoformat() if at else None}
+        before, delta = await line_difference(session, count, line)
         cost = item.avg_cost if item.avg_cost is not None else item.cost_cents
         value = round(delta * cost) if cost is not None else 0
         variance += value
-        out.append({"item_id": item.id, "name": item.name, "unit": item.unit, "expected": expected,
-                    "counted": counted, "delta": round(delta, 6), "value_cents": value,
+        out.append({**line, "before": round(before, 6), "delta": round(delta, 6), "value_cents": value,
                     "big": _gap(expected, delta, value)})
-    now = utcnow()
-    count = StockCount(location_id=location.id, storage_area_id=area.id if area else None,
-                       area_name=area.name if area else "Everything", client_id=client_id, counted_by=user_id,
-                       counted_at=min(counted_at or now, now), started_at=min(started_at, now) if started_at else None,
-                       status="submitted", lines=out, variance_cents=variance)
+    count.lines, count.variance_cents = out, variance
     session.add(count)
     await session.flush()
     if approve:
@@ -661,8 +694,8 @@ async def count_day(session: AsyncSession, location: Location, day: date) -> lis
 
 
 async def approve_count(session: AsyncSession, count: StockCount, user_id: str | None) -> StockCount:
-    """Post the count's differences to the ledger. Each item moves by counted − the amount frozen at the start, so
-    sales and deliveries recorded while people were counting still count."""
+    """Post the count's differences to the ledger. Each item moves by counted − what Pass had when that item was
+    counted, so a sale or waste before it was counted isn't taken off twice, and one after still counts."""
     if count.status != "submitted":
         raise InventoryError(f"This count is already {count.status}")
     ids = [ln["item_id"] for ln in count.lines or []]
@@ -671,18 +704,23 @@ async def approve_count(session: AsyncSession, count: StockCount, user_id: str |
     for ln in count.lines or []:
         item = items.get(ln["item_id"])
         value = 0
+        # Worked out again now: sales synced since the count was sent may fall before an item was counted.
+        before, delta = await line_difference(session, count, ln)
         if item is not None:
             if ln.get("expected") is None:
-                mv = await set_qty(session, item, ln["counted"], "count", source=f"count:{count.id}",
+                # No amount before: what was counted, plus whatever moved after it was counted.
+                at = _when(ln.get("item_counted_at")) or count.counted_at
+                after = await moved_between(session, item.id, at, utcnow())
+                mv = await set_qty(session, item, float(ln["counted"]) + after, "count", source=f"count:{count.id}",
                                    user_id=user_id, note=f"Counted in {count.area_name}")
-            elif abs(ln["delta"]) > 1e-9:
-                mv = await record(session, item, "count", ln["delta"], source=f"count:{count.id}", user_id=user_id,
+            elif abs(delta) > 1e-9:
+                mv = await record(session, item, "count", delta, source=f"count:{count.id}", user_id=user_id,
                                   note=f"Counted in {count.area_name}")
             else:
                 mv = None
             value = mv.value_cents if mv is not None else 0
         variance += value
-        lines.append({**ln, "value_cents": value})
+        lines.append({**ln, "before": round(before, 6), "delta": round(delta, 6), "value_cents": value})
     count.lines, count.variance_cents = lines, variance
     count.status, count.approved_by, count.approved_at = "approved", user_id, utcnow()
     await session.flush()

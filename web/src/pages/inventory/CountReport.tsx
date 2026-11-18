@@ -3,9 +3,11 @@ import { useApi } from "../../hooks";
 import { api } from "../../lib/api";
 import { areaIcon, KIND_LABEL, money, qty } from "../../lib/inventory";
 
-type Move = { kind: string; qty_delta: number; at: string; note: string | null; reason: string | null; user: string | null };
+type Move = { kind: string; qty_delta: number; at: string; note: string | null; reason: string | null; user: string | null;
+  before_count: boolean };
 type Line = { item_id: string; name: string; unit: string | null; expected: number | null; counted: number; delta: number;
-  value_cents?: number; big?: boolean; during_qty: number; during: Move[]; now: number | null; after: number | null };
+  value_cents?: number; big?: boolean; during_qty: number; during: Move[]; now: number | null; after: number | null;
+  before?: number; item_counted_at?: string | null };
 type ReportCount = { id: string; area: string; status: "submitted" | "approved" | "rejected"; counted_at: string;
   started_at: string | null; counted_by: string | null; approved_by: string | null; items: number; changed: number;
   big: number; variance_cents: number | null; lines: Line[] };
@@ -99,7 +101,7 @@ export default function CountReport({ base, day, onDay, onChanged }: {
                 <th className="num"><span className="tip" tabIndex={0} data-tip="What Pass had when the count started">At start</span></th>
                 <th className="num"><span className="tip" tabIndex={0} data-tip="Sales, deliveries and waste while it was being counted. Tap to see them.">During count</span></th>
                 <th className="num">Counted</th>
-                <th className="num"><span className="tip" tabIndex={0} data-tip="Counted − at start: the stock that's really missing (or extra)">Difference</span></th>
+                <th className="num"><span className="tip" tabIndex={0} data-tip="Counted − what Pass had when the item was counted (at start, plus changes before it was counted): what's really missing or extra">Difference</span></th>
                 <th className="num">$</th>
                 <th className="num"><span className="tip tip-left" tabIndex={0} data-tip={c.status === "submitted" ? "Stock now, and what it becomes when you approve" : "Stock now"}>Stock</span></th>
               </tr></thead>
@@ -109,7 +111,7 @@ export default function CountReport({ base, day, onDay, onChanged }: {
                   return (
                     <Fragment key={key}>
                       <tr className={l.big ? "inv-big" : ""}>
-                        <td>{l.name}</td>
+                        <td>{l.name}{l.item_counted_at && <div className="small muted">counted {time(l.item_counted_at)}</div>}</td>
                         <td className="num">{l.expected == null ? <span className="muted">none</span> : <>{qty(l.expected)} <span className="muted">{l.unit ?? ""}</span></>}</td>
                         <td className="num">
                           {l.during.length ? (
@@ -134,6 +136,7 @@ export default function CountReport({ base, day, onDay, onChanged }: {
                                   {m.reason && <span className="muted"> · {m.reason.replace("_", " ")}</span>}
                                   {m.note && <span className="muted"> · {m.note}</span>}
                                   {m.user && <span className="muted"> · {m.user}</span>}
+                                  <span className={`small ${m.before_count ? "muted" : "warn-text"}`}> · {m.before_count ? "before it was counted: already in the count" : "after it was counted: kept on top of the count"}</span>
                                 </li>
                               ))}
                             </ul>

@@ -425,13 +425,31 @@ async def test_count_report_alerts_and_recount(client, session, demo_location_id
     assert report["waiting"] == 1 and report["days"][0] == report["day"]
     line = next(ln for ln in report["counts"][0]["lines"] if ln["item_id"] == salmon)
     assert line["during_qty"] == -1 and line["during"][0]["kind"] == "waste" and line["during"][0]["user"] == "Demo Owner"
-    assert line["now"] == 19 and line["delta"] == -3 and line["after"] == 16  # 20 → counted 17: −3 on top of now
+    # The waste was logged before the salmon was counted, so the 17 on the shelf already reflects it: compared with
+    # the 19 Pass had then, 2 lb are missing (not 3), and stock becomes 17.
+    assert line["now"] == 19 and line["before"] == -1 and line["delta"] == -2 and line["after"] == 17
+    assert line["during"][0]["before_count"] is True
     assert (await client.get(f"{base}/stock-counts/report", headers=STAFF)).status_code == 403
 
     r = await client.post(f"{base}/stock-counts/approve", headers=OWNER, json={"ids": [report["counts"][0]["id"]]})
     assert r.json()["approved"] == 1
     session.expire_all()
-    assert (await session.get(Item, salmon)).stock_qty == 16
+    assert (await session.get(Item, salmon)).stock_qty == 17
+
+    # Counted first, then 2 kg of rice thrown out before the count is sent: that 2 kg comes off on top.
+    t0 = datetime.now(timezone.utc) - timedelta(minutes=5)
+    counted_rice = (t0 + timedelta(minutes=1)).isoformat()
+    session.add(StockMovement(location_id=demo_location_id, item_id=rice, item_name="Count rice", kind="waste",
+                              qty_delta=-2, qty_after=8, value_cents=-600, created_at=t0 + timedelta(minutes=2)))
+    item = await session.get(Item, rice)
+    item.stock_qty = 8
+    await session.commit()
+    r = await client.post(f"{base}/stock-counts", headers=OWNER, json={
+        "client_id": "count-report-3", "started_at": t0.isoformat(), "approve": True,
+        "lines": [{"item_id": rice, "qty": 9, "expected": 10, "counted_at": counted_rice}]})
+    assert r.json()["lines"][0]["before"] == 0 and r.json()["lines"][0]["delta"] == -1
+    session.expire_all()
+    assert (await session.get(Item, rice)).stock_qty == 7  # 9 counted, then the 2 kg thrown out after
 
     r = await client.post(f"{base}/stock-counts", headers=STAFF, json={
         "client_id": "count-report-2", "lines": [{"item_id": rice, "qty": 2}]})

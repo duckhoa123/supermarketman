@@ -16,7 +16,7 @@ const NO_AREA = "__none__";
 /** A count in progress on this phone. The system amounts are frozen when it starts; it survives a reload or a
  * walk-in with no signal, and is sent when it's finished. */
 type Draft = { client_id: string; area: string; started_at: string; expected: Record<string, number | null>;
-  counts: Record<string, string> };
+  counts: Record<string, string>; times?: Record<string, string> };  // times: when each item was counted
 
 export default function CountPanel() {
   const { location } = useApp();
@@ -164,12 +164,14 @@ function CountSheet({ base, data, draft, items: initial, title, canApprove, onCh
   useEffect(() => setError(""), [search]);
 
   function setCount(id: string, value: string) {
-    onChange({ ...draft, counts: { ...draft.counts, [id]: value } });
+    // When the number is typed is when the shelf was seen: changes before it are already in the number.
+    onChange({ ...draft, counts: { ...draft.counts, [id]: value }, times: { ...(draft.times ?? {}), [id]: new Date().toISOString() } });
   }
 
   async function submit() {
     const lines = items.filter((i) => (draft.counts[i.id] ?? "").trim() !== "").map((i) => ({
-      item_id: i.id, qty: Number(draft.counts[i.id]), expected: draft.expected[i.id] ?? null }));
+      item_id: i.id, qty: Number(draft.counts[i.id]), expected: draft.expected[i.id] ?? null,
+      counted_at: draft.times?.[i.id] ?? null }));
     if (!lines.length) return setError("Enter at least one amount.");
     if (lines.some((l) => Number.isNaN(l.qty) || l.qty < 0)) return setError("Amounts must be numbers, like 3.5.");
     const missing = items.length - lines.length;

@@ -414,6 +414,7 @@ class CountLine(BaseModel):
     item_id: str
     qty: float = Field(ge=0, le=10_000_000)
     expected: float | None = Field(default=None, ge=-10_000_000, le=10_000_000)  # system amount when it started
+    counted_at: datetime | None = None  # when this item was counted (its number typed)
 
 
 class CountIn(BaseModel):
@@ -567,9 +568,16 @@ async def count_report(day: date | None = None, location: Location = Depends(req
             moves = during.get(ln["item_id"], [])
             item = items.get(ln["item_id"])
             now = item.stock_qty if item is not None else None
+            if c.status == "submitted":  # sales may have synced since it was sent
+                before, delta = await inv.line_difference(session, c, ln)
+                cost = _cost(item) if item is not None else None
+                ln = {**ln, "before": round(before, 6), "delta": round(delta, 6),
+                      "value_cents": round(delta * cost) if cost is not None else 0}
+            at = inv._when(ln.get("item_counted_at")) or c.counted_at
             lines.append({**ln, "during_qty": round(sum(m.qty_delta for m in moves), 6), "during": [
                 {"kind": m.kind, "qty_delta": m.qty_delta, "at": m.created_at.isoformat(), "note": m.note,
-                 "reason": m.reason, "user_id": m.user_id} for m in moves[:30]],
+                 "reason": m.reason, "user_id": m.user_id, "before_count": bool(at and m.created_at <= at)}
+                for m in moves[:30]],
                 "now": now, "after": (round((now or 0) + (ln.get("delta") or 0), 6)
                                       if c.status == "submitted" and now is not None else None)})
         lines.sort(key=lambda x: (not x.get("big"), -abs(x.get("value_cents") or 0)))
