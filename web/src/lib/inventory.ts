@@ -99,11 +99,15 @@ const ALIASES: Record<string, string> = {
   pounds: "lb", litre: "l", liter: "l", litres: "l", liters: "l", ltr: "l", "fl oz": "floz", ea: "each", pc: "each",
   pcs: "each", piece: "each", pieces: "each", unit: "each", units: "each", ct: "each", "": "each", dz: "dozen",
   cases: "case", cs: "case", bottles: "bottle", btl: "bottle", cans: "can", bags: "bag", boxes: "box", packs: "pack",
+  gm: "g", "#": "lb", kilogram: "kg", kilograms: "kg", mls: "ml", millilitre: "ml", milliliter: "ml", lt: "l",
+  "fl. oz": "floz", "fl.oz": "floz", tubs: "tub", jars: "jar", pk: "pack", bx: "box",
 };
 export const normUnit = (u: string | null | undefined) => {
   const k = (u ?? "").trim().toLowerCase().replace(/\.$/, "");
   return ALIASES[k] ?? k;
 };
+/** "mass", "volume", "count" (each, dozen) or null for a container like case or bag. */
+export const unitKind = (u: string | null | undefined) => dim(normUnit(u))?.[0] ?? null;
 const dim = (u: string): [string, number] | null =>
   u in MASS ? ["mass", MASS[u]] : u in VOLUME ? ["volume", VOLUME[u]] : u in COUNT ? ["count", COUNT[u]] : null;
 

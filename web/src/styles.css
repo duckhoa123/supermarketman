@@ -823,8 +823,18 @@ button.sb-photo { cursor: pointer; }
 .inv-line-fields label, .inv-line-stock label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .inv-line-fields span, .inv-line-stock span { font-size: 0.75rem; color: var(--muted); }
 .inv-line-fields output { padding: 8px 0; font-weight: 700; }
-.inv-line-stock { display: grid; grid-template-columns: 1fr 150px; gap: 8px; align-items: start; }
-@media (max-width: 560px) { .inv-line-stock { grid-template-columns: 1fr; } }
+.inv-line-stock { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.inv-line-stock > * { flex: 1 1 110px; }
+.inv-line-stock > .inv-target { flex: 2 1 220px; }
+.inv-line-stock > .inv-arrived { flex: 1 1 150px; }
+.inv-line-stock output { padding: 8px 0; font-weight: 600; }
+.inv-adds { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inv-adds > span { font-size: 0.75rem; color: var(--muted); }
+.inv-adds strong { padding-top: 6px; color: var(--basil); white-space: nowrap; }
+.inv-adds small { font-size: 0.75rem; }
+.inv-printed { margin: -4px 0 0 32px; overflow-wrap: anywhere; }
+.input.is-invalid { border-color: var(--tomato); }
+@media (max-width: 560px) { .inv-line-stock > .inv-target { flex-basis: 100%; } }
 .inv-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; width: 100%; }
 @media (max-width: 560px) {
   .inv-foot { gap: 8px; }

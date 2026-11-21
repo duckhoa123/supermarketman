@@ -75,7 +75,15 @@ class DraftLine(BaseModel):
     line_total_cents: int | None = Field(default=None, ge=-100_000_000, le=100_000_000)
     kind: str = Field(default="item", pattern="^(item|fee|credit)$")
     item_id: str | None = None
-    pack_size: float = Field(default=1, gt=0, le=10_000)
+    name: str | None = Field(default=None, max_length=300)  # what it's called in inventory, e.g. without the code
+    # The pack: 1 case = pack_count × each_qty each_unit (40 × 400 g). pack_size, what one invoice unit adds to stock
+    # in the stock unit, is worked out from it when it can be; otherwise it's what's typed.
+    pack_count: float | None = Field(default=None, gt=0, le=100_000)
+    each_qty: float | None = Field(default=None, gt=0, le=1_000_000)
+    each_unit: str | None = Field(default=None, max_length=16)
+    each_name: str | None = Field(default=None, max_length=32)
+    stock_unit: str | None = Field(default=None, max_length=32)  # what a new item is counted in
+    pack_size: float = Field(default=1, gt=0, le=100_000)
     match: str | None = Field(default=None, max_length=40)
     create_item: bool = False  # not matched: add it to inventory as a new stock item when the invoice is imported
     received_qty: float | None = Field(default=None, ge=0, le=100_000)  # what arrived, if not what was invoiced

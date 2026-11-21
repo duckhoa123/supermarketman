@@ -57,6 +57,44 @@ class InvoiceMathTests(unittest.TestCase):
         assert any("add up to $11.00" in w for w in out["warnings"])
         assert any("date" in w for w in out["warnings"])
 
+    def test_packs_are_read_from_the_packing_column_or_the_name(self):
+        assert im.parse_pack("40X400G") == {"pack_count": 40, "each_qty": 400, "each_unit": "g"}
+        assert im.parse_pack("BAG", "GOLDEN CAMEL RICE/ GAO LAC DA 40LBS GRRI013P") == \
+            {"pack_count": 1, "each_qty": 40, "each_unit": "lb"}
+        assert im.parse_pack("LEE KUM KEE HOISIN SAUCE 6X5LBS-P") == {"pack_count": 6, "each_qty": 5, "each_unit": "lb"}
+        assert im.parse_pack("Burrata 125g x 6") == {"pack_count": 6, "each_qty": 125, "each_unit": "g"}
+        assert im.parse_pack("Tomatoes 6/5LB") == {"pack_count": 6, "each_qty": 5, "each_unit": "lb"}
+        assert im.parse_pack("Napkins 500ct") == {"pack_count": 500, "each_qty": None, "each_unit": None}
+        assert im.parse_pack("ANGEL RICE GRNO005A", "BAG") is None  # an item code isn't a size
+        assert im.clean_name("Peroni Nastro Azzurro 330ml") == "Peroni Nastro Azzurro"
+
+    def test_what_one_invoice_unit_adds_to_stock(self):
+        # 1 case of 40 × 400 g: 16 kg, 40 packs, or 1 case, depending on what it's counted in.
+        assert im.per_invoice_unit("case", 40, 400, "g", "kg") == 16
+        assert im.per_invoice_unit("case", 40, 400, "g", "pack") == 40
+        assert im.per_invoice_unit("case", 40, 400, "g", "case") == 1
+        assert im.per_invoice_unit("bag", 1, 40, "lb", "lb") == 40
+        assert round(im.per_invoice_unit("bag", 1, 40, "lb", "kg"), 2) == 18.14
+        # Already sold by weight: 10 LBS packed in 1 lb bags is 1 lb per invoice unit.
+        assert im.per_invoice_unit("lbs", 1, 1, "lb", "lb") == 1
+        assert im.per_invoice_unit("lbs", 1, 1, "lb", "bag") == 1
+        # A case of 330 ml bottles with no count printed can't be worked out, unless the item knows its case.
+        assert im.per_invoice_unit("case", 1, 330, "ml", "each") is None
+        assert im.per_invoice_unit("case", None, None, None, "each",
+                                   [{"qty": 1, "unit": "case", "to_qty": 24, "to_unit": "each"}]) == 24
+        # New items: food by weight, drinks by the bottle, else the invoice unit.
+        assert im.default_stock_unit("case", 40, 400, "g") == "kg"
+        assert im.default_stock_unit("bag", 1, 40, "lb") == "lb"
+        assert im.default_stock_unit("case", 24, 330, "ml", "bottle") == "bottle"
+        assert im.default_stock_unit("case", 1, 330, "ml") == "each"
+        assert im.default_stock_unit("case", None, None, None) == "case"
+        assert im.stock_units("case", 40, 400, "g")[:3] == ["kg", "g", "lb"]
+        assert im.new_item_conversions("case", 16, "kg", 400, "g") == [{"qty": 1, "unit": "case", "to_qty": 16,
+                                                                         "to_unit": "kg"}]
+        assert im.new_item_conversions("case", 24, "bottle", 330, "ml") == [
+            {"qty": 1, "unit": "case", "to_qty": 24, "to_unit": "bottle"},
+            {"qty": 1, "unit": "bottle", "to_qty": 330, "to_unit": "ml"}]
+
     def test_price_change_compares_per_stock_unit(self):
         # A case of 24 at $52.80 is $2.20 a bottle; last time singles were $2.00: +10%.
         assert im.price_change_pct(5280, 24, 200, 1) == 10.0
@@ -248,12 +286,68 @@ async def test_import_adds_new_stock_items_and_exports_excel(client, session, de
     assert body["Burrata 125g x 6"][7] == "Burrata & Tomato" and body["Delivery fee"][2] == "fee"
 
     r = (await client.post(f"{base}/confirm", headers=OWNER)).json()
-    assert r["created_items"] == ["Mascarpone 500g"]
-    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id, Item.name == "Mascarpone 500g"))
-    assert item.stock_qty == 2 and item.unit == "tub" and item.cost_cents == 1050 and item.orderable is False
+    # Named without the size, counted by weight: 2 tubs of 500 g are 1 kg, at $21.00 a kg.
+    assert r["created_items"] == ["Mascarpone"]
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id, Item.name == "Mascarpone"))
+    assert item.stock_qty == 1 and item.unit == "kg" and item.cost_cents == 2100 and item.orderable is False
+    assert item.conversions == [{"qty": 1, "unit": "tub", "to_qty": 0.5, "to_unit": "kg"}]
     assert item.supplier_id == scan["supplier_id"] and item.category == "Supplies"
     logged = await session.scalar(select(ReceivedLine).where(ReceivedLine.scan_id == scan["id"],
                                                              ReceivedLine.description == "Mascarpone 500g"))
-    assert logged.item_id == item.id and logged.stock_added == 2
+    assert logged.item_id == item.id and logged.stock_added == 1 and logged.pack_size == 0.5
     after = (await client.get(base, headers=OWNER)).json()
     assert next(ln for ln in after["lines"] if ln["description"] == "Mascarpone 500g")["item_id"] == item.id
+
+
+THREE_DOLPHINS = dict(
+    supplier_name="Three Dolphins Wholesale Ltd.", invoice_number="52951", invoice_date="2026-11-20", total=383.80,
+    lines=[
+        {"description": "ANGEL RICE VERMICELLI BBH (M) 40X400G BUN BO HUE GRNO005A", "name": "ANGEL RICE VERMICELLI BBH",
+         "sku": "GRNO005A", "qty": 1, "unit": "CASE", "packing": "40X400G", "pack_count": 40, "each_size": 400,
+         "each_unit": "g", "unit_price": 60.0, "line_total": 60.0},
+        {"description": "GOLDEN CAMEL RICE/ GAO LAC DA 40LBS GRRI013P", "name": "GOLDEN CAMEL RICE", "sku": "GRRI013P",
+         "qty": 2, "unit": "BAG", "packing": "BAG", "unit_price": 52.0, "line_total": 104.0},  # size only in the name
+        {"description": "BLANCHED PEANUT DAU PHONG KHONG VO 1LB GRDR012P", "name": "BLANCHED PEANUT",
+         "sku": "GRDR012P", "qty": 10, "unit": "LBS", "packing": "1LB", "unit_price": 2.78, "line_total": 27.80},
+    ],
+)
+
+
+async def test_cases_become_kilos_new_items_get_clean_names(client, session, demo_location_id, fake_llm):
+    """1 case of 40 × 400 g vermicelli at $60 goes in as 16 kg at $3.75/kg, under a clean name."""
+    scan = (await _scan_and_read(client, demo_location_id, fake_llm, THREE_DOLPHINS))["scan"]
+    lines = {ln["name"]: ln for ln in scan["lines"]}
+    noodles, rice, peanut = (lines["ANGEL RICE VERMICELLI BBH"], lines["GOLDEN CAMEL RICE"],
+                             lines["BLANCHED PEANUT"])
+    assert (noodles["pack_count"], noodles["each_qty"], noodles["each_unit"]) == (40, 400, "g")
+    assert noodles["stock_unit"] == "kg" and noodles["pack_size"] == 16 and noodles["pack_auto"] is True
+    assert (rice["each_qty"], rice["each_unit"], rice["stock_unit"], rice["pack_size"]) == (40, "lb", "lb", 40)
+    assert peanut["stock_unit"] == "lb"
+    assert peanut["pack_size"] == 1
+
+    # Counting the noodles by the pack instead: 40 per case.
+    base = f"/locations/{demo_location_id}/invoices/{scan['id']}"
+    edited = [{k: v for k, v in ln.items() if k not in ("last_price_cents", "last_received_on", "change_pct",
+                                                        "pack_auto")} | {"create_item": True} for ln in scan["lines"]]
+    edited[0]["stock_unit"] = "pack"
+    r = await client.put(base, headers=OWNER, json={"lines": edited})
+    assert r.status_code == 200 and r.json()["lines"][0]["pack_size"] == 40
+    edited[0]["stock_unit"] = "kg"
+    assert (await client.put(base, headers=OWNER, json={"lines": edited})).json()["lines"][0]["pack_size"] == 16
+
+    out = (await client.post(f"{base}/confirm", headers=OWNER)).json()
+    assert sorted(out["created_items"]) == ["ANGEL RICE VERMICELLI BBH", "BLANCHED PEANUT", "GOLDEN CAMEL RICE"]
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                   Item.name == "ANGEL RICE VERMICELLI BBH"))
+    assert item.unit == "kg" and item.stock_qty == 16 and item.cost_cents == 375
+    assert item.conversions == [{"qty": 1, "unit": "case", "to_qty": 16, "to_unit": "kg"}]
+    rice_item = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                        Item.name == "GOLDEN CAMEL RICE"))
+    assert rice_item.unit == "lb" and rice_item.stock_qty == 80 and rice_item.cost_cents == 130
+    logged = await session.scalar(select(ReceivedLine).where(ReceivedLine.item_id == item.id))
+    assert logged.description.startswith("ANGEL RICE VERMICELLI BBH (M) 40X400G") and logged.stock_added == 16
+
+    # Next time the same product (by its code) goes straight to the item, 16 kg a case.
+    later = {**THREE_DOLPHINS, "invoice_number": "53010", "lines": THREE_DOLPHINS["lines"][:1]}
+    again = (await _scan_and_read(client, demo_location_id, fake_llm, later))["scan"]["lines"][0]
+    assert again["item_id"] == item.id and again["match"] == "remembered" and again["pack_size"] == 16

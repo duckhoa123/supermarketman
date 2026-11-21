@@ -48,6 +48,14 @@ exactly as printed, by calling record_invoice once.
 - One entry in lines for every product line, in the order printed. Copy the description as written (include \
 size or pack, e.g. "Burrata 125g x 6"), the item code if there is one, quantity, unit (case, kg, ea, bottle...), \
 unit price and line total.
+- name: the product as a kitchen would call it: brand and product, without the item code, the pack size or a \
+translation into another language, in the invoice's capitalisation. "ANGEL RICE VERMICELLI BBH (M) 40X400G BUN BO \
+HUE GRNO005A" → "ANGEL RICE VERMICELLI BBH"; "GOLDEN CAMEL RICE/ GAO LAC DA 40LBS" → "GOLDEN CAMEL RICE".
+- The pack: what one unit of qty holds. packing is the packing or size column as printed. pack_count is how many \
+inner packs are in one unit, each_size and each_unit the size of one (g, kg, lb, oz, ml, l), each_name what one is \
+(bag, bottle, can, tub, pack). Read the packing column first, then the description: 1 CASE "40X400G" → pack_count \
+40, each_size 400, each_unit g; 1 BAG "40LBS" → pack_count 1, each_size 40, each_unit lb; "6X5LBS" → 6, 5, lb. \
+Leave them out when nothing says.
 - kind: "item" for products, "fee" for delivery charges, deposits, fuel surcharges, "credit" for returns or \
 credits (negative totals).
 - Amounts are numbers in dollars without symbols. tax is the total of GST/HST/PST charged. Dates as YYYY-MM-DD.
@@ -68,8 +76,10 @@ INVOICE_TOOL = {
             "tax": {"type": "number"},
             "total": {"type": "number"},
             "lines": {"type": "array", "items": {"type": "object", "properties": {
-                "description": {"type": "string"}, "sku": {"type": "string"}, "qty": {"type": "number"},
-                "unit": {"type": "string"}, "unit_price": {"type": "number"}, "line_total": {"type": "number"},
+                "description": {"type": "string"}, "name": {"type": "string"}, "sku": {"type": "string"},
+                "qty": {"type": "number"}, "unit": {"type": "string"}, "packing": {"type": "string"},
+                "pack_count": {"type": "number"}, "each_size": {"type": "number"}, "each_unit": {"type": "string"},
+                "each_name": {"type": "string"}, "unit_price": {"type": "number"}, "line_total": {"type": "number"},
                 "kind": {"type": "string", "enum": ["item", "fee", "credit"]},
             }, "required": ["description"]}},
             "unreadable": {"type": "array", "items": {"type": "string"}},
@@ -219,11 +229,30 @@ async def last_line(session: AsyncSession, location_id: str, key: str, on_or_bef
     return await session.scalar(stmt.order_by(ReceivedLine.received_on.desc(), ReceivedLine.created_at.desc()).limit(1))
 
 
+def fill_pack(row: dict, item: Item | None) -> dict:
+    """What one invoice unit adds to stock, in the unit the item is counted in: 1 case of 40 × 400 g counted in kg
+    adds 16. A new item (or one without a unit yet) is counted in the line's stock_unit, suggested from the pack.
+    When the pack doesn't say, the pack_size typed in (or remembered from the last invoice) stays."""
+    if row.get("kind", "item") != "item":
+        return row
+    spec = (row.get("unit"), row.get("pack_count"), row.get("each_qty"), row.get("each_unit"))
+    if item is not None and item.unit:
+        unit = item.unit
+    else:
+        unit = row.get("stock_unit") or im.default_stock_unit(*spec, row.get("each_name"))
+        row["stock_unit"] = inventory.norm_unit(unit)
+    auto = im.per_invoice_unit(*spec, unit, item.conversions if item is not None else None)
+    row["pack_auto"] = auto is not None
+    if auto is not None:
+        row["pack_size"] = round(auto, 6)
+    return row
+
+
 async def suggest(session: AsyncSession, location: Location, supplier_name: str | None, lines: list[dict],
                   on_date: date | None = None) -> list[dict]:
     """Fill each draft line with its stock item, pack size and last price, from earlier invoices or by name."""
-    items = [(i.id, i.name) for i in await session.scalars(select(Item).where(
-        Item.location_id == location.id, Item.active.is_(True)))]
+    by_id = {i.id: i for i in await session.scalars(select(Item).where(Item.location_id == location.id))}
+    items = [(i.id, i.name) for i in by_id.values() if i.active]
     out = []
     for ln in lines:
         key = im.product_key(supplier_name, ln["description"], ln.get("sku"))
@@ -235,9 +264,11 @@ async def suggest(session: AsyncSession, location: Location, supplier_name: str 
         elif ln.get("kind", "item") == "item" and not ln.get("item_id") and not unmatched_by_hand:
             if prev is not None:
                 row["pack_size"] = ln.get("pack_size") or prev.pack_size or 1
-            hit = im.match_item(ln["description"], items)
-            if hit:
+            hits = [h for h in (im.match_item(ln.get("name") or "", items), im.match_item(ln["description"], items)) if h]
+            if hits:
+                hit = max(hits, key=lambda h: h[1])
                 row.update(item_id=hit[0], match=f"name {round(hit[1] * 100)}%")
+        fill_pack(row, by_id.get(row["item_id"]) if row.get("item_id") else None)
         if prev is not None and ln.get("kind", "item") == "item":
             row["last_price_cents"] = prev.unit_price_cents
             row["last_received_on"] = prev.received_on.isoformat()
@@ -279,7 +310,9 @@ async def update_draft(session: AsyncSession, location: Location, scan: InvoiceS
             if ln.get("item_id") and ln["item_id"] not in valid:
                 raise ReceivingError("A line is matched to an item that doesn't exist")
             total = ln.get("line_total_cents")
-            lines.append({**ln, "line_total_cents": total if total is not None
+            described = (ln.get("description") or "").strip() or (ln.get("name") or "").strip()
+            lines.append({**ln, "description": described, "name": (ln.get("name") or "").strip() or described,
+                          "line_total_cents": total if total is not None
                           else round(ln.get("unit_price_cents", 0) * ln.get("qty", 1)),
                           "match": ln.get("match") or ("chosen" if ln.get("item_id") else "none")})
         scan.lines = await suggest(session, location, scan.supplier_name, lines, scan.invoice_date)
@@ -336,25 +369,28 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
     for ln in lines:
         key = im.product_key(scan.supplier_name, ln["description"], ln.get("sku"))
         prev = await last_line(session, location.id, key, received_on, before_scan=scan.id)
+        item = await session.get(Item, ln["item_id"]) if ln.get("item_id") else None
+        if item is not None and item.location_id != location.id:
+            item = None
+        if item is None and ln.get("create_item") and ln.get("kind", "item") == "item":
+            item = await new_stock_item(session, location, ln, supplier)
+            created.append(item.name)
+        if item is not None and ln.get("kind", "item") == "item":
+            if not item.unit and not item.stock_qty:
+                item.unit = ln.get("stock_unit") or im.default_stock_unit(
+                    ln.get("unit"), ln.get("pack_count"), ln.get("each_qty"), ln.get("each_unit"), ln.get("each_name"))
+            fill_pack(ln, item)
         pack = float(ln.get("pack_size") or 1)
         pct = (im.price_change_pct(ln["unit_price_cents"], pack, prev.unit_price_cents, prev.pack_size)
                if prev is not None and ln.get("kind", "item") == "item" else None)
-        item = await session.get(Item, ln["item_id"]) if ln.get("item_id") else None
-        if item is None and ln.get("create_item") and ln.get("kind", "item") == "item":
-            item = await new_stock_item(session, location, ln, pack, supplier)
-            created.append(item.name)
         added = None
         issue = ln.get("issue") if ln.get("issue") in ISSUES else None
         got = ln.get("received_qty")
         got = float(got) if got is not None and got != "" else None
         arrived = got if got is not None else float(ln.get("qty") or 0)
         if item is not None and item.location_id == location.id and ln.get("kind", "item") == "item":
-            # The item's own conversion (1 case = 40 lb) turns invoice units into count units, if no pack size
-            # was given; stock and cost follow what actually arrived, at the price per count unit.
-            if pack == 1 and ln.get("unit") and inventory.norm_unit(ln.get("unit")) != inventory.norm_unit(item.unit):
-                per = inventory.item_convert(1.0, ln.get("unit"), item)
-                if per:
-                    pack = per
+            # The pack (or the item's own "1 case = 40 lb") turns invoice units into count units; stock and cost
+            # follow what actually arrived, at the price per count unit.
             added = arrived * pack
             price = int(ln.get("unit_price_cents") or 0)
             old_cost = item.avg_cost if item.avg_cost is not None else item.cost_cents
@@ -426,20 +462,26 @@ async def confirm(session: AsyncSession, location: Location, scan: InvoiceScan, 
                        for d in dishes]}
 
 
-async def new_stock_item(session: AsyncSession, location: Location, ln: dict, pack: float,
-                         supplier: Supplier | None) -> Item:
+async def new_stock_item(session: AsyncSession, location: Location, ln: dict, supplier: Supplier | None) -> Item:
     """A supplier product that isn't in inventory yet becomes a stock item (an ingredient or supply, so it's kept
-    off the customer menu). The invoice line then puts the delivered amount and its cost in the ledger."""
+    off the customer menu), under its clean name and counted in the line's stock unit. It remembers its pack
+    ("1 case = 16 kg") so the next invoice and recipes convert. The invoice line then puts the delivered amount and
+    its cost in the ledger."""
     import uuid
 
-    name = (ln.get("description") or "Item").strip()[:300]
+    name = (ln.get("name") or ln.get("description") or "Item").strip()[:300]
     existing = await session.scalar(select(Item).where(Item.location_id == location.id,
                                                        func.lower(Item.name) == name.lower()))
     if existing is not None:
+        ln["item_id"] = existing.id
         return existing
+    spec = (ln.get("unit"), ln.get("pack_count"), ln.get("each_qty"), ln.get("each_unit"))
+    unit = inventory.norm_unit(ln.get("stock_unit") or im.default_stock_unit(*spec, ln.get("each_name")))
+    per = im.per_invoice_unit(*spec, unit) or (float(ln.get("pack_size") or 0) or None)
     item = Item(location_id=location.id, provider="pass", external_id=f"pass-{uuid.uuid4().hex[:12]}", name=name,
-                category="Supplies", unit=(ln.get("unit") if pack == 1 else None), stock_qty=None,
-                cost_cents=None, price_cents=0,
+                category="Supplies", unit=unit, stock_qty=None, cost_cents=None, price_cents=0,
+                conversions=im.new_item_conversions(ln.get("unit"), per, unit, ln.get("each_qty"),
+                                                    ln.get("each_unit")) or None,
                 supplier_id=supplier.id if supplier else None, orderable=False, active=True)
     session.add(item)
     await session.flush()

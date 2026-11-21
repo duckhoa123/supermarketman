@@ -458,8 +458,16 @@ export type PersonalAlert = { id: string; kind: string; title: string; body: str
 // --- Receiving ---------------------------------------------------------------------------------
 
 export type DraftLine = {
-  description: string;
+  description: string; // as printed on the invoice
+  name?: string | null; // what it's called in inventory: no item code, size or translation
   sku?: string | null;
+  /** The pack: one invoice unit holds pack_count × each_qty each_unit (40 × 400 g). */
+  pack_count?: number | null;
+  each_qty?: number | null;
+  each_unit?: string | null;
+  each_name?: string | null;
+  stock_unit?: string | null; // what a new item is counted in
+  pack_auto?: boolean; // pack_size was worked out from the pack, not typed
   qty: number;
   unit?: string | null;
   unit_price_cents: number;
