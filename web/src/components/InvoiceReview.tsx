@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../context";
-import { api, fetchBlob, type DraftLine, type InventoryItem, type InvoiceScan, type Supplier } from "../lib/api";
-import { normUnit } from "../lib/inventory";
+import { api, fetchBlob, type DraftLine, type InvoiceScan, type Supplier } from "../lib/api";
+import { normUnit, type OnHand, type StockItem } from "../lib/inventory";
 import { defaultStockUnit, fmtQty, type Pack, packText, parsePack, perInvoiceUnit, stockUnits } from "../lib/packs";
 import { Dialog } from "./PosDialogs";
 
@@ -13,6 +13,20 @@ const NONE = "__none__";
 type Imported = { lines: number; stock_updates: { item: string; added: number; unit?: string | null }[];
   created_items: string[]; alerted: boolean;
   issues: { description: string; issue: string; invoiced: number; received: number }[] };
+
+/** Where the line is going, worked out when the invoice was read: an item you already stock, or a new one. */
+function Status({ line, target }: { line: DraftLine; target: string }) {
+  if (line.kind !== "item") return null;
+  if (target === NEW) return <span className="pill new" title="Not in your inventory yet: it's added when you import">New item</span>;
+  if (target === NONE) return <span className="pill" title="Logged with the invoice, not added to stock">Not stocked</span>;
+  const pct = line.match?.startsWith("name ") ? Number(line.match.slice(5).replace("%", "")) : null;
+  if (pct != null && pct < 80) {
+    return <span className="pill warn" title={`Only a ${pct}% name match. Check it's the same product.`}>Check the match</span>;
+  }
+  const how = line.match === "remembered" ? "Same product as on an earlier invoice"
+    : pct != null ? `Matched by name (${pct}%)` : "Chosen by you";
+  return <span className="pill good" title={how}>✓ In inventory</span>;
+}
 
 function Change({ line }: { line: DraftLine }) {
   if (line.kind !== "item") return null;
@@ -69,7 +83,7 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
   const { location } = useApp();
   const base = `/locations/${location.id}/invoices/${scanId}`;
   const [scan, setScan] = useState<InvoiceScan | null>(null);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<StockItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(() => window.innerWidth > 900);
@@ -86,7 +100,7 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
 
   useEffect(() => {
     void load();
-    void api<{ items: InventoryItem[] }>(`/locations/${location.id}/inventory`).then((r) => setItems(r.items));
+    void api<OnHand>(`/locations/${location.id}/inventory/on-hand`).then((r) => setItems(r.items));
     void api<Supplier[]>(`/locations/${location.id}/suppliers`).then(setSuppliers);
     let url: string | null = null;
     fetchBlob(`${base}/file`)
@@ -121,7 +135,7 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
   function setTarget(i: number, value: string) {
     if (value === NEW) setLine(i, { item_id: null, create_item: true, match: "new" });
     else if (value === NONE) setLine(i, { item_id: null, create_item: false, match: "none" });
-    else setLine(i, { item_id: value, create_item: false, match: "chosen" });
+    else setLine(i, { item_id: value, create_item: false, match: "chosen", item_name: items.find((it) => it.id === value)?.name ?? null });
   }
 
   /** What a line's stock is counted in, and what one invoice unit adds (null: the pack doesn't say, so it's typed). */
@@ -211,11 +225,10 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
     }
   }
 
-  const stockItems = items.filter((i) => i.stock_qty !== null);
-  const otherItems = items.filter((i) => i.stock_qty === null);
   const products = scan?.lines.filter((l) => l.kind === "item") ?? [];
   const toImport = products.filter((l) => l.item_id || l.create_item).length;
   const newOnes = products.filter((l) => !l.item_id && l.create_item).length;
+  const known = products.filter((l) => l.item_id).length;
   const status = scan?.status;
 
   const title = (
@@ -323,8 +336,9 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                 {scan.warnings.map((w, i) => <p key={i} className="small warn-text">⚠ {w}</p>)}
                 {editable && (
                   <p className="small muted">
-                    Check each line against the invoice. Fix anything the AI misread, and choose where it goes in your
-                    inventory{newOnes > 0 ? `: ${newOnes} product${newOnes === 1 ? " is" : "s are"} new and will be added as stock items` : ""}.
+                    {known} {known === 1 ? "product is" : "products are"} already in your inventory
+                    {newOnes > 0 ? ` and ${newOnes} ${newOnes === 1 ? "is" : "are"} new` : ""}. Check each line against the
+                    invoice, and change where it goes if a match is wrong.
                   </p>
                 )}
                 <ol className="inv-lines">
@@ -347,6 +361,7 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                               placeholder="Item on the invoice" onChange={(e) => setLine(i, { description: e.target.value })} />
                           )}
                           {l.kind !== "item" && <span className="pill">{l.kind}</span>}
+                          <Status line={l} target={target} />
                           <Change line={l} />
                           {editable && (
                             <button className="sb-icon" aria-label={`Remove line ${i + 1}`} title="Remove this line"
@@ -372,13 +387,13 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                           <div className="inv-line-stock">
                             <label className="inv-target"><span>In your inventory</span>
                               <select className="select" disabled={!editable} value={target} onChange={(e) => setTarget(i, e.target.value)}>
-                                <option value={NEW}>➕ Add as a new stock item</option>
-                                {stockItems.length > 0 && <optgroup label="Your stock items">{stockItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</optgroup>}
-                                {otherItems.length > 0 && <optgroup label="Other items">{otherItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</optgroup>}
+                                <option value={NEW}>➕ New item: add to inventory</option>
+                                {l.item_id && !items.some((it) => it.id === l.item_id) && <option value={l.item_id}>{l.item_name ?? "Matched item"}</option>}
+                                {items.length > 0 && <optgroup label="Your inventory items">{items.map((it) => <option key={it.id} value={it.id}>{it.name}{it.unit ? ` (${it.unit})` : ""}</option>)}</optgroup>}
                                 <option value={NONE}>Don't add to stock (just log it)</option>
                               </select>
                               {l.match && !["none", "chosen", "new"].includes(l.match) && l.item_id && (
-                                <small className="muted">{l.match === "remembered" ? "Matched from earlier invoices" : `Matched by name (${l.match.replace("name ", "")})`}</small>
+                                <small className="muted">{l.match === "remembered" ? "Same product as on an earlier invoice" : `Found by name (${l.match.replace("name ", "")} match)`}</small>
                               )}
                             </label>
                             {target !== NONE && (

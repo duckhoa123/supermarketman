@@ -44,6 +44,15 @@ async def _scan_and_read(client, location_id: str, fake_llm, fields: dict) -> di
     return {"scan": scan, "llm": llm}
 
 
+async def _stock_item(session, location_id: str, name: str, unit: str, qty: float = 4) -> str:
+    """An inventory item (an ingredient, not a dish), as added on Inventory items."""
+    item = Item(location_id=location_id, provider="pass", external_id=f"pass-{name}", name=name, unit=unit,
+                stock_qty=qty, price_cents=0, category="Dairy", active=True)
+    session.add(item)
+    await session.commit()
+    return item.id
+
+
 class InvoiceMathTests(unittest.TestCase):
     def test_clean_extraction_fills_gaps_and_warns(self):
         out = im.clean_extraction({"supplier_name": "Coastal", "subtotal": 30, "lines": [
@@ -105,9 +114,7 @@ class InvoiceMathTests(unittest.TestCase):
 
 
 async def test_scan_review_confirm_then_price_change_alert(client, session, demo_location_id, fake_llm):
-    burrata = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
-                                                      Item.name == "Burrata & Tomato"))
-    burrata_id, stock_before = burrata.id, burrata.stock_qty  # plain values: objects expire below
+    burrata_id, stock_before = await _stock_item(session, demo_location_id, "Burrata", "ea"), 4
 
     first = await _scan_and_read(client, demo_location_id, fake_llm, DAIRY_1)
     scan, llm = first["scan"], first["llm"]
@@ -182,6 +189,7 @@ async def test_edit_lines_pack_size_new_supplier_and_duplicates(client, session,
     fields = dict(supplier_name="Granville Island Beverages", invoice_number="GIB-9", invoice_date="2026-10-10",
                   lines=[{"description": "Peroni Nastro Azzurro 330ml", "qty": 2, "unit": "case", "unit_price": 52.80,
                           "line_total": 105.60}])
+    await _stock_item(session, demo_location_id, "Peroni", "bottle")
     scan = (await _scan_and_read(client, demo_location_id, fake_llm, fields))["scan"]
     assert any("isn't in your suppliers" in w for w in scan["warnings"])
     peroni_line = scan["lines"][0]
@@ -265,6 +273,7 @@ async def test_import_adds_new_stock_items_and_exports_excel(client, session, de
 
     from openpyxl import load_workbook
 
+    await _stock_item(session, demo_location_id, "Burrata", "ea")
     scan = (await _scan_and_read(client, demo_location_id, fake_llm, DAIRY_1))["scan"]
     base = f"/locations/{demo_location_id}/invoices/{scan['id']}"
     lines = [{k: v for k, v in ln.items() if k not in ("last_price_cents", "last_received_on", "change_pct")}
@@ -283,7 +292,7 @@ async def test_import_adds_new_stock_items_and_exports_excel(client, session, de
     header = rows.index(next(r for r in rows if r[0] == "Item on invoice"))
     body = {r[0]: r for r in rows[header + 1:] if r[0]}
     assert body["Mascarpone 500g"][3:8] == [2, "tub", 10.5, 21.0, "New stock item"]
-    assert body["Burrata 125g x 6"][7] == "Burrata & Tomato" and body["Delivery fee"][2] == "fee"
+    assert body["Burrata 125g x 6"][7] == "Burrata" and body["Delivery fee"][2] == "fee"
 
     r = (await client.post(f"{base}/confirm", headers=OWNER)).json()
     # Named without the size, counted by weight: 2 tubs of 500 g are 1 kg, at $21.00 a kg.
@@ -351,3 +360,17 @@ async def test_cases_become_kilos_new_items_get_clean_names(client, session, dem
     later = {**THREE_DOLPHINS, "invoice_number": "53010", "lines": THREE_DOLPHINS["lines"][:1]}
     again = (await _scan_and_read(client, demo_location_id, fake_llm, later))["scan"]["lines"][0]
     assert again["item_id"] == item.id and again["match"] == "remembered" and again["pack_size"] == 16
+
+
+async def test_lines_match_inventory_items_never_menu_dishes(client, session, demo_location_id, fake_llm):
+    """Burrata on an invoice is the Burrata you stock, not the Burrata & Tomato starter; unknown products are new."""
+    fields = {**DAIRY_1, "invoice_number": "HD-3001"}
+    scan = (await _scan_and_read(client, demo_location_id, fake_llm, fields))["scan"]
+    lines = {ln["description"]: ln for ln in scan["lines"]}
+    assert lines["Burrata 125g x 6"]["item_id"] is None  # only the dish exists: not a match
+
+    stocked = await _stock_item(session, demo_location_id, "Burrata", "ea")
+    scan = (await _scan_and_read(client, demo_location_id, fake_llm, {**fields, "invoice_number": "HD-3002"}))["scan"]
+    lines = {ln["description"]: ln for ln in scan["lines"]}
+    assert lines["Burrata 125g x 6"]["item_id"] == stocked and lines["Burrata 125g x 6"]["item_name"] == "Burrata"
+    assert lines["Mascarpone 500g"]["item_id"] is None

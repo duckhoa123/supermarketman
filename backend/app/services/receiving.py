@@ -252,7 +252,8 @@ async def suggest(session: AsyncSession, location: Location, supplier_name: str 
                   on_date: date | None = None) -> list[dict]:
     """Fill each draft line with its stock item, pack size and last price, from earlier invoices or by name."""
     by_id = {i.id: i for i in await session.scalars(select(Item).where(Item.location_id == location.id))}
-    items = [(i.id, i.name) for i in by_id.values() if i.active]
+    # Lines are matched to what you stock, never to a dish on the menu ("Rice" the side isn't a 40 lb bag of rice).
+    items = [(i.id, i.name) for i in await inventory.stock_items(session, location, active_only=True)]
     out = []
     for ln in lines:
         key = im.product_key(supplier_name, ln["description"], ln.get("sku"))
@@ -268,7 +269,9 @@ async def suggest(session: AsyncSession, location: Location, supplier_name: str 
             if hits:
                 hit = max(hits, key=lambda h: h[1])
                 row.update(item_id=hit[0], match=f"name {round(hit[1] * 100)}%")
-        fill_pack(row, by_id.get(row["item_id"]) if row.get("item_id") else None)
+        matched = by_id.get(row["item_id"]) if row.get("item_id") else None
+        row["item_name"] = matched.name if matched is not None else None
+        fill_pack(row, matched)
         if prev is not None and ln.get("kind", "item") == "item":
             row["last_price_cents"] = prev.unit_price_cents
             row["last_received_on"] = prev.received_on.isoformat()

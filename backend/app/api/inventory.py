@@ -83,13 +83,7 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
     used = dict((await session.execute(
         select(RecipeLine.ingredient_id, func.count(func.distinct(RecipeLine.menu_item_id)))
         .where(RecipeLine.location_id == location.id).group_by(RecipeLine.ingredient_id))).all())
-    items = list(await session.scalars(
-        select(Item).where(Item.location_id == location.id,
-                           # Menu items (anything with a price) live on Menu items, unless a recipe uses them.
-                           # $0 items from the POS (gift cards, open-price items) aren't stock either.
-                           ((Item.price_cents == 0) & Item.provider.in_(("pass", "demo")))
-                           | (Item.id.in_(list(used) or [""])) | Item.batch_qty.is_not(None))
-        .order_by(func.coalesce(Item.shelf_order, 1_000_000), func.lower(Item.name))))
+    items = await inv.stock_items(session, location)
     areas = list(await session.scalars(select(StorageArea).where(StorageArea.location_id == location.id)
                                        .order_by(StorageArea.sort, StorageArea.name)))
     suppliers = {s.id: s.name for s in await session.scalars(select(Supplier).where(Supplier.location_id == location.id))}

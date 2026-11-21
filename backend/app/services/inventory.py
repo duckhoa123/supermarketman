@@ -115,6 +115,21 @@ def item_convert(qty: float, from_unit: str | None, item: Item) -> float | None:
     return convert(qty, from_unit or item.unit, item.unit, item.conversions)
 
 
+# --- What counts as inventory -------------------------------------------------------------------------------------
+
+
+async def stock_items(session: AsyncSession, location: Location, *, active_only: bool = False) -> list[Item]:
+    """What you stock: ingredients, supplies, prep items, and anything a recipe uses. Never the dishes you sell
+    (anything with a price lives on Menu items), and not $0 POS items like gift cards. In count-sheet order."""
+    used = select(RecipeLine.ingredient_id).where(RecipeLine.location_id == location.id)
+    stmt = select(Item).where(Item.location_id == location.id,
+                              ((Item.price_cents == 0) & Item.provider.in_(("pass", "demo")))
+                              | Item.id.in_(used) | Item.batch_qty.is_not(None))
+    if active_only:
+        stmt = stmt.where(Item.active.is_(True))
+    return list(await session.scalars(stmt.order_by(func.coalesce(Item.shelf_order, 1_000_000), func.lower(Item.name))))
+
+
 # --- The ledger ---------------------------------------------------------------------------------------------------
 
 

@@ -167,6 +167,7 @@ table.data td.num, table.data th.num { text-align: right; }
 .pill.low { background: var(--tomato-tint); color: var(--tomato); }
 .pill.warn { background: var(--oil-tint); color: var(--oil); }
 .pill.good { background: var(--basil-tint); color: var(--basil-strong); }
+.pill.new { background: var(--surface); color: var(--basil-strong); box-shadow: inset 0 0 0 1px var(--basil); }
 .stars { color: var(--oil); letter-spacing: 1px; }
 
 /* Assistant: a button in the bottom-right corner opens the agent's chat window */

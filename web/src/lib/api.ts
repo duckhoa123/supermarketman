@@ -468,6 +468,7 @@ export type DraftLine = {
   each_name?: string | null;
   stock_unit?: string | null; // what a new item is counted in
   pack_auto?: boolean; // pack_size was worked out from the pack, not typed
+  item_name?: string | null; // the inventory item it's matched to
   qty: number;
   unit?: string | null;
   unit_price_cents: number;
