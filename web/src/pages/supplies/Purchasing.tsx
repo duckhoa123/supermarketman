@@ -285,9 +285,12 @@ function Composer({ po, base, supplier, busy, canSend, onClose, onSend }: {
   );
 }
 
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string; onSaved: () => Promise<void>; onWrite: (s: Supplier) => void }) {
   const [editing, setEditing] = useState(false);
-  const [f, setF] = useState({ email: s.email ?? "", phone: s.phone ?? "", notes: s.notes ?? "" });
+  const [f, setF] = useState({ email: s.email ?? "", phone: s.phone ?? "", notes: s.notes ?? "",
+    days: s.delivery_days ?? [], cutoff: s.order_cutoff ?? "", lead: String(s.order_lead_days ?? 1) });
   const [err, setErr] = useState("");
 
   async function save(e: FormEvent) {
@@ -295,7 +298,10 @@ function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string;
     setErr("");
     try {
       await api(`${base}/suppliers/${s.id}`, {
-        method: "PATCH", body: { name: s.name, email: f.email || null, phone: f.phone || null, notes: f.notes || null },
+        method: "PATCH", body: {
+          name: s.name, email: f.email || null, phone: f.phone || null, notes: f.notes || null,
+          delivery_days: f.days, order_cutoff: f.cutoff || null, order_lead_days: Number(f.lead),
+        },
       });
       setEditing(false);
       await onSaved();
@@ -310,6 +316,7 @@ function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string;
         <div>
           <strong>{s.name}</strong>
           <div className="small muted">{[s.email ?? "no email yet", s.phone ?? "no phone yet", s.notes].filter(Boolean).join(" · ")}</div>
+          <div className="small muted">{s.schedule ?? "Delivery days not set: add them for order reminders"}</div>
         </div>
         <div className="row">
           <button className="btn small primary" onClick={() => onWrite(s)}>✉ Generate email</button>
@@ -326,7 +333,26 @@ function SupplierRow({ s, base, onSaved, onWrite }: { s: Supplier; base: string;
           <input className="input" style={{ flex: 2 }} type="email" placeholder="Order email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
           <input className="input" style={{ flex: 1 }} placeholder="Phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
         </div>
-        <input className="input" placeholder="Notes (e.g. order by 2pm for next-day delivery)" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
+        <input className="input" placeholder="Notes" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
+        <div className="sup-schedule">
+          <span className="small tip" tabIndex={0} data-tip="Pass reminds you on order days and warns if something will run out before the next delivery">Delivers on</span>
+          <div className="sup-days" role="group" aria-label="Delivery days">
+            {WEEKDAYS.map((d, k) => (
+              <button type="button" key={d} className={`chip ${f.days.includes(k) ? "on" : ""}`} aria-pressed={f.days.includes(k)}
+                onClick={() => setF({ ...f, days: f.days.includes(k) ? f.days.filter((x) => x !== k) : [...f.days, k].sort() })}>{d}</button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 6, alignItems: "center" }}>
+            <span className="small muted">Order by</span>
+            <input className="input" type="time" style={{ width: 130 }} value={f.cutoff} onChange={(e) => setF({ ...f, cutoff: e.target.value })} />
+            <select className="select" style={{ width: "auto" }} value={f.lead} onChange={(e) => setF({ ...f, lead: e.target.value })}>
+              <option value="0">the same day</option>
+              <option value="1">the day before</option>
+              <option value="2">2 days before</option>
+              <option value="3">3 days before</option>
+            </select>
+          </div>
+        </div>
         {err && <p className="small error">{err}</p>}
         <div className="row">
           <button className="btn primary small">Save</button>

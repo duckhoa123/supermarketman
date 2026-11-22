@@ -110,7 +110,9 @@ async def check_low_stock(session: AsyncSession, location: Location) -> int:
         )
         created += alert is not None
     await session.commit()
-    return created
+    from app.services.restock import check_restock
+
+    return created + await check_restock(session, location)
 
 
 async def alert_for_review(session: AsyncSession, location: Location, review: Review) -> Alert | None:

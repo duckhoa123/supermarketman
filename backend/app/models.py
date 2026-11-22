@@ -99,6 +99,7 @@ class Location(TimestampMixin, Base):
     target_food_cost_pct: Mapped[float] = mapped_column(Float, default=30.0)  # for suggested menu prices
     target_beverage_cost_pct: Mapped[float] = mapped_column(Float, default=22.0)  # drinks
     cost_method: Mapped[str] = mapped_column(String(16), default="average")  # average | last (latest price)
+    safety_days: Mapped[float] = mapped_column(Float, default=2.0)  # extra days of stock kept for surprises
 
     organization: Mapped[Organization] = relationship(back_populates="locations")
 
@@ -164,6 +165,10 @@ class Item(TimestampMixin, Base):
     recipe_since: Mapped[date | None] = mapped_column(Date)
     # Par (what you want on hand after a delivery); low_stock_threshold is the reorder point (alert level).
     par_level: Mapped[float | None] = mapped_column(Float)
+    # Restock: days after delivery before it can be used (thawing, portioning), and its own safety margin in days
+    # (empty: the restaurant's, 2 by default).
+    ready_days: Mapped[int | None] = mapped_column(Integer)
+    safety_days: Mapped[float | None] = mapped_column(Float)
     barcode: Mapped[str | None] = mapped_column(String(64))
     shelf_order: Mapped[int | None] = mapped_column(Integer)  # order on the count sheet, within its area
     default_yield_pct: Mapped[float | None] = mapped_column(Float)  # recipes start from this; each can override
@@ -455,6 +460,11 @@ class Supplier(TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(320))
     phone: Mapped[str | None] = mapped_column(String(32))
     notes: Mapped[str | None] = mapped_column(Text)  # e.g. "order by 2pm for next-day delivery"
+    # When they deliver and when to order, for restock alerts: weekdays (0 = Monday), "14:00", and how many days
+    # before the delivery the order must be in.
+    delivery_days: Mapped[list | None] = mapped_column(JSON)
+    order_cutoff: Mapped[str | None] = mapped_column(String(5))
+    order_lead_days: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class PurchaseOrder(TimestampMixin, Base):

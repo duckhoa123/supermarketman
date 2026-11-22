@@ -15,6 +15,9 @@ const KIND: Record<string, { label: string; tone: string }> = {
   count_recount: { label: "Recount", tone: "low" },
   menu_cost: { label: "Plate cost", tone: "low" },
   price_change: { label: "Price", tone: "warn" },
+  runout: { label: "Running out", tone: "low" },
+  restock_order: { label: "Order today", tone: "warn" },
+  restock_low: { label: "Stock", tone: "warn" },
 };
 
 export default function Alerts() {

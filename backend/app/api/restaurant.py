@@ -396,6 +396,11 @@ async def import_file(file: UploadFile = File(...), kind: str | None = Form(defa
     except ValueError as exc:
         raise HTTPException(422, "Pick a date") from exc
     try:
-        return await pos_import.run(session, location, file.filename, await _read_upload(file), kind, cols, on)
+        out = await pos_import.run(session, location, file.filename, await _read_upload(file), kind, cols, on)
     except pos_import.PosImportError as exc:
         raise HTTPException(422, str(exc)) from exc
+    from app.services.restock import queue_check
+
+    await queue_check(session, location)  # imported sales used stock up
+    await session.commit()
+    return out

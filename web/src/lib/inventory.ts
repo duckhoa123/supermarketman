@@ -13,6 +13,13 @@ export type StockItem = {
   is_prep: boolean; batch_qty: number | null; batch_unit: string | null; has_recipe: boolean;
   price_cents: number; used_in: number; editable_name: boolean;
   last_count: { qty: number; at: string } | null; daily_usage: number | null; days_of_cover: number | null;
+  ready_days: number | null; safety_days: number | null; restock: Restock | null;
+};
+
+/** How fast an item is used and when to restock it, worked out by Pass from sales, waste and deliveries. */
+export type Restock = {
+  usage: number; lasts_days: number; status: "ok" | "tight" | "runs_out"; runs_out_on: string;
+  next_delivery: string | null; ready_on: string | null; order_qty: number; reorder_point: number | null;
 };
 
 export type Area = { id: string; name: string; sort: number; items: number; value_cents: number | null };
@@ -21,7 +28,7 @@ export type OnHand = {
   items: StockItem[]; areas: Area[]; unassigned: number; untracked: number; can_manage: boolean;
   totals: { items: number; value_cents: number | null; approaching: number; at_par: number; below_par: number;
     out: number; negative: number; no_cost: number };
-  target_food_cost_pct: number; target_beverage_cost_pct: number; cost_method: "average" | "last";
+  target_food_cost_pct: number; target_beverage_cost_pct: number; cost_method: "average" | "last"; safety_days: number;
   units: string[]; categories: string[]; waste_reasons: Record<string, string>; suggested_areas: string[];
 };
 

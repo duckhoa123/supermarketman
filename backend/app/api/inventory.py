@@ -19,6 +19,7 @@ from app.db import get_session
 from app.models import (InventoryAudit, Item, ItemSalesDaily, Location, PlateCostHistory, RecipeLine, StockCount,
                         StockMovement, StorageArea, Supplier, User, utcnow)
 from app.services import inventory as inv
+from app.services import restock
 from app.tenancy import require_location, require_manager, user_role
 
 router = APIRouter(prefix="/locations/{location_id}", tags=["inventory"])
@@ -72,6 +73,16 @@ async def _names(session: AsyncSession, ids: set) -> dict[str, str]:
 # --- On hand ------------------------------------------------------------------------------------------------------
 
 
+def _plan_out(p: restock.Plan | None) -> dict | None:
+    if p is None:
+        return None
+    return {"usage": round(p.usage, 3), "lasts_days": p.lasts_days, "status": p.status,
+            "runs_out_on": p.runs_out_on.isoformat(),
+            "next_delivery": p.next_delivery.isoformat() if p.next_delivery else None,
+            "ready_on": p.ready_on.isoformat() if p.ready_on else None, "order_qty": p.order_qty,
+            "reorder_point": p.reorder_point}
+
+
 @router.get("/inventory/on-hand")
 async def on_hand(location: Location = Depends(require_location), user: AuthUser = Depends(current_user),
                   session: AsyncSession = Depends(get_session)):
@@ -100,6 +111,7 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
             .order_by(StockMovement.created_at.desc())):
         last_counts.setdefault(item_id, (qty_after, at))
     costing = await inv.load_costing(session, location)
+    plans = await restock.plans(session, location, items)
     rows = []
     for i in items:
         cost = _cost(i)
@@ -121,6 +133,7 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
             "days_of_cover": (round(max(i.stock_qty, 0) / daily, 1)
                               if daily and i.stock_qty is not None else None),
             "avg_cost": None, "value_cents": None,
+            "ready_days": i.ready_days, "safety_days": i.safety_days, "restock": _plan_out(plans.get(i.id)),
         }
         if manager:
             row["avg_cost"] = round(cost, 4) if cost is not None else None
@@ -147,6 +160,7 @@ async def on_hand(location: Location = Depends(require_location), user: AuthUser
         "untracked": untracked or 0, "can_manage": manager,
         "target_food_cost_pct": location.target_food_cost_pct,
         "target_beverage_cost_pct": location.target_beverage_cost_pct, "cost_method": location.cost_method,
+        "safety_days": location.safety_days,
         "units": inv.UNITS, "categories": inv.CATEGORIES, "waste_reasons": inv.WASTE_REASONS,
         "suggested_areas": DEFAULT_AREAS if not areas else [],
     }
@@ -174,6 +188,8 @@ class StockItemIn(BaseModel):
     default_yield_pct: float | None = Field(default=None, ge=1, le=100)
     conversions: list[Conversion] | None = Field(default=None, max_length=10)
     batch_qty: float | None = Field(default=None, gt=0, le=1_000_000)  # a prep item: one batch makes this much
+    ready_days: int | None = Field(default=None, ge=0, le=14)  # days after delivery before it can be used
+    safety_days: float | None = Field(default=None, ge=0, le=60)  # empty: the restaurant's (2 days)
 
 
 @router.post("/inventory/items")
@@ -194,7 +210,8 @@ async def add_stock_item(body: StockItemIn, location: Location = Depends(require
                 supplier_id=body.supplier_id, barcode=(body.barcode or "").strip() or None,
                 default_yield_pct=body.default_yield_pct,
                 conversions=[c.model_dump() for c in body.conversions] if body.conversions else None,
-                batch_qty=body.batch_qty, batch_unit=unit if body.batch_qty else None)
+                batch_qty=body.batch_qty, batch_unit=unit if body.batch_qty else None,
+                ready_days=body.ready_days or None, safety_days=body.safety_days)
     session.add(item)
     await session.flush()
     if not body.batch_qty or body.qty:
@@ -221,10 +238,13 @@ class StockItemEdit(BaseModel):
     conversions: list[Conversion] | None = Field(default=None, max_length=10)
     batch_qty: float | None = Field(default=None, ge=0, le=1_000_000)  # 0 turns a prep item back into a plain one
     track: bool | None = None  # start (or stop) keeping count of an item
+    ready_days: int | None = Field(default=None, ge=0, le=14)
+    safety_days: float | None = Field(default=None, ge=0, le=60)
 
 
 AUDITED = {"unit": "unit", "par_level": "par", "low_stock_threshold": "reorder point", "reorder_qty": "reorder qty",
-           "default_yield_pct": "yield", "conversions": "conversions", "batch_qty": "batch size"}
+           "default_yield_pct": "yield", "conversions": "conversions", "batch_qty": "batch size",
+           "ready_days": "ready to use", "safety_days": "safety margin"}
 
 
 @router.put("/inventory/items/{item_id}")
@@ -247,7 +267,8 @@ async def edit_stock_item(item_id: str, body: StockItemEdit, location: Location 
     if "unit" in changes:
         new["unit"] = inv.norm_unit(changes["unit"]) if changes["unit"] else None
     for k, col in (("par_level", "par_level"), ("reorder_point", "low_stock_threshold"), ("reorder_qty", "reorder_qty"),
-                   ("default_yield_pct", "default_yield_pct")):
+                   ("default_yield_pct", "default_yield_pct"), ("ready_days", "ready_days"),
+                   ("safety_days", "safety_days")):
         if k in changes:
             new[col] = changes[k]
     if "conversions" in changes:
@@ -449,6 +470,8 @@ async def submit_count(body: CountIn, location: Location = Depends(require_locat
     names = await _names(session, {user.id})
     if count.status == "submitted":
         await _tell_managers_count(session, location, count, names.get(user.id) or "Someone")
+    else:
+        await restock.queue_check(session, location)
     await session.commit()
     return count_out(count, names, manager)
 
@@ -497,6 +520,7 @@ async def approve_count(count_id: str, location: Location = Depends(require_mana
         await inv.approve_count(session, count, user.id)
     except inv.InventoryError as exc:
         raise HTTPException(409, str(exc)) from exc
+    await restock.queue_check(session, location)
     await session.commit()
     return count_out(count, await _names(session, {count.counted_by, user.id}), True)
 
@@ -539,6 +563,8 @@ async def approve_counts(body: ApproveIn, location: Location = Depends(require_m
                                        .order_by(StockCount.counted_at)):
         await inv.approve_count(session, count, user.id)
         done += 1
+    if done:
+        await restock.queue_check(session, location)
     await session.commit()
     return {"approved": done}
 
@@ -620,6 +646,7 @@ async def log_waste(body: WasteIn, location: Location = Depends(require_location
                                  note=body.note, user_id=user.id, client_id=body.client_id, at=body.at)
     except inv.InventoryError as exc:
         raise _422(exc) from exc
+    await restock.queue_check(session, location)
     await session.commit()
     return movement_out(mv, await _names(session, {user.id}), await _manager(session, user, location))
 

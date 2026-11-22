@@ -197,6 +197,8 @@ export default function OnHandPanel() {
   );
 }
 
+const weekday = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+
 /** Add an ingredient, supply or prep item, or change one. Grouped: details, par, yield, supplier. */
 function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, onDone }: {
   base: string; item: StockItem | null; data: OnHand; suppliers: Supplier[]; defaultArea: string | null;
@@ -210,8 +212,10 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     supplierId: item?.supplier_id ?? "", barcode: item?.barcode ?? "",
     yieldPct: item?.default_yield_pct != null ? String(item.default_yield_pct) : "",
     prep: item?.is_prep ?? false, batch: item?.batch_qty != null ? String(item.batch_qty) : "",
+    readyDays: String(item?.ready_days ?? 0), safety: item?.safety_days != null ? String(item.safety_days) : "",
   });
-  const [advanced, setAdvanced] = useState(!!(item?.par_level != null || item?.reorder_point != null));
+  const [advanced, setAdvanced] = useState(!!(item?.par_level != null || item?.reorder_point != null
+    || item?.ready_days || item?.safety_days != null));
   const [yieldTest, setYieldTest] = useState<{ ap: string; ep: string; cooked: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -236,10 +240,13 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
     }
     if (f.yieldPct.trim() && (yieldN == null || yieldN < 1 || yieldN > 100)) return setError("Yield is a % between 1 and 100.");
     if (f.prep && (batchN == null || batchN <= 0)) return setError("Say how much one batch makes.");
+    const safetyN = num(f.safety);
+    if (f.safety.trim() && (safetyN == null || safetyN < 0 || safetyN > 60)) return setError("Safety margin is a number of days.");
     const common = {
       unit: f.unit || null, category: f.category.trim() || null, storage_area_id: f.areaId || null,
       par_level: parN, reorder_point: rpN, supplier_id: f.supplierId || null,
       barcode: f.barcode.trim() || null, default_yield_pct: yieldN,
+      ready_days: Number(f.readyDays) || 0, safety_days: safetyN,
     };
     setBusy(true);
     try {
@@ -362,8 +369,26 @@ function StockItemDialog({ base, item, data, suppliers, defaultArea, onClose, on
           <summary>Advanced</summary>
           <div className="inv-form-row">
             {field(`Par level (${unitShown})`, <input className="input" inputMode="decimal" value={f.par} onChange={(e) => set({ par: e.target.value })} placeholder="e.g. 40" />, "Wanted on hand after a delivery. Orders top up to this.")}
-            {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })} placeholder="e.g. 15" />, "Alert and order when stock gets down to this")}
+            {field("Reorder point", <input className="input" inputMode="decimal" value={f.reorderAt} onChange={(e) => set({ reorderAt: e.target.value })}
+              placeholder={item?.restock?.reorder_point != null ? `Suggested ${qty(item.restock.reorder_point)}` : "e.g. 15"} />,
+              "Alert when stock gets down to this. Pass also warns from how fast it's used, so you can leave it empty.")}
           </div>
+          <div className="inv-form-row">
+            {field("Ready to use", <select className="select" value={f.readyDays} onChange={(e) => set({ readyDays: e.target.value })}>
+              <option value="0">Same day as delivery</option>
+              <option value="1">Next day</option>
+              <option value="2">2 days after</option>
+              <option value="3">3 days after</option>
+            </select>, "How long after it arrives before you can use it: thawing, portioning, marinating")}
+            {field("Safety margin (days)", <input className="input" inputMode="decimal" value={f.safety} onChange={(e) => set({ safety: e.target.value })}
+              placeholder={`${data.safety_days ?? 2} (default)`} />, "Extra days of stock kept for surprises: a busy night, a late delivery")}
+          </div>
+          {item?.restock && (
+            <p className="small muted" style={{ margin: 0 }}>
+              Uses about <strong>{qty(item.restock.usage)} {unitShown}</strong> a day · lasts {item.restock.lasts_days} days
+              {item.restock.next_delivery && <> · next delivery {weekday(item.restock.next_delivery)}{item.restock.ready_on && item.restock.ready_on !== item.restock.next_delivery ? `, ready ${weekday(item.restock.ready_on)}` : ""}</>}
+            </p>
+          )}
         </details>
         {error && <p className="small error">{error}</p>}
       </form>

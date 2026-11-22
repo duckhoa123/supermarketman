@@ -90,6 +90,13 @@ async def handle_daily_digest(session: AsyncSession, payload: dict) -> None:
         await alerts.send_daily_digest(session, location)
 
 
+@handler("restock_check")
+async def handle_restock_check(session: AsyncSession, payload: dict) -> None:
+    location = await session.get(Location, payload["location_id"])
+    if location is not None:
+        await alerts.check_low_stock(session, location)
+
+
 @handler("period_report")
 async def handle_period_report(session: AsyncSession, payload: dict) -> None:
     location = await session.get(Location, payload["location_id"])
@@ -143,6 +150,9 @@ async def schedule_periodic(session: AsyncSession) -> dict:
             if await enqueue(session, "daily_digest", {"location_id": location.id},
                              dedupe_key=f"digest:{location.id}:{local.date().isoformat()}"):
                 counts["daily_digest"] += 1
+            # Each morning, even without new sales: today's order reminders and run-out warnings.
+            await enqueue(session, "restock_check", {"location_id": location.id},
+                          dedupe_key=f"restock_check:{location.id}")
             # Weekly report on Mondays and monthly report on the 1st, with the morning digest.
             periods = []
             if local.weekday() == 0:

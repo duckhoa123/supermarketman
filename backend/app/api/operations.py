@@ -176,10 +176,27 @@ class SupplierIn(BaseModel):
     email: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     phone: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=1000)
+    # For restock alerts: the weekdays they deliver (0 = Monday), the time orders must be in ("14:00"), and how
+    # many days before the delivery.
+    delivery_days: list[int] | None = Field(default=None, max_length=7)
+    order_cutoff: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    order_lead_days: int | None = Field(default=None, ge=0, le=14)
+
+    @field_validator("delivery_days")
+    @classmethod
+    def _weekdays(cls, v: list[int] | None) -> list[int] | None:
+        if v is not None and any(d < 0 or d > 6 for d in v):
+            raise ValueError("Weekdays are 0 (Monday) to 6 (Sunday)")
+        return sorted(set(v)) if v else None
 
 
 def supplier_out(x: Supplier) -> dict:
-    return {"id": x.id, "name": x.name, "email": x.email, "phone": x.phone, "notes": x.notes}
+    from app.services.restock import describe_schedule
+
+    return {"id": x.id, "name": x.name, "email": x.email, "phone": x.phone, "notes": x.notes,
+            "delivery_days": x.delivery_days or [], "order_cutoff": x.order_cutoff,
+            "order_lead_days": x.order_lead_days if x.order_lead_days is not None else 1,
+            "schedule": describe_schedule(x)}
 
 
 @router.get("/suppliers")
@@ -191,7 +208,7 @@ async def list_suppliers(location: Location = Depends(require_location), session
 @router.post("/suppliers")
 async def add_supplier(body: SupplierIn, location: Location = Depends(require_manager),
                        session: AsyncSession = Depends(get_session)):
-    x = Supplier(location_id=location.id, **body.model_dump())
+    x = Supplier(location_id=location.id, **body.model_dump(exclude_none=True))
     session.add(x)
     await session.commit()
     return supplier_out(x)
@@ -204,6 +221,8 @@ async def edit_supplier(supplier_id: str, body: SupplierIn, location: Location =
     if x is None or x.location_id != location.id:
         raise HTTPException(404, "Supplier not found")
     for k, v in body.model_dump(exclude_unset=True).items():
+        if k == "order_lead_days" and v is None:
+            continue
         setattr(x, k, v)
     await session.commit()
     return supplier_out(x)

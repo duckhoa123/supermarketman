@@ -1104,3 +1104,7 @@ th:has(> .th-edit) { white-space: nowrap; }
 .cr-table td:first-child { white-space: normal; }
 .cr-moves td { background: var(--page); }
 .cr-moves ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* Supplier delivery schedule */
+.sup-schedule { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.sup-days { display: flex; flex-wrap: wrap; gap: 6px; }

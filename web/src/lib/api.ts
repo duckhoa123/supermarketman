@@ -272,7 +272,11 @@ export type Report = {
   food_cost: { food_cost_pct: number | null };
 };
 
-export type Supplier = { id: string; name: string; email: string | null; phone: string | null; notes: string | null };
+export type Supplier = {
+  id: string; name: string; email: string | null; phone: string | null; notes: string | null;
+  /** For restock alerts: weekdays they deliver (0 = Monday), the time orders must be in, and how many days before. */
+  delivery_days?: number[]; order_cutoff?: string | null; order_lead_days?: number; schedule?: string | null;
+};
 
 export type PurchaseOrder = {
   id: string;
