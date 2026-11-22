@@ -3,6 +3,7 @@ import { useApp } from "../context";
 import { api, fetchBlob, type DraftLine, type InvoiceScan, type Supplier } from "../lib/api";
 import { normUnit, type OnHand, type StockItem } from "../lib/inventory";
 import { defaultStockUnit, fmtQty, type Pack, packText, parsePack, perInvoiceUnit, stockUnits } from "../lib/packs";
+import ItemPicker from "./ItemPicker";
 import { Dialog } from "./PosDialogs";
 
 const dollars = (cents: number | null | undefined) => (cents == null ? "" : (cents / 100).toFixed(2));
@@ -344,21 +345,20 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                 <ol className="inv-lines">
                   {scan.lines.map((l, i) => {
                     const target = l.item_id ?? (l.kind === "item" && l.create_item ? NEW : NONE);
-                    const named = l.kind === "item";
+                    const product = l.kind === "item";
                     const stock = stockOf(l);
-                    const arrived = l.issue ? l.received_qty ?? l.qty : l.qty;
+                    const matched = l.item_id ? items.find((it) => it.id === l.item_id) : undefined;
                     const invUnit = l.unit || "unit";
+                    const show = (u: string) => (u === "l" ? "L" : u);
                     return (
                       <li key={i} className={`inv-line ${l.kind !== "item" ? "is-fee" : ""} ${target === NEW ? "is-new" : ""}`}>
                         <div className="inv-line-top">
                           <span className="inv-n">{i + 1}</span>
-                          {named ? (
-                            <input className="input inv-desc" aria-label="Name in inventory" disabled={!editable} value={l.name ?? l.description}
-                              title="The name it gets in your inventory" placeholder="Item name"
-                              onChange={(e) => setLine(i, { name: e.target.value })} />
+                          {l.manual ? (
+                            <input className="input inv-desc" aria-label="Item" disabled={!editable} value={l.name ?? ""}
+                              placeholder="Item name" onChange={(e) => setLine(i, { name: e.target.value })} />
                           ) : (
-                            <input className="input inv-desc" aria-label="Item on invoice" disabled={!editable} value={l.description}
-                              placeholder="Item on the invoice" onChange={(e) => setLine(i, { description: e.target.value })} />
+                            <span className="inv-name" title={l.description}>{product ? l.name || l.description : l.description}</span>
                           )}
                           {l.kind !== "item" && <span className="pill">{l.kind}</span>}
                           <Status line={l} target={target} />
@@ -368,8 +368,27 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                               onClick={() => { setScan({ ...scan, lines: scan.lines.filter((_, j) => j !== i) }); setDirty(true); }}>✕</button>
                           )}
                         </div>
-                        {named && l.description && l.description !== (l.name ?? l.description) && (
+                        {product && !l.manual && l.description !== (l.name || l.description) && (
                           <p className="inv-printed small muted">On the invoice: {l.description}{l.sku && !l.description.includes(l.sku) ? ` · ${l.sku}` : ""}</p>
+                        )}
+                        {product && (
+                          <div className="inv-match">
+                            <span className="small tip" tabIndex={0}
+                              data-tip="The inventory item this goes into. Picked for you when Pass recognises the product; search to change it.">Matched inventory</span>
+                            <ItemPicker items={items} value={l.item_id} valueName={l.item_name} disabled={!editable}
+                              placeholder={target === NONE ? "Not added to stock" : "Search your inventory…"}
+                              onPick={(it) => setTarget(i, it ? it.id : NEW)} onSkip={() => setTarget(i, NONE)} />
+                            {target === NEW && <small className="muted">Leave blank to add this as a new item in your inventory.</small>}
+                            {target === NONE && <small className="muted">Only logged with the invoice. Pick an item to add it to stock.</small>}
+                            {l.item_id && (
+                              <small className="muted">
+                                {matched?.stock_qty != null ? <>On hand <strong>{fmtQty(matched.stock_qty)} {show(stock.unit)}</strong> · </> : null}
+                                Counted in {show(stock.unit)}
+                                {l.match === "remembered" ? " · same product as on an earlier invoice"
+                                  : l.match?.startsWith("name ") ? ` · found by name (${l.match.slice(5)} match)` : ""}
+                              </small>
+                            )}
+                          </div>
                         )}
                         <div className="inv-line-fields">
                           <label><span>Qty</span>
@@ -383,73 +402,37 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                               onChange={(e) => setLine(i, { unit_price_cents: toCents(e.target.value) })} /></label>
                           <label><span>Total</span><output>${dollars(l.line_total_cents)}</output></label>
                         </div>
-                        {l.kind === "item" ? (
+                        {product && target !== NONE && (
                           <div className="inv-line-stock">
-                            <label className="inv-target"><span>In your inventory</span>
-                              <select className="select" disabled={!editable} value={target} onChange={(e) => setTarget(i, e.target.value)}>
-                                <option value={NEW}>➕ New item: add to inventory</option>
-                                {l.item_id && !items.some((it) => it.id === l.item_id) && <option value={l.item_id}>{l.item_name ?? "Matched item"}</option>}
-                                {items.length > 0 && <optgroup label="Your inventory items">{items.map((it) => <option key={it.id} value={it.id}>{it.name}{it.unit ? ` (${it.unit})` : ""}</option>)}</optgroup>}
-                                <option value={NONE}>Don't add to stock (just log it)</option>
-                              </select>
-                              {l.match && !["none", "chosen", "new"].includes(l.match) && l.item_id && (
-                                <small className="muted">{l.match === "remembered" ? "Same product as on an earlier invoice" : `Found by name (${l.match.replace("name ", "")} match)`}</small>
-                              )}
+                            <label className="inv-pack">
+                              <span className="tip" tabIndex={0} data-tip={`What one ${invUnit} holds, from the invoice: 40 × 400 g, 5 lb, or 24 for 24 bottles`}>Pack</span>
+                              <PackInput key={`${scanId}-${i}`} line={l} disabled={!editable} onChange={(p) => setPack(i, p)} />
                             </label>
-                            {target !== NONE && (
-                              <>
-                                <label className="inv-pack">
-                                  <span className="tip" tabIndex={0} data-tip={`What one ${invUnit} holds, from the invoice: 40 × 400 g, 5 lb, or 24 for 24 bottles`}>Pack</span>
-                                  <PackInput key={`${scanId}-${i}`} line={l} disabled={!editable}
-                                    onChange={(p) => setPack(i, p)} />
-                                </label>
-                                <label className="inv-pack">
-                                  <span className="tip" tabIndex={0} data-tip={stock.fixed ? "The unit this item is counted in. Change it on Inventory items." : "What the new item is counted in: by weight, by the pack, or by the case"}>Count in</span>
-                                  {stock.fixed ? (
-                                    <output>{stock.unit === "l" ? "L" : stock.unit}</output>
-                                  ) : (
-                                    <select className="select" disabled={!editable} value={stock.unit}
-                                      onChange={(e) => setPack(i, { stock_unit: e.target.value })}>
-                                      {stockUnits(l.unit, l, l.each_name, stock.unit).map((u) => <option key={u} value={u}>{unitLabel(u, l)}</option>)}
-                                    </select>
-                                  )}
-                                </label>
-                                {stock.per != null ? (
-                                  <div className="inv-adds">
-                                    <span>Adds to stock</span>
-                                    <strong>+{fmtQty(arrived * stock.per)} {stock.unit === "l" ? "L" : stock.unit}</strong>
-                                    {normUnit(l.unit) !== stock.unit && <small className="muted">1 {invUnit} = {fmtQty(stock.per)} {stock.unit === "l" ? "L" : stock.unit}</small>}
-                                  </div>
-                                ) : (
-                                  <label className="inv-pack">
-                                    <span className="tip" tabIndex={0} data-tip={`The pack doesn't say. How many ${stock.unit} come in one ${invUnit}?`}>{stock.unit} in 1 {invUnit}</span>
-                                    <input className="input" type="number" min={0.001} step="any" disabled={!editable} value={l.pack_size}
-                                      onChange={(e) => setLine(i, { pack_size: Number(e.target.value) || 1 })} />
-                                  </label>
-                                )}
-                              </>
+                            {!stock.fixed && (
+                              <label className="inv-pack">
+                                <span className="tip" tabIndex={0} data-tip="What the new item is counted in: by weight, by the pack, or by the case">Count in</span>
+                                <select className="select" disabled={!editable} value={stock.unit}
+                                  onChange={(e) => setPack(i, { stock_unit: e.target.value })}>
+                                  {stockUnits(l.unit, l, l.each_name, stock.unit).map((u) => <option key={u} value={u}>{unitLabel(u, l)}</option>)}
+                                </select>
+                              </label>
                             )}
-                            <label className="inv-arrived"><span>What arrived</span>
-                              <select className={`select ${l.issue ? "has-issue" : ""}`} disabled={!editable} value={l.issue ?? ""}
-                                onChange={(e) => {
-                                  const issue = (e.target.value || null) as DraftLine["issue"];
-                                  setLine(i, { issue, received_qty: issue ? (issue === "wrong" ? 0 : l.received_qty ?? l.qty) : null });
-                                }}>
-                                <option value="">✓ All of it, fine</option>
-                                <option value="short">Short: less arrived</option>
-                                <option value="damaged">Damaged</option>
-                                <option value="wrong">Substituted / wrong item</option>
-                              </select>
-                            </label>
-                            {l.issue && (
-                              <label className="inv-pack" title="How many good ones you're keeping, in invoice units. Stock goes up by this.">
-                                <span>Good qty received</span>
-                                <input className="input" type="number" min={0} step="any" disabled={!editable} value={l.received_qty ?? l.qty}
-                                  onChange={(e) => setLine(i, { received_qty: Math.max(0, Number(e.target.value) || 0) })} />
+                            {stock.per != null ? (
+                              <div className="inv-adds">
+                                <span>Adds to stock</span>
+                                <strong>+{fmtQty(l.qty * stock.per)} {show(stock.unit)}</strong>
+                                {normUnit(l.unit) !== stock.unit && <small className="muted">1 {invUnit} = {fmtQty(stock.per)} {show(stock.unit)}</small>}
+                              </div>
+                            ) : (
+                              <label className="inv-pack">
+                                <span className="tip" tabIndex={0} data-tip={`The pack doesn't say. How many ${stock.unit} come in one ${invUnit}?`}>{show(stock.unit)} in 1 {invUnit}</span>
+                                <input className="input" type="number" min={0.001} step="any" disabled={!editable} value={l.pack_size}
+                                  onChange={(e) => setLine(i, { pack_size: Number(e.target.value) || 1 })} />
                               </label>
                             )}
                           </div>
-                        ) : (
+                        )}
+                        {!product && (
                           <p className="small muted" style={{ margin: 0 }}>{l.kind === "fee" ? "A fee: logged with the invoice, not added to stock." : "A credit: logged with the invoice."}</p>
                         )}
                       </li>
@@ -458,7 +441,7 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                 </ol>
                 {editable && (
                   <button className="btn small" style={{ alignSelf: "start" }} onClick={() => {
-                    setScan({ ...scan, lines: [...scan.lines, { description: "", name: "", qty: 1, unit: null, unit_price_cents: 0, line_total_cents: 0, kind: "item", item_id: null, pack_size: 1, match: "new", create_item: true }] });
+                    setScan({ ...scan, lines: [...scan.lines, { description: "", name: "", manual: true, qty: 1, unit: null, unit_price_cents: 0, line_total_cents: 0, kind: "item", item_id: null, pack_size: 1, match: "new", create_item: true }] });
                     setDirty(true);
                   }}>+ Add a line</button>
                 )}

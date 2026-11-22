@@ -83,6 +83,7 @@ class DraftLine(BaseModel):
     each_unit: str | None = Field(default=None, max_length=16)
     each_name: str | None = Field(default=None, max_length=32)
     stock_unit: str | None = Field(default=None, max_length=32)  # what a new item is counted in
+    manual: bool = False  # added by hand on the review, not read off the invoice
     pack_size: float = Field(default=1, gt=0, le=100_000)
     match: str | None = Field(default=None, max_length=40)
     create_item: bool = False  # not matched: add it to inventory as a new stock item when the invoice is imported

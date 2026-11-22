@@ -469,6 +469,7 @@ export type DraftLine = {
   stock_unit?: string | null; // what a new item is counted in
   pack_auto?: boolean; // pack_size was worked out from the pack, not typed
   item_name?: string | null; // the inventory item it's matched to
+  manual?: boolean; // added by hand on the review, not read off the invoice
   qty: number;
   unit?: string | null;
   unit_price_cents: number;
