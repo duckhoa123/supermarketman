@@ -412,11 +412,6 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                                 </span>
                               </label>
                             )}
-                            <div className="inv-adds">
-                              <span>Adds to stock</span>
-                              {stock.unsure ? <strong className="warn-text">Enter the amount in 1 {invUnit}</strong>
-                                : <strong>+{fmtQty(l.qty * stock.per)} {show(stock.unit)}</strong>}
-                            </div>
                           </div>
                         )}
                         {!product && (
