@@ -470,6 +470,8 @@ export type DraftLine = {
   pack_auto?: boolean; // pack_size was worked out from the pack, not typed
   item_name?: string | null; // the inventory item it's matched to
   manual?: boolean; // added by hand on the review, not read off the invoice
+  new_name?: string | null; // the name typed for a new inventory item
+  pack_manual?: boolean; // pack_size was typed, not worked out
   qty: number;
   unit?: string | null;
   unit_price_cents: number;

@@ -374,3 +374,19 @@ async def test_lines_match_inventory_items_never_menu_dishes(client, session, de
     lines = {ln["description"]: ln for ln in scan["lines"]}
     assert lines["Burrata 125g x 6"]["item_id"] == stocked and lines["Burrata 125g x 6"]["item_name"] == "Burrata"
     assert lines["Mascarpone 500g"]["item_id"] is None
+
+
+async def test_typed_name_and_amount_win(client, session, demo_location_id, fake_llm):
+    """A name typed in Matched inventory names the new item; an amount typed for 1 case isn't worked out again."""
+    scan = (await _scan_and_read(client, demo_location_id, fake_llm, {**THREE_DOLPHINS, "invoice_number": "53100",
+                                                                       "lines": THREE_DOLPHINS["lines"][:1]}))["scan"]
+    base = f"/locations/{demo_location_id}/invoices/{scan['id']}"
+    line = {k: v for k, v in scan["lines"][0].items() if k not in ("last_price_cents", "last_received_on", "change_pct")}
+    line |= {"create_item": True, "match": "new", "new_name": "Bun bo Hue noodles", "pack_size": 15, "pack_manual": True}
+    saved = (await client.put(base, headers=OWNER, json={"lines": [line]})).json()["lines"][0]
+    assert saved["pack_size"] == 15 and saved["item_id"] is None  # not re-matched, not recalculated
+    out = (await client.post(f"{base}/confirm", headers=OWNER)).json()
+    assert out["created_items"] == ["Bun bo Hue noodles"]
+    item = await session.scalar(select(Item).where(Item.location_id == demo_location_id,
+                                                   Item.name == "Bun bo Hue noodles"))
+    assert item.stock_qty == 15 and item.unit == "kg" and item.cost_cents == 400

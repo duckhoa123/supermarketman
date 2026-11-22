@@ -3,89 +3,90 @@ import { qty, type StockItem } from "../lib/inventory";
 
 type Props = {
   items: StockItem[];
-  value: string | null; // the chosen item's id; null = none (a new item)
-  valueName?: string | null; // shown if the item isn't in the list
+  itemId: string | null; // the existing item it goes into
+  itemName?: string | null; // shown if that item isn't in the list
+  newName: string; // or the name of a new item to add
+  suggestion?: string | null; // a name to offer for a new item
   disabled?: boolean;
-  placeholder?: string;
-  onPick: (item: StockItem | null) => void;
-  onSkip?: () => void; // "don't add to stock"
+  onPickItem: (item: StockItem) => void;
+  onNewName: (name: string) => void;
 };
 
-/** A search box over your inventory items: type to filter, pick one, or clear it. */
-export default function ItemPicker({ items, value, valueName, disabled, placeholder, onPick, onSkip }: Props) {
+/** Matched inventory: an existing item (search to change it), or a name typed for a new one. */
+export default function ItemPicker({ items, itemId, itemName, newName, suggestion, disabled, onPickItem, onNewName }: Props) {
   const id = useId();
-  const current = value ? items.find((i) => i.id === value) : undefined;
-  const [text, setText] = useState<string | null>(null); // null while not typing: shows the chosen item
+  const current = itemId ? items.find((i) => i.id === itemId) : undefined;
+  const [typing, setTyping] = useState(false);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const shown = text ?? (current?.name ?? (value ? valueName ?? "" : ""));
+  const value = itemId ? current?.name ?? itemName ?? "" : newName;
+  const query = typing ? value : "";
 
   const matches = useMemo(() => {
-    const words = (text ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const found = words.length
-      ? items.filter((i) => words.every((w) => i.name.toLowerCase().includes(w)))
-      : items;
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const found = words.length ? items.filter((i) => words.every((w) => i.name.toLowerCase().includes(w))) : items;
     const first = words[0] ?? "";
     return [...found].sort((a, b) => Number(!a.name.toLowerCase().startsWith(first)) - Number(!b.name.toLowerCase().startsWith(first))
       || a.name.localeCompare(b.name)).slice(0, 60);
-  }, [items, text]);
+  }, [items, query]);
 
-  function pick(item: StockItem | null) {
-    onPick(item);
-    setText(null);
+  const exact = (text: string) => items.find((i) => i.name.trim().toLowerCase() === text.trim().toLowerCase());
+  const offer = typing ? (query.trim() && !exact(query) ? query.trim() : null) : !value && suggestion && !exact(suggestion) ? suggestion : null;
+  const options: ({ kind: "new"; name: string } | { kind: "item"; item: StockItem })[] = [
+    ...(offer ? [{ kind: "new" as const, name: offer }] : []),
+    ...matches.map((item) => ({ kind: "item" as const, item })),
+  ];
+
+  function choose(k: number) {
+    const o = options[k];
+    if (!o) return;
+    if (o.kind === "item") onPickItem(o.item);
+    else onNewName(o.name);
+    setTyping(false);
     setOpen(false);
   }
-
-  const options = matches.length + (onSkip ? 1 : 0);
 
   return (
     <div className="picker">
       <input className="input" role="combobox" aria-expanded={open} aria-controls={`${id}-list`} aria-autocomplete="list"
-        aria-activedescendant={open ? `${id}-${active}` : undefined} disabled={disabled} value={shown}
-        placeholder={placeholder ?? "Search your inventory…"}
+        aria-label="Matched inventory" aria-activedescendant={open ? `${id}-${active}` : undefined} disabled={disabled}
+        value={value} placeholder="Search your inventory, or type a name to add it"
         onFocus={(e) => { setOpen(true); setActive(0); e.target.select(); }}
-        onBlur={() => window.setTimeout(() => { setOpen(false); setText(null); }, 120)}
-        onChange={(e) => {
-          setText(e.target.value);
-          setOpen(true);
-          setActive(0);
-          if (!e.target.value.trim() && value) onPick(null); // emptied: it's a new item
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, options - 1)); }
-          else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
-          else if (e.key === "Escape") { setOpen(false); setText(null); }
-          else if (e.key === "Enter" && open) {
-            e.preventDefault();
-            if (active < matches.length) pick(matches[active]);
-            else if (onSkip) { onSkip(); setText(null); setOpen(false); }
+        onBlur={() => window.setTimeout(() => {
+          setOpen(false);
+          if (typing) {
+            const same = exact(value);
+            if (same && !itemId) onPickItem(same); // typed an existing item's name: that's the item
+            setTyping(false);
           }
+        }, 120)}
+        onChange={(e) => { setTyping(true); setOpen(true); setActive(0); onNewName(e.target.value); }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, options.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          else if (e.key === "Escape") { setOpen(false); }
+          else if (e.key === "Enter" && open) { e.preventDefault(); choose(active); }
         }} />
-      {shown && !disabled && (
-        <button type="button" className="picker-clear" aria-label="Clear: add as a new item" title="Clear: add as a new item"
-          onMouseDown={(e) => e.preventDefault()} onClick={() => pick(null)}>✕</button>
+      {value && !disabled && (
+        <button type="button" className="picker-clear" aria-label="Clear" title="Clear"
+          onMouseDown={(e) => e.preventDefault()} onClick={() => { onNewName(""); setTyping(false); }}>✕</button>
       )}
-      {open && !disabled && (
+      {open && !disabled && options.length > 0 && (
         <ul className="picker-list" role="listbox" id={`${id}-list`}>
-          {matches.map((it, k) => (
-            <li key={it.id} id={`${id}-${k}`} role="option" aria-selected={k === active}
-              className={`${k === active ? "is-active" : ""} ${it.id === value ? "is-chosen" : ""}`}
-              onMouseEnter={() => setActive(k)} onMouseDown={(e) => { e.preventDefault(); pick(it); }}>
-              <span>{it.name}</span>
-              <span className="small muted">{it.stock_qty != null ? `${qty(it.stock_qty)} ${it.unit ?? ""}` : it.unit ?? ""}</span>
+          {options.map((o, k) => (
+            <li key={o.kind === "item" ? o.item.id : "new"} id={`${id}-${k}`} role="option" aria-selected={k === active}
+              className={`${k === active ? "is-active" : ""} ${o.kind === "item" && o.item.id === itemId ? "is-chosen" : ""} ${o.kind === "new" ? "picker-new" : ""}`}
+              onMouseEnter={() => setActive(k)} onMouseDown={(e) => { e.preventDefault(); choose(k); }}>
+              {o.kind === "new" ? (
+                <span>+ Add new “{o.name}”</span>
+              ) : (
+                <>
+                  <span>{o.item.name}</span>
+                  <span className="small muted">{o.item.stock_qty != null ? `${qty(o.item.stock_qty)} ${o.item.unit ?? ""}` : o.item.unit ?? ""}</span>
+                </>
+              )}
             </li>
           ))}
-          {matches.length === 0 && (
-            <li className="picker-empty small muted" aria-disabled>Nothing called “{text}”. Leave it blank to add it as a new item.</li>
-          )}
-          {onSkip && (
-            <li id={`${id}-${matches.length}`} role="option" aria-selected={active === matches.length}
-              className={`picker-skip ${active === matches.length ? "is-active" : ""}`}
-              onMouseEnter={() => setActive(matches.length)}
-              onMouseDown={(e) => { e.preventDefault(); onSkip(); setText(null); setOpen(false); }}>
-              Don't add to stock (just log it)
-            </li>
-          )}
         </ul>
       )}
     </div>

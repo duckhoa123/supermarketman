@@ -1,32 +1,31 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { api, fetchBlob, type DraftLine, type InvoiceScan, type Supplier } from "../lib/api";
-import { normUnit, type OnHand, type StockItem } from "../lib/inventory";
-import { defaultStockUnit, fmtQty, type Pack, packText, parsePack, perInvoiceUnit, stockUnits } from "../lib/packs";
+import { convert, normUnit, type OnHand, type StockItem } from "../lib/inventory";
+import { defaultStockUnit, fmtQty, perInvoiceUnit, stockUnits } from "../lib/packs";
 import ItemPicker from "./ItemPicker";
 import { Dialog } from "./PosDialogs";
 
 const dollars = (cents: number | null | undefined) => (cents == null ? "" : (cents / 100).toFixed(2));
 const toCents = (v: string) => Math.round((Number(v) || 0) * 100);
-const NEW = "__new__";
-const NONE = "__none__";
 
 type Imported = { lines: number; stock_updates: { item: string; added: number; unit?: string | null }[];
   created_items: string[]; alerted: boolean;
   issues: { description: string; issue: string; invoiced: number; received: number }[] };
 
-/** Where the line is going, worked out when the invoice was read: an item you already stock, or a new one. */
-function Status({ line, target }: { line: DraftLine; target: string }) {
-  if (line.kind !== "item") return null;
-  if (target === NEW) return <span className="pill new" title="Not in your inventory yet: it's added when you import">New item</span>;
-  if (target === NONE) return <span className="pill" title="Logged with the invoice, not added to stock">Not stocked</span>;
-  const pct = line.match?.startsWith("name ") ? Number(line.match.slice(5).replace("%", "")) : null;
-  if (pct != null && pct < 80) {
-    return <span className="pill warn" title={`Only a ${pct}% name match. Check it's the same product.`}>Check the match</span>;
+/** Next to Matched inventory: matched (and how well), a new item about to be added, or no match yet. */
+function MatchState({ line }: { line: DraftLine }) {
+  if (line.item_id) {
+    const pct = line.match?.startsWith("name ") ? line.match.slice(5) : null;
+    const text = pct ? `${pct} match` : line.match === "remembered" ? "Matched before" : "Selected";
+    const tip = pct ? `Found by name: ${pct} similar` : line.match === "remembered"
+      ? "The same product as on an earlier invoice from this supplier" : "Chosen by you";
+    return <span className="match-state ok" title={tip}><span aria-hidden>✓</span> {text}</span>;
   }
-  const how = line.match === "remembered" ? "Same product as on an earlier invoice"
-    : pct != null ? `Matched by name (${pct}%)` : "Chosen by you";
-  return <span className="pill good" title={how}>✓ In inventory</span>;
+  if (line.new_name?.trim()) {
+    return <span className="match-state ok" title="Not in your inventory yet: it's added under this name when you import"><span aria-hidden>✓</span> Add new</span>;
+  }
+  return <span className="match-state bad" title="Nothing in your inventory looks like this. Search for it, or type a name to add it as new."><span aria-hidden>✕</span> No match</span>;
 }
 
 function Change({ line }: { line: DraftLine }) {
@@ -38,23 +37,6 @@ function Change({ line }: { line: DraftLine }) {
       title={`Last paid $${dollars(line.last_price_cents)} on ${line.last_received_on}`}>
       {line.change_pct > 0 ? "▲" : "▼"} {Math.abs(line.change_pct)}% vs last time
     </span>
-  );
-}
-
-/** The pack as typed ("40 × 400 g"); kept as text while typing, read when it makes sense. */
-function PackInput({ line, disabled, onChange }: { line: DraftLine; disabled: boolean; onChange: (p: Pack) => void }) {
-  const [text, setText] = useState(() => packText(line));
-  const [bad, setBad] = useState(false);
-  return (
-    <input className={`input ${bad ? "is-invalid" : ""}`} disabled={disabled} value={text} placeholder="e.g. 40 × 400 g"
-      aria-invalid={bad}
-      onChange={(e) => {
-        setText(e.target.value);
-        const p = parsePack(e.target.value);
-        setBad(p === undefined);
-        if (p !== undefined) onChange(p ?? { pack_count: null, each_qty: null, each_unit: null });
-      }}
-      onBlur={() => { if (!bad) setText(packText(line)); }} />
   );
 }
 
@@ -133,26 +115,34 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
     setDirty(true);
   }
 
-  function setTarget(i: number, value: string) {
-    if (value === NEW) setLine(i, { item_id: null, create_item: true, match: "new" });
-    else if (value === NONE) setLine(i, { item_id: null, create_item: false, match: "none" });
-    else setLine(i, { item_id: value, create_item: false, match: "chosen", item_name: items.find((it) => it.id === value)?.name ?? null });
+  function pickItem(i: number, it: StockItem) {
+    setPack(i, { item_id: it.id, item_name: it.name, create_item: false, match: "chosen", new_name: "", pack_manual: false });
   }
+
+  function newName(i: number, name: string) {
+    const was = scan?.lines[i];
+    setPack(i, { item_id: null, item_name: null, create_item: true, match: "new", new_name: name,
+      ...(was?.item_id ? { pack_manual: false } : {}) });
+  }
+
 
   /** What a line's stock is counted in, and what one invoice unit adds (null: the pack doesn't say, so it's typed). */
   function stockOf(l: DraftLine) {
     const item = l.item_id ? items.find((it) => it.id === l.item_id) : undefined;
     const unit = normUnit(item?.unit || l.stock_unit || defaultStockUnit(l.unit, l, l.each_name));
-    const per = perInvoiceUnit(l.unit, l, unit) ?? (l.pack_auto ? l.pack_size : null);
-    return { unit, per, fixed: !!item?.unit };
+    const auto = perInvoiceUnit(l.unit, l, unit)
+      ?? (item?.conversions?.length ? convert(1, l.unit || unit, unit, item.conversions) : null)
+      ?? (l.pack_auto ? l.pack_size : null);
+    const per = l.pack_manual ? l.pack_size : auto;
+    return { unit, per: per ?? l.pack_size, fixed: !!item?.unit, unsure: per == null };
   }
 
   /** Change the pack or the unit, and work out pack_size again when it can be. */
   function setPack(i: number, patch: Partial<DraftLine>) {
     if (!scan) return;
     const l = { ...scan.lines[i], ...patch, pack_auto: false };
-    const { per } = stockOf(l);
-    setLine(i, { ...patch, pack_auto: false, ...(per != null ? { pack_size: per } : {}) });
+    const { per, unsure } = stockOf(l);
+    setLine(i, { ...patch, pack_auto: false, ...(!unsure ? { pack_size: per } : {}) });
   }
 
   async function save(): Promise<InvoiceScan | null> {
@@ -227,9 +217,10 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
   }
 
   const products = scan?.lines.filter((l) => l.kind === "item") ?? [];
-  const toImport = products.filter((l) => l.item_id || l.create_item).length;
-  const newOnes = products.filter((l) => !l.item_id && l.create_item).length;
   const known = products.filter((l) => l.item_id).length;
+  const newOnes = products.filter((l) => !l.item_id && l.new_name?.trim()).length;
+  const unmatched = products.length - known - newOnes;
+  const toImport = known + newOnes;
   const status = scan?.status;
 
   const title = (
@@ -255,7 +246,10 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
           <>
             <button className="btn" disabled={busy !== ""} onClick={() => void action("discard")}>Discard</button>
             {dirty && <button className="btn" disabled={busy !== ""} onClick={() => void save()}>Save for later</button>}
-            <button className="btn primary" disabled={busy !== "" || scan.lines.length === 0} onClick={() => void importIt()}>
+            {unmatched > 0 && <span className="small warn-text">{unmatched} line{unmatched === 1 ? " has" : "s have"} no match</span>}
+            <button className="btn primary" disabled={busy !== "" || scan.lines.length === 0 || unmatched > 0}
+              title={unmatched > 0 ? "Match every line to an inventory item, or name it to add it as new" : undefined}
+              onClick={() => void importIt()}>
               {busy === "import" ? "Importing…" : toImport ? `Import ${toImport} item${toImport === 1 ? "" : "s"} to inventory` : "Log the invoice"}
             </button>
           </>
@@ -337,56 +331,47 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                 {scan.warnings.map((w, i) => <p key={i} className="small warn-text">⚠ {w}</p>)}
                 {editable && (
                   <p className="small muted">
-                    {known} {known === 1 ? "product is" : "products are"} already in your inventory
-                    {newOnes > 0 ? ` and ${newOnes} ${newOnes === 1 ? "is" : "are"} new` : ""}. Check each line against the
-                    invoice, and change where it goes if a match is wrong.
+                    {known} matched to your inventory{newOnes > 0 ? `, ${newOnes} to add as new` : ""}
+                    {unmatched > 0 ? `, ${unmatched} with no match: search for the item, or type a name to add it as new` : ""}.
                   </p>
                 )}
                 <ol className="inv-lines">
                   {scan.lines.map((l, i) => {
-                    const target = l.item_id ?? (l.kind === "item" && l.create_item ? NEW : NONE);
                     const product = l.kind === "item";
+                    const state = !product ? "" : l.item_id ? "" : l.new_name?.trim() ? "is-new" : "is-unmatched";
                     const stock = stockOf(l);
                     const matched = l.item_id ? items.find((it) => it.id === l.item_id) : undefined;
                     const invUnit = l.unit || "unit";
                     const show = (u: string) => (u === "l" ? "L" : u);
                     return (
-                      <li key={i} className={`inv-line ${l.kind !== "item" ? "is-fee" : ""} ${target === NEW ? "is-new" : ""}`}>
+                      <li key={i} className={`inv-line ${l.kind !== "item" ? "is-fee" : ""} ${state}`}>
                         <div className="inv-line-top">
                           <span className="inv-n">{i + 1}</span>
                           {l.manual ? (
-                            <input className="input inv-desc" aria-label="Item" disabled={!editable} value={l.name ?? ""}
-                              placeholder="Item name" onChange={(e) => setLine(i, { name: e.target.value })} />
+                            <input className="input inv-desc" aria-label="Item on invoice" disabled={!editable} value={l.description}
+                              placeholder="Item on the invoice" onChange={(e) => setLine(i, { description: e.target.value })} />
                           ) : (
-                            <span className="inv-name" title={l.description}>{product ? l.name || l.description : l.description}</span>
+                            <span className="inv-name">{l.description}</span>
                           )}
                           {l.kind !== "item" && <span className="pill">{l.kind}</span>}
-                          <Status line={l} target={target} />
                           <Change line={l} />
                           {editable && (
                             <button className="sb-icon" aria-label={`Remove line ${i + 1}`} title="Remove this line"
                               onClick={() => { setScan({ ...scan, lines: scan.lines.filter((_, j) => j !== i) }); setDirty(true); }}>✕</button>
                           )}
                         </div>
-                        {product && !l.manual && l.description !== (l.name || l.description) && (
-                          <p className="inv-printed small muted">On the invoice: {l.description}{l.sku && !l.description.includes(l.sku) ? ` · ${l.sku}` : ""}</p>
-                        )}
                         {product && (
                           <div className="inv-match">
                             <span className="small tip" tabIndex={0}
-                              data-tip="The inventory item this goes into. Picked for you when Pass recognises the product; search to change it.">Matched inventory</span>
-                            <ItemPicker items={items} value={l.item_id} valueName={l.item_name} disabled={!editable}
-                              placeholder={target === NONE ? "Not added to stock" : "Search your inventory…"}
-                              onPick={(it) => setTarget(i, it ? it.id : NEW)} onSkip={() => setTarget(i, NONE)} />
-                            {target === NEW && <small className="muted">Leave blank to add this as a new item in your inventory.</small>}
-                            {target === NONE && <small className="muted">Only logged with the invoice. Pick an item to add it to stock.</small>}
-                            {l.item_id && (
-                              <small className="muted">
-                                {matched?.stock_qty != null ? <>On hand <strong>{fmtQty(matched.stock_qty)} {show(stock.unit)}</strong> · </> : null}
-                                Counted in {show(stock.unit)}
-                                {l.match === "remembered" ? " · same product as on an earlier invoice"
-                                  : l.match?.startsWith("name ") ? ` · found by name (${l.match.slice(5)} match)` : ""}
-                              </small>
+                              data-tip="The inventory item this goes into, picked for you when Pass recognises it. Search to change it, or type a new name to add it as a new item.">Matched inventory</span>
+                            <div className="inv-match-row">
+                              <ItemPicker items={items} itemId={l.item_id} itemName={l.item_name} newName={l.new_name ?? ""}
+                                suggestion={l.name && l.name !== l.description ? l.name : null} disabled={!editable}
+                                onPickItem={(it) => pickItem(i, it)} onNewName={(name) => newName(i, name)} />
+                              <MatchState line={l} />
+                            </div>
+                            {l.item_id && matched && (
+                              <small className="muted">On hand <strong>{matched.stock_qty != null ? fmtQty(matched.stock_qty) : "–"} {show(stock.unit)}</strong> · counted in {show(stock.unit)}</small>
                             )}
                           </div>
                         )}
@@ -402,34 +387,36 @@ export default function InvoiceReview({ scanId, onClose }: { scanId: string; onC
                               onChange={(e) => setLine(i, { unit_price_cents: toCents(e.target.value) })} /></label>
                           <label><span>Total</span><output>${dollars(l.line_total_cents)}</output></label>
                         </div>
-                        {product && target !== NONE && (
+                        {product && (
                           <div className="inv-line-stock">
-                            <label className="inv-pack">
-                              <span className="tip" tabIndex={0} data-tip={`What one ${invUnit} holds, from the invoice: 40 × 400 g, 5 lb, or 24 for 24 bottles`}>Pack</span>
-                              <PackInput key={`${scanId}-${i}`} line={l} disabled={!editable} onChange={(p) => setPack(i, p)} />
-                            </label>
                             {!stock.fixed && (
                               <label className="inv-pack">
                                 <span className="tip" tabIndex={0} data-tip="What the new item is counted in: by weight, by the pack, or by the case">Count in</span>
                                 <select className="select" disabled={!editable} value={stock.unit}
-                                  onChange={(e) => setPack(i, { stock_unit: e.target.value })}>
+                                  onChange={(e) => setPack(i, { stock_unit: e.target.value, pack_manual: false })}>
                                   {stockUnits(l.unit, l, l.each_name, stock.unit).map((u) => <option key={u} value={u}>{unitLabel(u, l)}</option>)}
                                 </select>
                               </label>
                             )}
-                            {stock.per != null ? (
-                              <div className="inv-adds">
-                                <span>Adds to stock</span>
-                                <strong>+{fmtQty(l.qty * stock.per)} {show(stock.unit)}</strong>
-                                {normUnit(l.unit) !== stock.unit && <small className="muted">1 {invUnit} = {fmtQty(stock.per)} {show(stock.unit)}</small>}
-                              </div>
-                            ) : (
+                            {normUnit(l.unit) !== stock.unit && (
                               <label className="inv-pack">
-                                <span className="tip" tabIndex={0} data-tip={`The pack doesn't say. How many ${stock.unit} come in one ${invUnit}?`}>{show(stock.unit)} in 1 {invUnit}</span>
-                                <input className="input" type="number" min={0.001} step="any" disabled={!editable} value={l.pack_size}
-                                  onChange={(e) => setLine(i, { pack_size: Number(e.target.value) || 1 })} />
+                                <span className="tip" tabIndex={0}
+                                  data-tip={stock.unsure ? `The invoice doesn't say how much is in one ${invUnit}. Enter it in ${show(stock.unit)}.` : `Worked out from the invoice${l.each_qty && l.each_unit ? ` (${l.pack_count && l.pack_count !== 1 ? `${l.pack_count} × ` : ""}${l.each_qty} ${l.each_unit})` : ""}. Change it if it's wrong.`}>
+                                  In 1 {invUnit}
+                                </span>
+                                <span className={`inv-unit-input ${stock.unsure ? "is-unsure" : ""}`}>
+                                  <input className="input" type="number" min={0.001} step="any" disabled={!editable}
+                                    value={stock.unsure ? "" : Math.round(stock.per * 1000) / 1000} placeholder="?"
+                                    onChange={(e) => setLine(i, { pack_size: Number(e.target.value) || 1, pack_manual: true, pack_auto: false })} />
+                                  <span>{show(stock.unit)}</span>
+                                </span>
                               </label>
                             )}
+                            <div className="inv-adds">
+                              <span>Adds to stock</span>
+                              {stock.unsure ? <strong className="warn-text">Enter the amount in 1 {invUnit}</strong>
+                                : <strong>+{fmtQty(l.qty * stock.per)} {show(stock.unit)}</strong>}
+                            </div>
                           </div>
                         )}
                         {!product && (

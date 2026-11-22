@@ -241,6 +241,9 @@ def fill_pack(row: dict, item: Item | None) -> dict:
     else:
         unit = row.get("stock_unit") or im.default_stock_unit(*spec, row.get("each_name"))
         row["stock_unit"] = inventory.norm_unit(unit)
+    if row.get("pack_manual"):
+        row["pack_auto"] = False
+        return row
     auto = im.per_invoice_unit(*spec, unit, item.conversions if item is not None else None)
     row["pack_auto"] = auto is not None
     if auto is not None:
@@ -259,7 +262,7 @@ async def suggest(session: AsyncSession, location: Location, supplier_name: str 
         key = im.product_key(supplier_name, ln["description"], ln.get("sku"))
         prev = await last_line(session, location.id, key, on_date)
         row = {**ln, "item_id": ln.get("item_id"), "pack_size": ln.get("pack_size") or 1, "match": ln.get("match")}
-        unmatched_by_hand = ln.get("match") == "none"
+        unmatched_by_hand = ln.get("match") in ("none", "new")  # cleared or named as new on the review
         if prev is not None and prev.item_id and not ln.get("item_id") and not unmatched_by_hand:
             row.update(item_id=prev.item_id, pack_size=prev.pack_size or 1, match="remembered")
         elif ln.get("kind", "item") == "item" and not ln.get("item_id") and not unmatched_by_hand:
@@ -472,7 +475,7 @@ async def new_stock_item(session: AsyncSession, location: Location, ln: dict, su
     its cost in the ledger."""
     import uuid
 
-    name = (ln.get("name") or ln.get("description") or "Item").strip()[:300]
+    name = (ln.get("new_name") or ln.get("name") or ln.get("description") or "Item").strip()[:300]
     existing = await session.scalar(select(Item).where(Item.location_id == location.id,
                                                        func.lower(Item.name) == name.lower()))
     if existing is not None:
@@ -480,7 +483,8 @@ async def new_stock_item(session: AsyncSession, location: Location, ln: dict, su
         return existing
     spec = (ln.get("unit"), ln.get("pack_count"), ln.get("each_qty"), ln.get("each_unit"))
     unit = inventory.norm_unit(ln.get("stock_unit") or im.default_stock_unit(*spec, ln.get("each_name")))
-    per = im.per_invoice_unit(*spec, unit) or (float(ln.get("pack_size") or 0) or None)
+    typed = float(ln.get("pack_size") or 0) or None
+    per = typed if ln.get("pack_manual") else (im.per_invoice_unit(*spec, unit) or typed)
     item = Item(location_id=location.id, provider="pass", external_id=f"pass-{uuid.uuid4().hex[:12]}", name=name,
                 category="Supplies", unit=unit, stock_qty=None, cost_cents=None, price_cents=0,
                 conversions=im.new_item_conversions(ln.get("unit"), per, unit, ln.get("each_qty"),
