@@ -1007,6 +1007,22 @@ async def confirm_menu_import(import_id: str, location: Location = Depends(requi
         raise HTTPException(422, str(exc)) from exc
 
 
+class SuggestIn(BaseModel):
+    keys: list[str] = Field(min_length=1, max_length=menu_import.MAX_DISHES)
+
+
+@router.post("/menu-imports/{import_id}/suggest")
+async def suggest_menu_again(import_id: str, body: SuggestIn, location: Location = Depends(require_manager),
+                             session: AsyncSession = Depends(get_session)):
+    """Ask the AI again for these dishes (e.g. the ones that came back empty). Save the review first."""
+    imp = await _menu_import(session, location, import_id)
+    try:
+        await menu_import.suggest_again(session, imp, body.keys)
+    except menu_import.MenuImportError as exc:
+        raise HTTPException(409 if "is " in str(exc)[:30] else 422, str(exc)) from exc
+    return menu_import.out(imp)
+
+
 @router.post("/menu-imports/{import_id}/{action}")
 async def menu_import_action(import_id: str, action: str, location: Location = Depends(require_manager),
                              session: AsyncSession = Depends(get_session)):

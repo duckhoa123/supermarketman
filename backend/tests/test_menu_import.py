@@ -126,3 +126,58 @@ def test_clean_dishes_and_units():
     assert out[1]["price_cents"] is None
     assert mi.fits("kg", "g") and mi.fits("each", "each") and not mi.fits("kg", "each")
     assert mi._unit_for("oz") == "lb" and mi._unit_for("ml") == "l" and mi._unit_for("each") == "each"
+
+
+def test_suggestions_find_their_dish_when_the_name_is_written_differently():
+    dishes = [{"name": "Pork Spring Rolls - Cha Gio (2)"}, {"name": "Chicken Wings - Canh Ga"}]
+    assert mi.find_dish(dishes, {"n": 1, "dish": "Pork Spring Rolls – Cha Gio"}) is dishes[0]
+    assert mi.find_dish(dishes, {"dish": "Chicken Wings"}) is dishes[1]  # half the name, no number
+    assert mi.find_dish(dishes, {"n": 2, "dish": "Chicken wings (Canh Ga)"}) is dishes[1]
+    assert mi.find_dish(dishes, {"n": 2, "dish": "Bun Bo Hue"}) is None  # a wrong number and a name that fits nothing
+    assert mi.find_dish(dishes, {"dish": "Bun Bo Hue"}) is None
+
+
+async def test_empty_dishes_are_asked_again_then_on_request(client, session, demo_location_id, fake_llm):
+    # The first answer skips Bun Bo Hue and renames Pho Tai; the retry fills Bun Bo Hue in.
+    first = tool("suggest_recipes", {"recipes": [
+        {"n": 1, "dish": "Phở Tái", "lines": [{"ingredient": "Rice noodles", "qty": 200, "unit": "g"}]},
+        {"n": 3, "dish": "Burrata & Tomato", "lines": [{"ingredient": "Burrata", "qty": 1, "unit": "each"}]}]})
+    retry = tool("suggest_recipes", {"recipes": [
+        {"n": 1, "dish": "Bun Bo Hue", "lines": [{"ingredient": "Beef shank", "qty": 100, "unit": "g"}]}]})
+    llm = fake_llm([READ, first, retry])
+    r = await _upload(client, demo_location_id)
+    await run_pending(time_budget_s=20)
+    base = f"/locations/{demo_location_id}/menu-imports/{r.json()['id']}"
+    imp = (await client.get(base, headers=OWNER)).json()
+    lines = {d["name"]: [ln["ingredient"] for ln in d["lines"]] for d in imp["dishes"]}
+    assert lines == {"Pho Tai": ["Rice noodles"], "Bun Bo Hue": ["Beef shank"], "Burrata & Tomato": ["Burrata"]}
+    assert "1. Bun Bo Hue" in llm.calls[2]["messages"][0]["content"] and not imp["warnings"]
+
+    # During the review: clear Pho Tai, edit Burrata, then ask again for Pho Tai only.
+    dishes = imp["dishes"]
+    dishes[0]["lines"] = []
+    dishes[2]["lines"][0]["qty"] = 2
+    await client.put(base, headers=OWNER, json={"dishes": dishes, "ingredients": imp["ingredients"]})
+    fake_llm([tool("suggest_recipes", {"recipes": [
+        {"n": 1, "dish": "Pho Tai", "lines": [{"ingredient": "Pho broth", "qty": 450, "unit": "ml"}]}]})])
+    r = await client.post(f"{base}/suggest", headers=OWNER, json={"keys": [dishes[0]["key"]]})
+    assert r.status_code == 200 and r.json()["status"] == "processing"
+    await run_pending(time_budget_s=20)
+    imp = (await client.get(base, headers=OWNER)).json()
+    assert imp["status"] == "review"
+    assert [ln["ingredient"] for ln in imp["dishes"][0]["lines"]] == ["Pho broth"]
+    assert imp["dishes"][2]["lines"][0]["qty"] == 2  # the edit is kept
+    assert imp["ingredients"]["pho broth"]["unit"] == "l"
+
+
+async def test_an_empty_dish_never_wipes_a_recipe(client, session, demo_location_id, fake_llm):
+    fake_llm([READ, RECIPES])
+    r = await _upload(client, demo_location_id)
+    await run_pending(time_budget_s=20)
+    base = f"/locations/{demo_location_id}/menu-imports/{r.json()['id']}"
+    imp = (await client.get(base, headers=OWNER)).json()
+    dishes = imp["dishes"]
+    dishes[2]["lines"] = []  # Burrata & Tomato, on the menu: ticked but emptied
+    await client.put(base, headers=OWNER, json={"dishes": dishes, "ingredients": imp["ingredients"]})
+    out = (await client.post(f"{base}/confirm", headers=OWNER)).json()
+    assert out["recipes"] == 2 and "Burrata" not in out["items_created"]

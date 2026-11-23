@@ -157,6 +157,20 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
     }
   }
 
+  async function suggestAgain(keys: string[]) {
+    if (!keys.length) return;
+    setBusy("suggest");
+    setError("");
+    try {
+      if (dirty && !(await save())) return;
+      setImp(await api<Import>(`${base}/menu-imports/${imp!.id}/suggest`, { method: "POST", body: { keys } }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't ask again.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function action(name: "discard" | "retry") {
     if (name === "discard" && !window.confirm("Throw this menu import away? Nothing has been added yet.")) return;
     setBusy(name);
@@ -172,6 +186,8 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
   // --- Views -----------------------------------------------------------------------------------------------------
 
   const ticked = imp?.dishes.filter((d) => d.include) ?? [];
+  const empty = ticked.filter((d) => !d.lines.some((l) => l.item_id || l.ingredient.trim()));
+  const ready = ticked.length - empty.length;
   const newDishes = ticked.filter((d) => !d.menu_item_id).length;
   const usedNew = Object.entries(imp?.ingredients ?? {}).filter(([k]) =>
     ticked.some((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)));
@@ -183,10 +199,11 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
         {newDishes > 0 ? ` (${newDishes} new to your menu)` : ""} · {usedNew.length} new inventory item{usedNew.length === 1 ? "" : "s"}</span>
       <div className="row">
         {broken.length > 0 && <span className="small warn-text">{broken.length} portion{broken.length === 1 ? "" : "s"} to fix</span>}
+        {empty.length > 0 && <span className="small muted">{empty.length} empty, skipped</span>}
         <button className="btn" disabled={busy !== ""} onClick={() => void action("discard")}>Discard</button>
         {dirty && <button className="btn" disabled={busy !== ""} onClick={() => void save()}>Save for later</button>}
-        <button className="btn primary" disabled={busy !== "" || !ticked.length || broken.length > 0} onClick={() => void confirm()}>
-          {busy === "confirm" ? "Creating…" : `Create ${ticked.length} recipe${ticked.length === 1 ? "" : "s"}`}
+        <button className="btn primary" disabled={busy !== "" || !ready || broken.length > 0} onClick={() => void confirm()}>
+          {busy === "confirm" ? "Creating…" : `Create ${ready} recipe${ready === 1 ? "" : "s"}`}
         </button>
       </div>
     </div>
@@ -229,7 +246,7 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
         <div className="inv-reading">
           <span className="spinner" aria-hidden />
           {imp.progress?.total
-            ? `Suggesting recipes: ${imp.progress.done} of ${imp.progress.total} dishes…`
+            ? `Suggesting recipes: ${imp.progress.done} of ${imp.progress.total} dish${imp.progress.total === 1 ? "" : "es"}…`
             : "Reading the menu…"}
         </div>
       )}
@@ -263,6 +280,15 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
           </p>
           {imp.warnings.map((w, i) => <p key={i} className="small warn-text">⚠ {w}</p>)}
           {error && <p className="small error" role="alert">{error}</p>}
+          {empty.length > 0 && (
+            <div className="panel mi-empty">
+              <span><strong>{empty.length} dish{empty.length === 1 ? " has" : "es have"} no ingredients yet.</strong>{" "}
+                <span className="muted small">Ask again, or add them yourself.</span></span>
+              <button className="btn primary small" disabled={busy !== ""} onClick={() => void suggestAgain(empty.map((d) => d.key))}>
+                {busy === "suggest" ? "Asking…" : `✨ Suggest recipes for ${empty.length}`}
+              </button>
+            </div>
+          )}
           <div className="row" style={{ gap: 8 }}>
             <button className="linkish small" onClick={() => update(imp.dishes.map((d) => ({ ...d, include: true })))}>Tick all</button>
             <button className="linkish small" onClick={() => update(imp.dishes.map((d) => ({ ...d, include: false })))}>Untick all</button>
@@ -347,10 +373,14 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
                             </div>
                           );
                         })}
-                        <button className="btn small" style={{ alignSelf: "start" }}
-                          onClick={() => setDish(d.key, { include: true, lines: [...d.lines, { ingredient: "", item_id: null, qty: 0, unit: "g" }] })}>
-                          + Add ingredient
-                        </button>
+                        <div className="row" style={{ gap: 6 }}>
+                          <button className="btn small"
+                            onClick={() => setDish(d.key, { include: true, lines: [...d.lines, { ingredient: "", item_id: null, qty: 0, unit: "g" }] })}>
+                            + Add ingredient
+                          </button>
+                          <button className="btn small" disabled={busy !== ""} title="Replace this dish's ingredients with a new suggestion"
+                            onClick={() => void suggestAgain([d.key])}>✨ Suggest again</button>
+                        </div>
                       </div>
                     </div>
                   )}

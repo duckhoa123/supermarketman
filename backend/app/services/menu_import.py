@@ -32,7 +32,8 @@ SHEET_TYPES = {"text/csv", "application/vnd.ms-excel", "text/tab-separated-value
                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 MAX_MB = 15
 MAX_DISHES = 150
-BATCH = 12  # dishes per recipe request
+BATCH = 10  # dishes per recipe request
+RETRY_BATCH = 4  # dishes per request when asking again for ones that came back empty
 MAX_SHEET_CHARS = 60_000
 CATEGORIES = inventory.CATEGORIES
 PORTION_UNITS = ("g", "kg", "oz", "lb", "ml", "l", "floz", "tsp", "tbsp", "cup", "each")
@@ -84,7 +85,8 @@ use the same name every time it comes up.
 - For every ingredient that isn't in the restaurant's inventory, add it to new_ingredients once, with the unit \
 it's usually bought and counted in (kg, lb, l, each) and a category from: CATEGORIES.
 - A sauce or broth made in the kitchen can be one ingredient (e.g. "Pho broth", 450 ml): don't break it down.
-- Only the dishes asked for. Your suggestions will be checked and corrected by the chef."""
+- Every dish asked for, each with its number from the list (n) and its name exactly as given. Your \
+suggestions will be checked and corrected by the chef."""
 
 RECIPE_TOOL = {
     "name": "suggest_recipes",
@@ -93,12 +95,13 @@ RECIPE_TOOL = {
         "type": "object",
         "properties": {
             "recipes": {"type": "array", "items": {"type": "object", "properties": {
+                "n": {"type": "integer", "description": "the dish's number from the list"},
                 "dish": {"type": "string", "description": "the dish name exactly as given"},
                 "lines": {"type": "array", "items": {"type": "object", "properties": {
                     "ingredient": {"type": "string"}, "qty": {"type": "number"},
                     "unit": {"type": "string", "enum": list(PORTION_UNITS)},
                 }, "required": ["ingredient", "qty", "unit"]}},
-            }, "required": ["dish", "lines"]}},
+            }, "required": ["n", "dish", "lines"]}},
             "new_ingredients": {"type": "array", "items": {"type": "object", "properties": {
                 "name": {"type": "string"}, "unit": {"type": "string", "enum": ["kg", "lb", "g", "l", "ml", "each"]},
                 "category": {"type": "string", "enum": CATEGORIES},
@@ -220,14 +223,42 @@ def key_of(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip().lower())
 
 
+def find_dish(dishes: list[dict], r: dict) -> dict | None:
+    """The dish a suggestion is for: by its number in the list asked, else by name, forgiving the AI for writing
+    "Pork Spring Rolls – Cha Gio" for "Pork Spring Rolls - Cha Gio (2)"."""
+    n = r.get("n")
+    name = str(r.get("dish") or "")
+    if isinstance(n, int | float) and 1 <= int(n) <= len(dishes):
+        d = dishes[int(n) - 1]
+        if not name or im.normalize(name)[:6] == im.normalize(d["name"])[:6] or _close(name, d["name"]):
+            return d
+    exact = {im.normalize(d["name"]): d for d in dishes}
+    if im.normalize(name) in exact:
+        return exact[im.normalize(name)]
+    best = max(dishes, key=lambda d: _similar(name, d["name"]), default=None)
+    return best if best is not None and _close(name, best["name"]) else None
+
+
+def _similar(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+
+    a, b = im.normalize(a), im.normalize(b)
+    if a and b and (a in b or b in a):
+        return 0.95
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _close(a: str, b: str) -> bool:
+    return _similar(a, b) >= 0.75
+
+
 def apply_recipes(dishes: list[dict], raw: dict, stock: list[Item], ingredients: dict) -> None:
     """Put the AI's suggested lines on the dishes, matched to inventory items by name; collect new ingredients."""
     by_name = {key_of(i.name): i for i in stock}
     pairs = [(i.id, i.name) for i in stock]
     suggested = {key_of(str(n.get("name") or "")): n for n in raw.get("new_ingredients") or [] if n.get("name")}
-    wanted = {key_of(d["name"]): d for d in dishes}
     for r in raw.get("recipes") or []:
-        dish = wanted.get(key_of(str(r.get("dish") or "")))
+        dish = find_dish(dishes, r)
         if dish is None:
             continue
         lines = []
@@ -300,6 +331,45 @@ def _store(imp: MenuImport, dishes: list[dict], ingredients: dict) -> None:
     flag_modified(imp, "ingredients")
 
 
+async def suggest(session: AsyncSession, location: Location, imp: MenuImport, dishes: list[dict], todo: list[dict],
+                  ingredients: dict, llm, model: str) -> None:
+    """Suggest recipes for the dishes in todo, in batches, then once more in smaller batches for any that came back
+    empty (a long answer can be cut off, or a dish skipped). Progress is saved after each batch."""
+    from app.agent.runner import record_usage
+
+    stock = [i for i in await inventory.stock_items(session, location, active_only=True)]
+    names = "\n".join(f"- {i.name} ({i.unit or 'each'})" for i in stock) or "(none yet)"
+    system = [{"type": "text", "text": RECIPE_SYSTEM.replace("CATEGORIES", ", ".join(CATEGORIES))},
+              {"type": "text", "text": f"The restaurant: {location.name}, prices in {location.currency}.\n"
+                                       f"Its inventory items:\n{names}", "cache_control": {"type": "ephemeral"}}]
+    total, done = len(todo), 0
+    for size, part_of in ((BATCH, todo), (RETRY_BATCH, None)):
+        work = part_of if part_of is not None else [d for d in todo if not d["lines"]]
+        for start in range(0, len(work), size):
+            part = work[start:start + size]
+            ask = "\n".join(f"{n}. {d['name']}" + (f" ({d['category']})" if d.get("category") else "")
+                            + (f": {d['description']}" if d.get("description") else "") for n, d in enumerate(part, 1))
+            known = ", ".join(v["name"] for v in ingredients.values())
+            text = f"Suggest the recipe for each of these {len(part)} dishes:\n{ask}"
+            if known:
+                text += f"\n\nNew ingredients already named for other dishes (reuse these names): {known[:4000]}"
+            res = await llm.complete(model=model, system=system, messages=[{"role": "user", "content": text}],
+                                     tools=[RECIPE_TOOL], tool_choice={"type": "tool", "name": "suggest_recipes"},
+                                     max_tokens=12000)
+            await record_usage(session, imp.location_id, "menu_import", model, res.usage)
+            if res.stop_reason == "max_tokens":
+                log.warning("menu import %s: recipe answer cut off for %d dishes", imp.id, len(part))
+            try:
+                apply_recipes(part, _tool_input(res, "suggest_recipes"), stock, ingredients)
+            except MenuImportError:
+                log.warning("menu import %s: no usable recipe answer for %d dishes", imp.id, len(part))
+            if part_of is not None:
+                done = min(done + len(part), total)
+                imp.progress = {"done": done, "total": total}
+            _store(imp, dishes, ingredients)
+            await session.commit()
+
+
 # --- The job -------------------------------------------------------------------------------------------------------
 
 
@@ -321,7 +391,7 @@ async def read(session: AsyncSession, imp: MenuImport) -> MenuImport:
         model=model, system=[{"type": "text", "text": READ_SYSTEM}],
         messages=[{"role": "user", "content": [_content(imp, data),
                                                {"type": "text", "text": "List the menu's items with record_menu."}]}],
-        tools=[READ_TOOL], tool_choice={"type": "tool", "name": "record_menu"}, max_tokens=8000)
+        tools=[READ_TOOL], tool_choice={"type": "tool", "name": "record_menu"}, max_tokens=16000)
     await record_usage(session, imp.location_id, "menu_import", model, out.usage)
     dishes = clean_dishes(_tool_input(out, "record_menu"))
     if not dishes:
@@ -331,39 +401,67 @@ async def read(session: AsyncSession, imp: MenuImport) -> MenuImport:
     imp.progress = {"done": 0, "total": sum(not d["had_recipe"] for d in dishes)}
     await session.commit()
 
-    stock = [i for i in await inventory.stock_items(session, location, active_only=True)]
-    names = "\n".join(f"- {i.name} ({i.unit or 'each'})" for i in stock) or "(none yet)"
-    system = [{"type": "text", "text": RECIPE_SYSTEM.replace("CATEGORIES", ", ".join(CATEGORIES))},
-              {"type": "text", "text": f"The restaurant: {location.name}, prices in {location.currency}.\n"
-                                       f"Its inventory items:\n{names}", "cache_control": {"type": "ephemeral"}}]
-    ingredients: dict = {}
     todo = [d for d in dishes if not d["had_recipe"]]
-    for start in range(0, len(todo), BATCH):
-        part = todo[start:start + BATCH]
-        ask = "\n".join(f"- {d['name']}" + (f" ({d['category']})" if d.get("category") else "")
-                        + (f": {d['description']}" if d.get("description") else "") for d in part)
-        known = ", ".join(v["name"] for v in ingredients.values())
-        text = f"Suggest the recipe for each of these:\n{ask}"
-        if known:
-            text += f"\n\nNew ingredients already named for other dishes (reuse these names): {known}"
-        res = await llm.complete(model=model, system=system, messages=[{"role": "user", "content": text}],
-                                 tools=[RECIPE_TOOL], tool_choice={"type": "tool", "name": "suggest_recipes"},
-                                 max_tokens=8000)
-        await record_usage(session, imp.location_id, "menu_import", model, res.usage)
-        apply_recipes(part, _tool_input(res, "suggest_recipes"), stock, ingredients)
-        imp.progress = {"done": min(start + BATCH, len(todo)), "total": len(todo)}
-        _store(imp, dishes, ingredients)
-        await session.commit()
+    await suggest(session, location, imp, dishes, todo, {}, llm, model)
     warnings = []
     missing = [d["name"] for d in todo if not d["lines"]]
     if missing:
-        warnings.append(f"No recipe suggested for {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}: "
-                        "add the ingredients yourself.")
+        warnings.append(f"No recipe suggested for {len(missing)} dish{'es' if len(missing) > 1 else ''} "
+                        f"({', '.join(missing[:3])}{'…' if len(missing) > 3 else ''}). Suggest again, or add the "
+                        "ingredients yourself.")
     if any(d["had_recipe"] for d in dishes):
         warnings.append("Dishes that already have a recipe show it as it is, unticked: tick one to save your changes.")
     imp.warnings, imp.status, imp.error, imp.progress = warnings, "review", None, None
     await session.commit()
     return imp
+
+
+@handler("suggest_menu")
+async def handle_suggest_menu(session: AsyncSession, payload: dict) -> None:
+    """Suggest again for chosen dishes during the review, keeping everything else as edited."""
+    from app.agent.llm import get_llm
+
+    imp = await session.get(MenuImport, payload["import_id"])
+    if imp is None or imp.status != "processing":
+        return
+    location = await session.get(Location, imp.location_id)
+    dishes = copy.deepcopy(imp.dishes)
+    keys = set(payload.get("keys") or [])
+    todo = [d for d in dishes if d["key"] in keys]
+    for d in todo:
+        d["lines"] = []
+    try:
+        await suggest(session, location, imp, dishes, todo, copy.deepcopy(imp.ingredients or {}), get_llm(),
+                      get_settings().model_default)
+        missing = [d["name"] for d in todo if not d["lines"]]
+        imp.warnings = [f"Still no recipe for {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}: add the "
+                        "ingredients yourself."] if missing else []
+    except Exception:  # noqa: BLE001 - back to the review either way, with what was kept
+        log.exception("suggesting again for menu import %s failed", imp.id)
+        await session.rollback()
+        imp = await session.get(MenuImport, payload["import_id"])
+        imp.warnings = ["Couldn't suggest recipes just now. Try again in a minute."]
+    imp.status, imp.progress = "review", None
+    await session.commit()
+
+
+async def suggest_again(session: AsyncSession, imp: MenuImport, keys: list[str]) -> None:
+    from app.agent.llm import LLMNotConfigured, get_llm
+
+    if imp.status != "review":
+        raise MenuImportError(f"This menu import is {imp.status}")
+    try:
+        get_llm()
+    except LLMNotConfigured as exc:
+        raise MenuImportError("AI suggestions are off on this server (no ANTHROPIC_API_KEY)") from exc
+    known = {d["key"] for d in imp.dishes}
+    keys = [k for k in keys if k in known][:MAX_DISHES]
+    if not keys:
+        raise MenuImportError("Pick the dishes to suggest recipes for")
+    imp.status, imp.progress = "processing", {"done": 0, "total": len(keys)}
+    await enqueue(session, "suggest_menu", {"import_id": imp.id, "keys": keys}, dedupe_key=f"suggest_menu:{imp.id}",
+                  max_attempts=1)
+    await session.commit()
 
 
 @handler("read_menu")
@@ -446,9 +544,11 @@ async def confirm(session: AsyncSession, location: Location, imp: MenuImport, us
 
     if imp.status != "review":
         raise MenuImportError(f"This menu import is {imp.status}")
-    dishes = [d for d in imp.dishes if d.get("include")]
+    # Ticked dishes with ingredients: an empty one is skipped, never saved as an empty recipe over a real one.
+    dishes = [d for d in imp.dishes if d.get("include") and any(ln.get("item_id") or (ln.get("ingredient") or "").strip()
+                                                                for ln in d.get("lines") or [])]
     if not dishes:
-        raise MenuImportError("Tick at least one dish")
+        raise MenuImportError("Tick at least one dish with ingredients")
     existing = {i.id: i for i in await session.scalars(select(Item).where(Item.location_id == location.id))}
     units = {i.id: i.unit for i in existing.values()}
     issues = problems(dishes, imp.ingredients, units)

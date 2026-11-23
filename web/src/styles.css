@@ -1139,3 +1139,4 @@ th:has(> .th-edit) { white-space: nowrap; }
   .mi-new-grid { grid-template-columns: minmax(0, 1fr) 80px; }
   .mi-new-grid > :nth-child(3n) { display: none; }
 }
+.mi-empty { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-color: var(--oil); }
