@@ -9,16 +9,18 @@ import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthUser, current_user
 from app.db import get_session
-from app.models import (InventoryAudit, Item, ItemSalesDaily, Location, PlateCostHistory, RecipeLine, StockCount,
+from app.models import (InventoryAudit, Item, ItemSalesDaily, Location, MenuImport, PlateCostHistory, RecipeLine,
+                        StockCount,
                         StockMovement, StorageArea, Supplier, User, utcnow)
 from app.services import inventory as inv
+from app.services import menu_import
 from app.services import restock
 from app.tenancy import require_location, require_manager, user_role
 
@@ -908,3 +910,112 @@ async def cogs(start: date | None = None, end: date | None = None, location: Loc
         .order_by(StockCount.approved_at.desc()).limit(6)))
     out["counts"] = [c.isoformat() for c in counts]  # periods close at approved counts
     return out
+
+
+# --- Menu import: recipes suggested from an uploaded menu ------------------------------------------------------------
+
+
+async def _menu_import(session: AsyncSession, location: Location, import_id: str) -> MenuImport:
+    imp = await session.get(MenuImport, import_id)
+    if imp is None or imp.location_id != location.id:
+        raise HTTPException(404, "Menu import not found")
+    return imp
+
+
+@router.post("/menu-imports")
+async def upload_menu(file: UploadFile = File(...), location: Location = Depends(require_manager),
+                      user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """A photo, PDF, Excel or CSV of the menu. The dishes are read and recipes suggested in the background."""
+    data = await file.read(menu_import.MAX_MB * 1024 * 1024 + 1)
+    try:
+        imp = await menu_import.create(session, location, user.id, file.filename, file.content_type, data)
+    except menu_import.MenuImportError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return menu_import.out(imp)
+
+
+@router.get("/menu-imports")
+async def list_menu_imports(location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
+    """Imports still being read or reviewed, newest first, so a review can be picked up again later."""
+    rows = await session.scalars(select(MenuImport).where(MenuImport.location_id == location.id,
+                                                          MenuImport.status.in_(("processing", "review", "failed")))
+                                 .order_by(MenuImport.created_at.desc()).limit(5))
+    return [{k: v for k, v in menu_import.out(r).items() if k not in ("dishes", "ingredients")} | {
+        "dishes": len(r.dishes or [])} for r in rows]
+
+
+@router.get("/menu-imports/{import_id}")
+async def get_menu_import(import_id: str, location: Location = Depends(require_manager),
+                          session: AsyncSession = Depends(get_session)):
+    return menu_import.out(await _menu_import(session, location, import_id))
+
+
+class MenuLineIn(BaseModel):
+    ingredient: str = Field(default="", max_length=300)
+    item_id: str | None = None
+    match: str | None = Field(default=None, max_length=40)
+    qty: float = Field(default=0, ge=0, le=1_000_000)
+    unit: str | None = Field(default=None, max_length=32)
+
+
+class MenuDishIn(BaseModel):
+    key: str = Field(max_length=40)
+    name: str = Field(min_length=1, max_length=300)
+    category: str | None = Field(default=None, max_length=200)
+    price_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    description: str | None = Field(default=None, max_length=500)
+    include: bool = True
+    menu_item_id: str | None = None
+    menu_match: str | None = Field(default=None, max_length=40)
+    menu_name: str | None = Field(default=None, max_length=300)
+    had_recipe: bool = False
+    lines: list[MenuLineIn] = Field(default_factory=list, max_length=60)
+
+
+class MenuIngredientIn(BaseModel):
+    name: str = Field(min_length=1, max_length=300)
+    unit: str | None = Field(default=None, max_length=32)
+    category: str | None = Field(default=None, max_length=200)
+
+
+class MenuImportIn(BaseModel):
+    dishes: list[MenuDishIn] = Field(max_length=menu_import.MAX_DISHES)
+    ingredients: dict[str, MenuIngredientIn] = Field(default_factory=dict)
+
+
+@router.put("/menu-imports/{import_id}")
+async def save_menu_import(import_id: str, body: MenuImportIn, location: Location = Depends(require_manager),
+                           session: AsyncSession = Depends(get_session)):
+    """Save the review so far (it can be finished later)."""
+    imp = await _menu_import(session, location, import_id)
+    try:
+        imp = await menu_import.save(session, location, imp, [d.model_dump() for d in body.dishes],
+                                     {k: v.model_dump() for k, v in body.ingredients.items()})
+    except menu_import.MenuImportError as exc:
+        raise HTTPException(409 if "is " in str(exc)[:30] else 422, str(exc)) from exc
+    return menu_import.out(imp)
+
+
+@router.post("/menu-imports/{import_id}/confirm")
+async def confirm_menu_import(import_id: str, location: Location = Depends(require_manager),
+                              user: AuthUser = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Create the missing menu items and inventory items, and save the recipes of the ticked dishes."""
+    imp = await _menu_import(session, location, import_id)
+    try:
+        return await menu_import.confirm(session, location, imp, user.id)
+    except menu_import.MenuImportError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/menu-imports/{import_id}/{action}")
+async def menu_import_action(import_id: str, action: str, location: Location = Depends(require_manager),
+                             session: AsyncSession = Depends(get_session)):
+    imp = await _menu_import(session, location, import_id)
+    if action == "discard" and imp.status in ("processing", "review", "failed"):
+        imp.status = "discarded"
+        await session.commit()
+    elif action == "retry" and imp.status == "failed":
+        await menu_import.retry(session, imp)
+    else:
+        raise HTTPException(409, f"Can't {action} an import that is {imp.status}")
+    return menu_import.out(imp)

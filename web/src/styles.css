@@ -1108,3 +1108,34 @@ th:has(> .th-edit) { white-space: nowrap; }
 /* Supplier delivery schedule */
 .sup-schedule { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
 .sup-days { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Menu import: recipes suggested from an uploaded menu */
+.mi-hint { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; }
+.mi-drop { border: 2px dashed var(--line); border-radius: var(--radius-m); padding: 28px 16px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
+.mi-dishes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mi-dish { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 10px 12px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.mi-dish.is-off { background: var(--page); }
+.mi-dish.is-off .mi-dish-name strong { color: var(--muted); }
+.mi-dish.is-bad { border-color: var(--tomato); box-shadow: inset 3px 0 0 var(--tomato); }
+.mi-dish-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mi-dish-name { flex: 1; min-width: 160px; text-align: left; background: none; border: 0; padding: 4px 0; cursor: pointer; color: var(--ink); font: inherit; }
+.mi-summary { margin: 0 0 0 26px; overflow-wrap: anywhere; }
+.mi-edit { padding-left: 26px; gap: 10px; }
+.mi-dish-fields { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 8px; }
+.mi-dish-fields label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mi-lines { display: flex; flex-direction: column; gap: 6px; }
+.mi-line { display: grid; grid-template-columns: minmax(0, 1fr) 90px 100px 28px; gap: 6px; align-items: center; }
+.mi-line-head { padding: 0 2px; }
+.mi-ing { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mi-ing .picker { flex: 1; min-width: 0; }
+.select.is-invalid { border-color: var(--tomato); color: var(--tomato); }
+.mi-new { border-top: 1px solid var(--line); padding-top: 12px; }
+.mi-new-grid { display: grid; grid-template-columns: minmax(0, 2fr) 120px minmax(0, 1fr); gap: 6px; align-items: center; }
+@media (max-width: 640px) {
+  .mi-dish-fields { grid-template-columns: 1fr 1fr; }
+  .mi-dish-fields label:first-child { grid-column: 1 / -1; }
+  .mi-edit, .mi-summary { padding-left: 0; margin-left: 0; }
+  .mi-line { grid-template-columns: minmax(0, 1fr) 70px 80px 24px; }
+  .mi-new-grid { grid-template-columns: minmax(0, 1fr) 80px; }
+  .mi-new-grid > :nth-child(3n) { display: none; }
+}

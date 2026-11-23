@@ -162,6 +162,12 @@ async def plans(session: AsyncSession, location: Location, items: list[Item] | N
     items = items if items is not None else await stock_items(session, location, active_only=True)
     items = [i for i in items if i.stock_qty is not None and i.active]
     rates = await usage_rates(session, location, [i.id for i in items])
+    # Only items whose stock was ever actually set (counted, delivered, synced, or opened with an amount): a new
+    # ingredient sitting at 0 until its first count would otherwise "run out" every day.
+    known = set(await session.scalars(select(StockMovement.item_id).where(
+        StockMovement.location_id == location.id, StockMovement.item_id.in_([i.id for i in items] or [""]),
+        (StockMovement.kind.in_(("count", "receive", "import", "pos", "adjust")))
+        | ((StockMovement.kind == "opening") & (StockMovement.qty_delta > 0))).distinct()))
     suppliers = {s.id: s for s in await session.scalars(select(Supplier).where(Supplier.location_id == location.id))}
     now = local_now(location)
     from app.models import ReceivedLine
@@ -171,7 +177,7 @@ async def plans(session: AsyncSession, location: Location, items: list[Item] | N
     out = {}
     for item in items:
         usage = rates.get(item.id)
-        if not usage or usage <= 0:
+        if not usage or usage <= 0 or item.id not in known:
             continue
         sup = suppliers.get(item.supplier_id or "")
         nxt = deliveries(now, sup.delivery_days, sup.order_cutoff, sup.order_lead_days or 0) if sup else []

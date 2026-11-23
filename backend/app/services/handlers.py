@@ -10,7 +10,8 @@ from app.crypto import KeyMissing, TokenUnreadable
 from app.integrations.pos.base import POSAuthError
 from app.integrations.pos.registry import POS_PROVIDERS
 from app.models import Integration, Location, Review, WebhookEvent, utcnow
-from app.services import alerts, fleet, notify, purchasing, receiving, reports, reviews, sync, weather  # noqa: F401
+from app.services import (alerts, fleet, menu_import, notify, purchasing, receiving, reports, reviews,  # noqa: F401
+                          sync, weather)
 from app.services.jobs import enqueue, handler
 
 

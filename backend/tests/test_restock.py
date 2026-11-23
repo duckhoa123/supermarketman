@@ -77,7 +77,7 @@ async def test_alerts_from_sales_pace(client, session, demo_location_id):
     # Four weeks of sales at 17 lb a day.
     start = utcnow() - timedelta(days=28)
     session.add(StockMovement(location_id=demo_location_id, item_id=salmon.id, item_name="Salmon", kind="opening",
-                              qty_delta=0, qty_after=0, created_at=start))
+                              qty_delta=476, qty_after=476, created_at=start))
     for d in range(28):
         session.add(StockMovement(location_id=demo_location_id, item_id=salmon.id, item_name="Salmon", kind="sale",
                                   qty_delta=-17,

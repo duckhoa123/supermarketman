@@ -679,6 +679,34 @@ class Delivery(TimestampMixin, Base):
 # --- Receiving: scanned supplier invoices, the receiving log and price history --------------------
 
 
+class MenuImport(TimestampMixin, Base):
+    """A menu uploaded to set up recipes: a photo, PDF, Excel or CSV.
+
+    processing -> review (the AI read the dishes and suggested recipes; a person edits them) -> confirmed (menu
+    items, inventory items and recipes created) | failed | discarded.
+    """
+
+    __tablename__ = "menu_imports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    uploaded_by: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="processing")
+    file_name: Mapped[str | None] = mapped_column(String(300))
+    content_type: Mapped[str | None] = mapped_column(String(100))
+    file_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    # [{"key","name","category","price_cents","description","include","menu_item_id","menu_match","had_recipe",
+    #   "lines": [{"ingredient","item_id","match","qty","unit"}]}]
+    dishes: Mapped[list] = mapped_column(JSON, default=list)
+    # New ingredients by lower-case name: {"name","unit","category"}
+    ingredients: Mapped[dict] = mapped_column(JSON, default=dict)
+    progress: Mapped[dict | None] = mapped_column(JSON)  # {"done": 12, "total": 40} while suggesting recipes
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    confirmed_by: Mapped[str | None] = mapped_column(String(64))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 class InvoiceScan(TimestampMixin, Base):
     """A supplier invoice photographed or uploaded when a delivery arrives.
 

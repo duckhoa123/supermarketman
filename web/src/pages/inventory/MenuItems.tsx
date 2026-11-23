@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ItemDialog, Dialog } from "../../components/PosDialogs";
 import { pctClass, RecipeEditor } from "../../components/RecipeEditor";
 import { useApp } from "../../context";
+import MenuImport from "../../components/MenuImport";
 import { useApi } from "../../hooks";
 import { api, type InventoryItem } from "../../lib/api";
 import { money, qty, type MenuCost, type OnHand, type RecipeReport } from "../../lib/inventory";
@@ -24,6 +25,7 @@ export default function MenuItems() {
   const [editing, setEditing] = useState<InventoryItem | "new" | null>(null);
   const [recipeFor, setRecipeFor] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -93,6 +95,17 @@ export default function MenuItems() {
           <div className="small muted">dishes above their target %</div></div>
       </div>
       {notice && <p className="notice small">{notice}</p>}
+      {d.menu.length > 0 && d.with_recipe === 0 && (
+        <div className="panel mi-hint">
+          <div><strong>No recipes yet.</strong> <span className="muted">Upload your menu and Pass suggests what goes into
+            every dish, for you to check.</span></div>
+          <button className="btn primary" onClick={() => setImporting(true)}>📄 Import menu</button>
+        </div>
+      )}
+      {importing && (
+        <MenuImport base={base} stock={onHand.data?.items ?? []} menu={d.menu} onClose={() => { setImporting(false); void reload(); }}
+          onDone={(message) => { setImporting(false); setNotice(message); void reload(); }} />
+      )}
 
       <div className="spread inv-toolbar">
         <div className="chips" role="group" aria-label="Show">
@@ -109,6 +122,7 @@ export default function MenuItems() {
             </button>
           )}
           <button className="btn" onClick={() => setSettings(true)} title="Food cost targets and how ingredients are costed">⚙ Cost settings</button>
+          <button className="btn" onClick={() => setImporting(true)} title="Upload your menu and get suggested recipes for every dish">📄 Import menu</button>
           <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>
         </div>
       </div>
