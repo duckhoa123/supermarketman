@@ -37,13 +37,15 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
 }) {
   const [imp, setImp] = useState<Import | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
-  const [step, setStep] = useState<"dishes" | "items">("dishes");
+  const [sections, setSections] = useState<{ items: boolean; missing: boolean }>({ items: false, missing: false });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const file = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLElement>(null);
+  const itemsRef = useRef<HTMLElement>(null);
   const missingRef = useRef<HTMLElement>(null);
   const byId = useMemo(() => Object.fromEntries(stock.map((i) => [i.id, i])), [stock]);
 
@@ -107,6 +109,7 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
       menu_item_id: null, suggested: false, lines: [{ ingredient: "", item_id: null, qty: 0, unit: null }] };
     update([...imp!.dishes, d]);
     setOpen((s) => new Set(s).add(d.key));
+    setSections((s) => ({ ...s, missing: true }));
     window.setTimeout(() => missingRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 50);
   }
 
@@ -198,9 +201,11 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
     real.some((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)));
   const broken = real.filter((d) => d.lines.some((l) => named(l) && !fits(l))).length;
   const unnamed = dishes.filter((d) => !d.name.trim() && d.lines.some(named)).length;
-  const goMissing = () => {
-    setStep("dishes");
-    window.setTimeout(() => missingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
+  /** From the board: open the section and scroll to it. */
+  const go = (to: "menu" | "items" | "missing") => {
+    if (to !== "menu") setSections((s) => ({ ...s, [to]: true }));
+    const ref = { menu: menuRef, items: itemsRef, missing: missingRef }[to];
+    window.setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
   };
 
   const footer = imp?.status === "review" ? (
@@ -213,19 +218,9 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
       <div className="row">
         <button className="btn" disabled={busy !== ""} onClick={() => void action("discard")}>Discard</button>
         {dirty && <button className="btn" disabled={busy !== ""} onClick={() => void save()}>Save for later</button>}
-        {step === "dishes" ? (
-          <button className="btn primary" disabled={busy !== "" || !ready || broken > 0 || unnamed > 0}
-            onClick={() => { void (dirty ? save() : Promise.resolve(true)).then((ok) => ok && setStep("items")); }}>
-            Next: {newItems.length ? `review ${newItems.length} new inventory item${newItems.length === 1 ? "" : "s"}` : "review and create"} →
-          </button>
-        ) : (
-          <>
-            <button className="btn" disabled={busy !== ""} onClick={() => setStep("dishes")}>← Back</button>
-            <button className="btn primary" disabled={busy !== "" || !ready} onClick={() => void confirm()}>
-              {busy === "confirm" ? "Creating…" : `Create ${ready} menu item${ready === 1 ? "" : "s"}${newItems.length ? ` and ${newItems.length} inventory item${newItems.length === 1 ? "" : "s"}` : ""}`}
-            </button>
-          </>
-        )}
+        <button className="btn primary" disabled={busy !== "" || !ready || broken > 0 || unnamed > 0} onClick={() => void confirm()}>
+          {busy === "confirm" ? "Creating…" : `Create ${ready} menu item${ready === 1 ? "" : "s"}${newItems.length ? ` and ${newItems.length} inventory item${newItems.length === 1 ? "" : "s"}` : ""}`}
+        </button>
       </div>
     </div>
   ) : imp?.status === "confirmed" ? (
@@ -376,54 +371,71 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
       {imp?.status === "review" && (
         <>
           <div className="mi-board" role="group" aria-label="Overview">
-            <div className="mi-stat"><span className="mi-num">{real.length}</span><span>New menu items</span></div>
-            <button className={`mi-stat ${empty.length ? "is-warn" : ""}`} onClick={goMissing}
-              title="Go to the menu items to add ingredients to by hand">
-              <span className="mi-num">{empty.length}</span><span>No recipe suggested ↓</span>
+            <button className="mi-stat" onClick={() => go("menu")} title="Go to the new menu items">
+              <span className="mi-num">{real.length}</span><span>New menu items</span>
             </button>
-            <div className="mi-stat"><span className="mi-num">{newItems.length}</span><span>New inventory items</span></div>
+            <button className="mi-stat" onClick={() => go("items")} title="Go to the inventory items these recipes add">
+              <span className="mi-num">{newItems.length}</span><span>New inventory items</span>
+            </button>
+            <button className={`mi-stat ${empty.length ? "is-warn" : ""}`} onClick={() => go("missing")}
+              title="Go to the menu items to add ingredients to by hand">
+              <span className="mi-num">{byHand.length}</span><span>Unable to suggest recipe</span>
+            </button>
           </div>
           {error && <p className="small error" role="alert">{error}</p>}
-          {step === "dishes" ? (
-            <div className="stack mi-review">
-              {imp.warnings.map((w, i) => <p key={i} className="small muted" style={{ margin: 0 }}>ℹ {w}</p>)}
-              {suggested.length > 0 && (
-                <section className="stack">
-                  <h3 className="mi-h">Suggested recipes <span className="small muted">({suggested.length})</span></h3>
+          <div className="stack mi-review">
+            {imp.warnings.map((w, i) => <p key={i} className="small muted" style={{ margin: 0 }}>ℹ {w}</p>)}
+            <section ref={menuRef} className="stack mi-section">
+              <h3 className="mi-h">New menu items <span className="small muted">({suggested.length})</span></h3>
+              {suggested.length > 0 ? (
+                <>
                   <p className="small muted" style={{ margin: 0 }}>Check the ingredients of each menu item: swap, add or remove
                     them. Portions are optional for now.</p>
                   <ol className="mi-dishes">{suggested.map((d) => dishCard(d))}</ol>
-                </section>
-              )}
-              <section ref={missingRef} className="stack mi-missing">
-                <h3 className="mi-h">No recipe suggested <span className="small muted">({byHand.length})</span></h3>
-                <p className="small muted" style={{ margin: 0 }}>
-                  {byHand.length ? "Add their ingredients by hand. Menu items left without ingredients aren't added."
-                    : "Add a menu item here if one is missing."}
-                </p>
-                {byHand.length > 0 && <ol className="mi-dishes">{byHand.map((d) => dishCard(d))}</ol>}
-                <button className="btn" style={{ alignSelf: "start" }} onClick={addDish}>+ Add a menu item</button>
-              </section>
-            </div>
-          ) : (
-            <section className="stack mi-review">
-              <h3 className="mi-h">New inventory items <span className="small muted">({newItems.length})</span></h3>
-              <p className="small muted" style={{ margin: 0 }}>These are added to your inventory with no stock and no cost yet:
-                costs come from your invoices, quantities from your first count. Check the names and what each is counted in.</p>
-              {newItems.length === 0 ? <p className="muted">None: these recipes only use items you already have.</p> : (
-                <div className="mi-new-grid">
-                  <span className="small muted">Name</span><span className="small muted">Counted in</span>
-                  <span className="small muted">Category</span><span className="small muted">Used in</span>
-                  {newItems.map(([k, ing]) => (
-                    <NewIngredient key={k} ing={ing}
-                      usedIn={real.filter((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)).map((d) => d.name)}
-                      onRename={(name) => renameIngredient(k, name)}
-                      onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
-                  ))}
-                </div>
+                </>
+              ) : <p className="small muted" style={{ margin: 0 }}>No new menu items with a suggested recipe.</p>}
+            </section>
+
+            <section ref={itemsRef} className="stack mi-section">
+              <button className="mi-toggle" aria-expanded={sections.items} onClick={() => setSections((s) => ({ ...s, items: !s.items }))}>
+                <span aria-hidden>{sections.items ? "▾" : "▸"}</span> New inventory items <span className="small muted">({newItems.length})</span>
+              </button>
+              {sections.items && (
+                <>
+                  <p className="small muted" style={{ margin: 0 }}>Added to your inventory with no stock and no cost yet: costs come
+                    from your invoices, quantities from your first count. Check the names and what each is counted in.</p>
+                  {newItems.length === 0 ? <p className="muted small">None: these recipes only use items you already have.</p> : (
+                    <div className="mi-new-grid">
+                      <span className="small muted">Name</span><span className="small muted">Counted in</span>
+                      <span className="small muted">Category</span><span className="small muted">Used in</span>
+                      {newItems.map(([k, ing]) => (
+                        <NewIngredient key={k} ing={ing}
+                          usedIn={real.filter((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)).map((d) => d.name)}
+                          onRename={(name) => renameIngredient(k, name)}
+                          onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </section>
-          )}
+
+            <section ref={missingRef} className="stack mi-section">
+              <button className="mi-toggle" aria-expanded={sections.missing} onClick={() => setSections((s) => ({ ...s, missing: !s.missing }))}>
+                <span aria-hidden>{sections.missing ? "▾" : "▸"}</span> Unable to suggest recipe <span className="small muted">({byHand.length})</span>
+              </button>
+              {sections.missing && (
+                <>
+                  <p className="small muted" style={{ margin: 0 }}>
+                    {byHand.length ? "Add their ingredients by hand. Menu items left without ingredients aren't added."
+                      : "Add a menu item here if one is missing."}
+                  </p>
+                  {byHand.length > 0 && <ol className="mi-dishes">{byHand.map((d) => dishCard(d))}</ol>}
+                  <button className="btn" style={{ alignSelf: "start" }} onClick={addDish}>+ Add a menu item</button>
+                </>
+              )}
+            </section>
+          </div>
         </>
       )}
     </Dialog>

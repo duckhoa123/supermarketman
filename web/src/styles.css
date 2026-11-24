@@ -1140,7 +1140,9 @@ button.mi-stat:hover { border-color: var(--basil); }
 .mi-num { font-size: 1.6rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
 .mi-stat.is-warn .mi-num { color: var(--oil); }
 .mi-h { margin: 0; font-size: 1rem; }
-.mi-missing { border-top: 1px solid var(--line); padding-top: 14px; scroll-margin-top: 110px; }
+.mi-section { border-top: 1px solid var(--line); padding-top: 14px; scroll-margin-top: 110px; }
+.mi-section:first-of-type { border-top: 0; padding-top: 0; }
+.mi-toggle { display: flex; align-items: center; gap: 8px; background: none; border: 0; padding: 4px 0; font: inherit; font-weight: 700; font-size: 1rem; color: var(--ink); cursor: pointer; text-align: left; }
 @media (max-width: 640px) {
   .mi-dish-fields { grid-template-columns: 1fr 1fr; }
   .mi-dish-fields label:first-child { grid-column: 1 / -1; }
