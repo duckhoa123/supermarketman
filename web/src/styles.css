@@ -1130,7 +1130,7 @@ th:has(> .th-edit) { white-space: nowrap; }
 .mi-ing .picker { flex: 1; min-width: 0; }
 .select.is-invalid { border-color: var(--tomato); color: var(--tomato); }
 .mi-new { border-top: 1px solid var(--line); padding-top: 12px; }
-.mi-new-grid { display: grid; grid-template-columns: minmax(0, 2fr) 120px minmax(0, 1fr); gap: 6px 8px; align-items: center; }
+.mi-new-grid { display: grid; grid-template-columns: minmax(0, 2fr) 120px minmax(0, 1fr) 28px; gap: 6px 8px; align-items: center; }
 .mi-clash { grid-column: 1 / -1; margin: -2px 0 4px; }
 .input.is-warn { border-color: var(--oil); }
 .mi-board { position: sticky; top: -16px; z-index: 5; margin: -16px -18px 0; padding: 12px 18px; background: var(--surface); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -1149,7 +1149,7 @@ button.mi-stat:hover { border-color: var(--basil); }
   .mi-dish-fields label:first-child { grid-column: 1 / -1; }
   .mi-edit, .mi-summary { padding-left: 0; margin-left: 0; }
   .mi-line { grid-template-columns: minmax(0, 1fr) 70px 80px 24px; }
-  .mi-new-grid { grid-template-columns: minmax(0, 1fr) 80px minmax(0, 1fr); }
+  .mi-new-grid { grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr) 24px; }
   .mi-board { gap: 6px; padding: 10px 12px; margin: -16px -18px 0; }
   .mi-stat { padding: 8px; font-size: 0.75rem; }
   .mi-num { font-size: 1.3rem; }

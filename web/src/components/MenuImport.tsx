@@ -427,10 +427,11 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
                   {newItems.length === 0 ? <p className="muted small">None: these recipes only use items you already have.</p> : (
                     <div className="mi-new-grid">
                       <span className="small muted">Name</span><span className="small muted">Counted in</span>
-                      <span className="small muted">Category</span>
+                      <span className="small muted">Category</span><span />
                       {newItems.map(([k, ing]) => (
                         <NewIngredient key={k} ing={ing}
                           onRename={(name) => renameIngredient(k, name)} clash={(name) => clash(k, name)}
+                          onRemove={() => update(imp.dishes.map((d) => ({ ...d, lines: d.lines.filter((l) => l.item_id || keyOf(l.ingredient) !== k) })))}
                           onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
                       ))}
                     </div>
@@ -461,8 +462,8 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
   );
 }
 
-function NewIngredient({ ing, onRename, onChange, clash }: {
-  ing: Ingredient; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
+function NewIngredient({ ing, onRename, onChange, clash, onRemove }: {
+  ing: Ingredient; onRemove: () => void; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
   clash: (name: string) => string | null;
 }) {
   const [name, setName] = useState(ing.name);
@@ -481,6 +482,8 @@ function NewIngredient({ ing, onRename, onChange, clash }: {
         <option value="">Ingredients</option>
         {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
       </select>
+      <button className="sb-icon" aria-label={`Remove ${ing.name}`} title="Remove: it's also taken out of the menu items that use it"
+        onClick={onRemove}>✕</button>
       {warning && <p id={`warn-${ing.name}`} className="small warn-text mi-clash" role="status">⚠ {warning}</p>}
     </>
   );
