@@ -58,7 +58,7 @@ async def test_menu_to_recipes(client, session, demo_location_id, fake_llm):
 
     # Only new dishes: Burrata & Tomato is already on the menu.
     dishes = {d["name"]: d for d in imp["dishes"]}
-    assert list(dishes) == ["Pho Tai", "Bun Bo Hue"] and "Already on your menu" in imp["warnings"][0]
+    assert list(dishes) == ["Pho Tai", "Bun Bo Hue"]  # left out quietly
     assert dishes["Pho Tai"]["price_cents"] == 1650 and dishes["Pho Tai"]["suggested"] is True
     # Ingredients only, no portions; known ones are linked to inventory.
     verm = dishes["Bun Bo Hue"]["lines"][0]

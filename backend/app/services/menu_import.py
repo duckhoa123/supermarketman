@@ -395,9 +395,6 @@ async def read(session: AsyncSession, imp: MenuImport) -> MenuImport:
 
     await suggest(session, location, imp, dishes, list(dishes), {}, llm, model)
     warnings = []
-    if skipped:
-        warnings.append(f"Already on your menu, so left out: {len(skipped)} "
-                        f"({', '.join(skipped[:4])}{'…' if len(skipped) > 4 else ''}).")
     if not dishes:
         warnings.append("Everything on this menu is already in Pass. Add a menu item by hand if one is missing.")
     imp.warnings, imp.status, imp.error, imp.progress = warnings, "review", None, None
