@@ -404,7 +404,7 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
           </div>
           {error && <p className="small error" role="alert">{error}</p>}
           <div className="stack mi-review">
-            {imp.warnings.map((w, i) => <p key={i} className="small muted" style={{ margin: 0 }}>ℹ {w}</p>)}
+            {imp.warnings.filter((w) => !w.startsWith("Already on your menu")).map((w, i) => <p key={i} className="small muted" style={{ margin: 0 }}>ℹ {w}</p>)}
             <section ref={menuRef} className="stack mi-section">
               <h3 className="mi-h">New menu items <span className="small muted">({suggested.length})</span></h3>
               {suggested.length > 0 ? (
@@ -427,10 +427,9 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
                   {newItems.length === 0 ? <p className="muted small">None: these recipes only use items you already have.</p> : (
                     <div className="mi-new-grid">
                       <span className="small muted">Name</span><span className="small muted">Counted in</span>
-                      <span className="small muted">Category</span><span className="small muted">Used in</span>
+                      <span className="small muted">Category</span>
                       {newItems.map(([k, ing]) => (
                         <NewIngredient key={k} ing={ing}
-                          usedIn={real.filter((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)).map((d) => d.name)}
                           onRename={(name) => renameIngredient(k, name)} clash={(name) => clash(k, name)}
                           onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
                       ))}
@@ -462,8 +461,8 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
   );
 }
 
-function NewIngredient({ ing, usedIn, onRename, onChange, clash }: {
-  ing: Ingredient; usedIn: string[]; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
+function NewIngredient({ ing, onRename, onChange, clash }: {
+  ing: Ingredient; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
   clash: (name: string) => string | null;
 }) {
   const [name, setName] = useState(ing.name);
@@ -482,7 +481,6 @@ function NewIngredient({ ing, usedIn, onRename, onChange, clash }: {
         <option value="">Ingredients</option>
         {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
       </select>
-      <span className="small muted mi-used" title={usedIn.join(", ")}>{usedIn.slice(0, 3).join(", ")}{usedIn.length > 3 ? ` +${usedIn.length - 3}` : ""}</span>
       {warning && <p id={`warn-${ing.name}`} className="small warn-text mi-clash" role="status">⚠ {warning}</p>}
     </>
   );
