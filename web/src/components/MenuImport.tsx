@@ -135,9 +135,28 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
     if (!l.item_id && ing && convert(1, unit, ing.unit) == null) update(dishes, { ...imp!.ingredients, [k]: { ...ing, unit: unitFor(unit) } });
     else update(dishes);
   }
+  /** Another item with this name, if any: one already in inventory, or another new one. */
+  function clash(oldKey: string, name: string): string | null {
+    const k = keyOf(name);
+    if (!k || k === oldKey) return null;
+    const existing = stock.find((i) => keyOf(i.name) === k);
+    if (existing) return `“${existing.name}” is already in your inventory. Keep this name and these menu items use that item instead of a new one.`;
+    if (imp!.ingredients[k]) return `Another new item is called “${imp!.ingredients[k].name}”. Keep this name and they become one item.`;
+    return null;
+  }
+
+  /** Rename a new item everywhere it's used in the menu items above; a name already in inventory uses that item. */
   function renameIngredient(oldKey: string, name: string) {
     const k = keyOf(name);
     if (!k) return;
+    const existing = stock.find((i) => keyOf(i.name) === k);
+    if (existing) {
+      const units = unitsFor(existing.unit, existing.conversions ?? []);
+      update(imp!.dishes.map((d) => ({ ...d, lines: d.lines.map((l) => (!l.item_id && keyOf(l.ingredient) === oldKey
+        ? { ...l, item_id: existing.id, ingredient: existing.name, match: "chosen", unit: l.qty && units.includes(normUnit(l.unit)) ? l.unit : null }
+        : l)) })));
+      return;
+    }
     const ingredients = { ...imp!.ingredients };
     const info = ingredients[oldKey];
     delete ingredients[oldKey];
@@ -218,8 +237,9 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
       <div className="row">
         <button className="btn" disabled={busy !== ""} onClick={() => void action("discard")}>Discard</button>
         {dirty && <button className="btn" disabled={busy !== ""} onClick={() => void save()}>Save for later</button>}
-        <button className="btn primary" disabled={busy !== "" || !ready || broken > 0 || unnamed > 0} onClick={() => void confirm()}>
-          {busy === "confirm" ? "Creating…" : `Create ${ready} menu item${ready === 1 ? "" : "s"}${newItems.length ? ` and ${newItems.length} inventory item${newItems.length === 1 ? "" : "s"}` : ""}`}
+        <button className="btn primary" disabled={busy !== "" || !ready || broken > 0 || unnamed > 0} onClick={() => void confirm()}
+          title={`Adds ${ready} menu item${ready === 1 ? "" : "s"} with their recipes${newItems.length ? ` and ${newItems.length} inventory item${newItems.length === 1 ? "" : "s"}` : ""}`}>
+          {busy === "confirm" ? "Importing…" : "Import"}
         </button>
       </div>
     </div>
@@ -411,7 +431,7 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
                       {newItems.map(([k, ing]) => (
                         <NewIngredient key={k} ing={ing}
                           usedIn={real.filter((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)).map((d) => d.name)}
-                          onRename={(name) => renameIngredient(k, name)}
+                          onRename={(name) => renameIngredient(k, name)} clash={(name) => clash(k, name)}
                           onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
                       ))}
                     </div>
@@ -442,14 +462,19 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
   );
 }
 
-function NewIngredient({ ing, usedIn, onRename, onChange }: {
+function NewIngredient({ ing, usedIn, onRename, onChange, clash }: {
   ing: Ingredient; usedIn: string[]; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
+  clash: (name: string) => string | null;
 }) {
   const [name, setName] = useState(ing.name);
+  const warning = name.trim() !== ing.name ? clash(name) : null;
+  const commit = () => { if (name.trim() && name.trim() !== ing.name) onRename(name.trim()); else setName(ing.name); };
   return (
     <>
-      <input className="input" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)}
-        onBlur={() => { if (name.trim() && name.trim() !== ing.name) onRename(name.trim()); else setName(ing.name); }} />
+      <input className={`input ${warning ? "is-warn" : ""}`} aria-label="Name" value={name} onChange={(e) => setName(e.target.value)}
+        aria-describedby={warning ? `warn-${ing.name}` : undefined}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") setName(ing.name); }}
+        onBlur={commit} />
       <select className="select" aria-label="Counted in" value={normUnit(ing.unit)} onChange={(e) => onChange({ unit: e.target.value })}>
         {STOCK_UNITS.map((u) => <option key={u} value={u}>{show(u)}</option>)}
       </select>
@@ -458,6 +483,7 @@ function NewIngredient({ ing, usedIn, onRename, onChange }: {
         {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
       </select>
       <span className="small muted mi-used" title={usedIn.join(", ")}>{usedIn.slice(0, 3).join(", ")}{usedIn.length > 3 ? ` +${usedIn.length - 3}` : ""}</span>
+      {warning && <p id={`warn-${ing.name}`} className="small warn-text mi-clash" role="status">⚠ {warning}</p>}
     </>
   );
 }
