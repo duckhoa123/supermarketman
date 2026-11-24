@@ -1130,13 +1130,25 @@ th:has(> .th-edit) { white-space: nowrap; }
 .mi-ing .picker { flex: 1; min-width: 0; }
 .select.is-invalid { border-color: var(--tomato); color: var(--tomato); }
 .mi-new { border-top: 1px solid var(--line); padding-top: 12px; }
-.mi-new-grid { display: grid; grid-template-columns: minmax(0, 2fr) 120px minmax(0, 1fr); gap: 6px; align-items: center; }
+.mi-new-grid { display: grid; grid-template-columns: minmax(0, 2fr) 110px minmax(0, 1fr) minmax(0, 1.4fr); gap: 6px 8px; align-items: center; }
+.mi-used { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mi-board { position: sticky; top: -16px; z-index: 5; margin: -16px -18px 0; padding: 12px 18px; background: var(--surface); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.mi-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--page); font: inherit; color: var(--muted); font-size: 0.85rem; text-align: left; }
+button.mi-stat { cursor: pointer; }
+button.mi-stat:hover { border-color: var(--basil); }
+.mi-stat.is-warn { border-color: var(--oil); background: var(--oil-tint); color: var(--oil); }
+.mi-num { font-size: 1.6rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
+.mi-stat.is-warn .mi-num { color: var(--oil); }
+.mi-h { margin: 0; font-size: 1rem; }
+.mi-missing { border-top: 1px solid var(--line); padding-top: 14px; scroll-margin-top: 110px; }
 @media (max-width: 640px) {
   .mi-dish-fields { grid-template-columns: 1fr 1fr; }
   .mi-dish-fields label:first-child { grid-column: 1 / -1; }
   .mi-edit, .mi-summary { padding-left: 0; margin-left: 0; }
   .mi-line { grid-template-columns: minmax(0, 1fr) 70px 80px 24px; }
-  .mi-new-grid { grid-template-columns: minmax(0, 1fr) 80px; }
-  .mi-new-grid > :nth-child(3n) { display: none; }
+  .mi-new-grid { grid-template-columns: minmax(0, 1fr) 80px minmax(0, 1fr); }
+  .mi-new-grid > :nth-child(4n) { display: none; }
+  .mi-board { gap: 6px; padding: 10px 12px; margin: -16px -18px 0; }
+  .mi-stat { padding: 8px; font-size: 0.75rem; }
+  .mi-num { font-size: 1.3rem; }
 }
-.mi-empty { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-color: var(--oil); }

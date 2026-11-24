@@ -97,13 +97,13 @@ export default function MenuItems() {
       {notice && <p className="notice small">{notice}</p>}
       {d.menu.length > 0 && d.with_recipe === 0 && (
         <div className="panel mi-hint">
-          <div><strong>No recipes yet.</strong> <span className="muted">Upload your menu and Pass suggests what goes into
-            every dish, for you to check.</span></div>
+          <div><strong>No recipes yet.</strong> <span className="muted">Upload your menu: Pass adds the menu items you don't
+            have yet and suggests their ingredients, for you to check.</span></div>
           <button className="btn primary" onClick={() => setImporting(true)}>📄 Import menu</button>
         </div>
       )}
       {importing && (
-        <MenuImport base={base} stock={onHand.data?.items ?? []} menu={d.menu} onClose={() => { setImporting(false); void reload(); }}
+        <MenuImport base={base} stock={onHand.data?.items ?? []} onClose={() => { setImporting(false); void reload(); }}
           onDone={(message) => { setImporting(false); setNotice(message); void reload(); }} />
       )}
 
@@ -122,7 +122,7 @@ export default function MenuItems() {
             </button>
           )}
           <button className="btn" onClick={() => setSettings(true)} title="Food cost targets and how ingredients are costed">⚙ Cost settings</button>
-          <button className="btn" onClick={() => setImporting(true)} title="Upload your menu and get suggested recipes for every dish">📄 Import menu</button>
+          <button className="btn" onClick={() => setImporting(true)} title="Add new menu items and their recipes from your menu">📄 Import menu</button>
           <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>
         </div>
       </div>

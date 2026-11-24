@@ -934,6 +934,13 @@ async def upload_menu(file: UploadFile = File(...), location: Location = Depends
     return menu_import.out(imp)
 
 
+@router.post("/menu-imports/blank")
+async def blank_menu_import(location: Location = Depends(require_manager), user: AuthUser = Depends(current_user),
+                            session: AsyncSession = Depends(get_session)):
+    """Add new menu items and their recipes by hand, without uploading a menu."""
+    return menu_import.out(await menu_import.blank(session, location, user.id))
+
+
 @router.get("/menu-imports")
 async def list_menu_imports(location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
     """Imports still being read or reviewed, newest first, so a review can be picked up again later."""
@@ -966,9 +973,7 @@ class MenuDishIn(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     include: bool = True
     menu_item_id: str | None = None
-    menu_match: str | None = Field(default=None, max_length=40)
-    menu_name: str | None = Field(default=None, max_length=300)
-    had_recipe: bool = False
+    suggested: bool = False  # the AI suggested its ingredients (else they're added by hand)
     lines: list[MenuLineIn] = Field(default_factory=list, max_length=60)
 
 
@@ -1005,22 +1010,6 @@ async def confirm_menu_import(import_id: str, location: Location = Depends(requi
         return await menu_import.confirm(session, location, imp, user.id)
     except menu_import.MenuImportError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-class SuggestIn(BaseModel):
-    keys: list[str] = Field(min_length=1, max_length=menu_import.MAX_DISHES)
-
-
-@router.post("/menu-imports/{import_id}/suggest")
-async def suggest_menu_again(import_id: str, body: SuggestIn, location: Location = Depends(require_manager),
-                             session: AsyncSession = Depends(get_session)):
-    """Ask the AI again for these dishes (e.g. the ones that came back empty). Save the review first."""
-    imp = await _menu_import(session, location, import_id)
-    try:
-        await menu_import.suggest_again(session, imp, body.keys)
-    except menu_import.MenuImportError as exc:
-        raise HTTPException(409 if "is " in str(exc)[:30] else 422, str(exc)) from exc
-    return menu_import.out(imp)
 
 
 @router.post("/menu-imports/{import_id}/{action}")

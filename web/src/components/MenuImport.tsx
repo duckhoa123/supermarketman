@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, uploadFile } from "../lib/api";
-import { convert, normUnit, qty, unitsFor, type MenuCost, type StockItem } from "../lib/inventory";
+import { convert, normUnit, qty, unitsFor, type StockItem } from "../lib/inventory";
 import ItemPicker from "./ItemPicker";
 import { Dialog } from "./PosDialogs";
 
 type Line = { ingredient: string; item_id: string | null; match?: string | null; qty: number; unit: string | null };
 type Dish = {
   key: string; name: string; category: string | null; price_cents: number | null; description: string | null;
-  include: boolean; menu_item_id: string | null; menu_match: string | null; menu_name?: string | null;
-  had_recipe: boolean; lines: Line[];
+  include: boolean; menu_item_id: string | null; suggested: boolean; lines: Line[];
 };
 type Ingredient = { name: string; unit: string; category: string | null };
 type Import = {
@@ -24,23 +23,28 @@ const PORTION_UNITS = ["g", "kg", "oz", "lb", "ml", "l", "tsp", "tbsp", "cup", "
 const CATEGORIES = ["Produce", "Protein", "Dairy", "Dry goods", "Bakery", "Prep", "Beverage", "Alcohol", "Packaging",
   "Cleaning", "Supplies"];
 const keyOf = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
-const unitFor = (portion: string | null) => ({ g: "kg", kg: "kg", oz: "lb", lb: "lb", ml: "l", l: "l", floz: "l",
-  tsp: "l", tbsp: "l", cup: "l" } as Record<string, string>)[normUnit(portion)] ?? "each";
+const unitFor = (portion: string | null) => (!portion ? "kg" : ({ g: "kg", kg: "kg", oz: "lb", lb: "lb", ml: "l", l: "l",
+  floz: "l", tsp: "l", tbsp: "l", cup: "l" } as Record<string, string>)[normUnit(portion)] ?? "each");
 const show = (u: string | null | undefined) => (normUnit(u) === "l" ? "L" : normUnit(u) || "each");
 const money = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
+const named = (l: Line) => !!(l.item_id || l.ingredient.trim());
+const newKey = () => Math.random().toString(36).slice(2, 12);
 
-/** Set up recipes from a menu: upload it, check what the AI suggests for each dish, then create it all. */
-export default function MenuImport({ base, stock, menu, onClose, onDone }: {
-  base: string; stock: StockItem[]; menu: MenuCost[]; onClose: () => void; onDone: (message: string) => void;
+/** Add new menu items and their recipes from a menu: upload it, check the suggested ingredients, review the new
+ * inventory items, then create it all. Dishes already on the menu are left out. */
+export default function MenuImport({ base, stock, onClose, onDone }: {
+  base: string; stock: StockItem[]; onClose: () => void; onDone: (message: string) => void;
 }) {
   const [imp, setImp] = useState<Import | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
+  const [step, setStep] = useState<"dishes" | "items">("dishes");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const file = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
+  const missingRef = useRef<HTMLElement>(null);
   const byId = useMemo(() => Object.fromEntries(stock.map((i) => [i.id, i])), [stock]);
 
   useEffect(() => {
@@ -56,18 +60,20 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
 
   async function load(id: string) {
     const next = await api<Import>(`${base}/menu-imports/${id}`);
-    setImp(next);
-    if (next.status === "review" && !open) setOpen(next.dishes.find((d) => d.include)?.key ?? null);
+    // A menu item without a suggestion starts with an empty ingredient row, ready to type in.
+    setImp({ ...next, dishes: next.dishes.map((d) => (d.lines.length ? d : { ...d, lines: [{ ingredient: "", item_id: null, qty: 0, unit: null }] })) });
+    // Menu items without a suggestion open ready for their ingredients.
+    if (next.status === "review") setOpen(new Set(next.dishes.filter((d) => !d.lines.length).map((d) => d.key)));
   }
 
-  async function upload(f: File | undefined) {
-    if (!f) return;
-    setBusy("upload");
+  async function start(f?: File) {
+    setBusy(f ? "upload" : "blank");
     setError("");
     try {
-      setImp(await uploadFile<Import>(`${base}/menu-imports`, f, f.name));
+      setImp(f ? await uploadFile<Import>(`${base}/menu-imports`, f, f.name)
+        : await api<Import>(`${base}/menu-imports/blank`, { method: "POST", body: {} }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't upload the menu.");
+      setError(e instanceof Error ? e.message : "Couldn't start.");
     } finally {
       setBusy("");
     }
@@ -81,7 +87,7 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
     for (const d of dishes) for (const l of d.lines) {
       if (l.item_id || !l.ingredient.trim()) continue;
       const k = keyOf(l.ingredient);
-      used[k] = ingredients[k] ?? used[k] ?? { name: l.ingredient.trim(), unit: unitFor(l.unit), category: null };
+      used[k] = ingredients[k] ?? used[k] ?? { name: l.ingredient.trim(), unit: unitFor(l.qty ? l.unit : null), category: null };
     }
     setImp({ ...imp!, dishes, ingredients: used });
     setDirty(true);
@@ -89,19 +95,35 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
   const setDish = (key: string, patch: Partial<Dish>) => update(imp!.dishes.map((d) => (d.key === key ? { ...d, ...patch } : d)));
   const setLine = (dish: Dish, n: number, patch: Partial<Line>) =>
     setDish(dish.key, { lines: dish.lines.map((l, j) => (j === n ? { ...l, ...patch } : l)) });
+  const toggle = (key: string) => setOpen((s) => {
+    const n = new Set(s);
+    if (n.has(key)) n.delete(key);
+    else n.add(key);
+    return n;
+  });
+
+  function addDish() {
+    const d: Dish = { key: newKey(), name: "", category: null, price_cents: null, description: null, include: true,
+      menu_item_id: null, suggested: false, lines: [{ ingredient: "", item_id: null, qty: 0, unit: null }] };
+    update([...imp!.dishes, d]);
+    setOpen((s) => new Set(s).add(d.key));
+    window.setTimeout(() => missingRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 50);
+  }
 
   /** The unit an ingredient is counted in: its inventory item's, or the one chosen for a new item. */
   function stockUnit(l: Line) {
     if (l.item_id) return byId[l.item_id]?.unit ?? null;
-    return imp!.ingredients[keyOf(l.ingredient)]?.unit ?? unitFor(l.unit);
+    return imp!.ingredients[keyOf(l.ingredient)]?.unit ?? "kg";
   }
   function portionUnits(l: Line) {
     if (!l.item_id) return PORTION_UNITS; // a new item: its unit follows the portion's
-    const item = byId[l.item_id];
-    return unitsFor(stockUnit(l), item?.conversions ?? []).filter((u) => u !== "dozen");
+    return unitsFor(stockUnit(l), byId[l.item_id]?.conversions ?? []).filter((u) => u !== "dozen");
   }
-
-  /** A new ingredient's portion in a unit its stock unit can't take: it's counted in a matching unit instead. */
+  function fits(l: Line) {
+    if (!l.qty) return true; // no portion yet: fine
+    return convert(1, l.unit || stockUnit(l), stockUnit(l), l.item_id ? byId[l.item_id]?.conversions ?? [] : []) != null;
+  }
+  /** A portion in a unit a new ingredient's stock unit can't take: it's counted in a matching unit instead. */
   function setUnit(dish: Dish, n: number, unit: string) {
     const l = dish.lines[n];
     const dishes = imp!.dishes.map((d) => (d.key === dish.key ? { ...d, lines: d.lines.map((x, j) => (j === n ? { ...x, unit } : x)) } : d));
@@ -110,11 +132,6 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
     if (!l.item_id && ing && convert(1, unit, ing.unit) == null) update(dishes, { ...imp!.ingredients, [k]: { ...ing, unit: unitFor(unit) } });
     else update(dishes);
   }
-  function fits(l: Line) {
-    const item = l.item_id ? byId[l.item_id] : undefined;
-    return convert(1, l.unit || stockUnit(l), stockUnit(l), item?.conversions ?? []) != null;
-  }
-
   function renameIngredient(oldKey: string, name: string) {
     const k = keyOf(name);
     if (!k) return;
@@ -131,10 +148,10 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
     if (!imp) return false;
     try {
       const out = await api<Import>(`${base}/menu-imports/${imp.id}`, { method: "PUT", body: {
-        dishes: imp.dishes.map((d) => ({ ...d, lines: d.lines.filter((l) => l.item_id || l.ingredient.trim()) })),
+        dishes: imp.dishes.filter((d) => d.name.trim()).map((d) => ({ ...d, name: d.name.trim(), lines: d.lines.filter(named) })),
         ingredients: imp.ingredients,
       } });
-      setImp(out);
+      setImp({ ...out, dishes: imp.dishes });  // keep blank rows being filled in on screen
       setDirty(false);
       return true;
     } catch (e) {
@@ -151,28 +168,14 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
       const result = await api<Import["result"]>(`${base}/menu-imports/${imp!.id}/confirm`, { method: "POST", body: {} });
       setImp({ ...imp!, status: "confirmed", result });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't create the recipes.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function suggestAgain(keys: string[]) {
-    if (!keys.length) return;
-    setBusy("suggest");
-    setError("");
-    try {
-      if (dirty && !(await save())) return;
-      setImp(await api<Import>(`${base}/menu-imports/${imp!.id}/suggest`, { method: "POST", body: { keys } }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't ask again.");
+      setError(e instanceof Error ? e.message : "Couldn't create them.");
     } finally {
       setBusy("");
     }
   }
 
   async function action(name: "discard" | "retry") {
-    if (name === "discard" && !window.confirm("Throw this menu import away? Nothing has been added yet.")) return;
+    if (name === "discard" && !window.confirm("Throw this away? Nothing has been added yet.")) return;
     setBusy(name);
     try {
       const out = await api<Import>(`${base}/menu-imports/${imp!.id}/${name}`, { method: "POST", body: {} });
@@ -183,47 +186,144 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
     }
   }
 
-  // --- Views -----------------------------------------------------------------------------------------------------
+  // --- Numbers ---------------------------------------------------------------------------------------------------
 
-  const ticked = imp?.dishes.filter((d) => d.include) ?? [];
-  const empty = ticked.filter((d) => !d.lines.some((l) => l.item_id || l.ingredient.trim()));
-  const ready = ticked.length - empty.length;
-  const newDishes = ticked.filter((d) => !d.menu_item_id).length;
-  const usedNew = Object.entries(imp?.ingredients ?? {}).filter(([k]) =>
-    ticked.some((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)));
-  const broken = ticked.flatMap((d) => d.lines.filter((l) => (l.item_id || l.ingredient.trim()) && (!fits(l) || !(l.qty > 0))).map(() => d.key));
+  const dishes = (imp?.dishes ?? []).filter((d) => d.include);
+  const real = dishes.filter((d) => d.name.trim());
+  const suggested = dishes.filter((d) => d.suggested);
+  const byHand = dishes.filter((d) => !d.suggested);
+  const empty = real.filter((d) => !d.lines.some(named));
+  const ready = real.length - empty.length;
+  const newItems = Object.entries(imp?.ingredients ?? {}).filter(([k]) =>
+    real.some((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)));
+  const broken = real.filter((d) => d.lines.some((l) => named(l) && !fits(l))).length;
+  const unnamed = dishes.filter((d) => !d.name.trim() && d.lines.some(named)).length;
+  const goMissing = () => {
+    setStep("dishes");
+    window.setTimeout(() => missingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
+  };
 
   const footer = imp?.status === "review" ? (
     <div className="inv-foot">
-      <span className="small muted">{ticked.length} dish{ticked.length === 1 ? "" : "es"} ticked
-        {newDishes > 0 ? ` (${newDishes} new to your menu)` : ""} · {usedNew.length} new inventory item{usedNew.length === 1 ? "" : "s"}</span>
+      <span className="small muted">
+        {broken > 0 ? <span className="warn-text">{broken} menu item{broken === 1 ? " has a portion" : "s have portions"} in a unit that doesn't fit</span>
+          : unnamed > 0 ? <span className="warn-text">Name every menu item you added</span>
+            : empty.length > 0 ? `${empty.length} without ingredients won't be added` : "Portions can be left blank and filled in later"}
+      </span>
       <div className="row">
-        {broken.length > 0 && <span className="small warn-text">{broken.length} portion{broken.length === 1 ? "" : "s"} to fix</span>}
-        {empty.length > 0 && <span className="small muted">{empty.length} empty, skipped</span>}
         <button className="btn" disabled={busy !== ""} onClick={() => void action("discard")}>Discard</button>
         {dirty && <button className="btn" disabled={busy !== ""} onClick={() => void save()}>Save for later</button>}
-        <button className="btn primary" disabled={busy !== "" || !ready || broken.length > 0} onClick={() => void confirm()}>
-          {busy === "confirm" ? "Creating…" : `Create ${ready} recipe${ready === 1 ? "" : "s"}`}
-        </button>
+        {step === "dishes" ? (
+          <button className="btn primary" disabled={busy !== "" || !ready || broken > 0 || unnamed > 0}
+            onClick={() => { void (dirty ? save() : Promise.resolve(true)).then((ok) => ok && setStep("items")); }}>
+            Next: {newItems.length ? `review ${newItems.length} new inventory item${newItems.length === 1 ? "" : "s"}` : "review and create"} →
+          </button>
+        ) : (
+          <>
+            <button className="btn" disabled={busy !== ""} onClick={() => setStep("dishes")}>← Back</button>
+            <button className="btn primary" disabled={busy !== "" || !ready} onClick={() => void confirm()}>
+              {busy === "confirm" ? "Creating…" : `Create ${ready} menu item${ready === 1 ? "" : "s"}${newItems.length ? ` and ${newItems.length} inventory item${newItems.length === 1 ? "" : "s"}` : ""}`}
+            </button>
+          </>
+        )}
       </div>
     </div>
   ) : imp?.status === "confirmed" ? (
     <div className="row" style={{ marginLeft: "auto" }}>
-      <button className="btn primary" onClick={() => onDone(`${imp.result?.recipes ?? 0} recipes created from your menu.`)}>Done</button>
+      <button className="btn primary" onClick={() => onDone(`${imp.result?.dishes_created.length ?? 0} menu items added with their recipes.`)}>Done</button>
     </div>
   ) : undefined;
 
+  // --- One menu item (a render function, not a component, so typing doesn't lose focus) ---------------------------
+
+  function dishCard(d: Dish) {
+    const expanded = open.has(d.key);
+    const bad = d.lines.some((l) => named(l) && !fits(l));
+    return (
+      <li key={d.key} className={`mi-dish ${bad ? "is-bad" : ""}`}>
+        <div className="mi-dish-head">
+          <button className="mi-dish-name" onClick={() => toggle(d.key)} aria-expanded={expanded}>
+            <strong>{d.name || "New menu item"}</strong>
+            {d.category && <span className="small muted"> · {d.category}</span>}
+            {d.price_cents != null && <span className="small muted"> · ${money(d.price_cents)}</span>}
+          </button>
+          <button className="btn small" onClick={() => toggle(d.key)}>{expanded ? "Close" : "Edit"}</button>
+          <button className="sb-icon" aria-label={`Don't add ${d.name || "this menu item"}`} title="Don't add this menu item"
+            onClick={() => update(imp!.dishes.filter((x) => x.key !== d.key))}>✕</button>
+        </div>
+        {!expanded && (
+          <p className="small muted mi-summary">
+            {d.lines.some(named)
+              ? d.lines.filter(named).map((l) => (l.qty ? `${l.ingredient} ${qty(l.qty)} ${show(l.unit || stockUnit(l))}` : l.ingredient)).join(" · ")
+              : "No ingredients yet"}
+          </p>
+        )}
+        {expanded && (
+          <div className="stack mi-edit">
+            <div className="mi-dish-fields">
+              <label><span className="small muted">Name</span>
+                <input className="input" value={d.name} placeholder="e.g. Pho Tai" onChange={(e) => setDish(d.key, { name: e.target.value })} /></label>
+              <label><span className="small muted">Category</span>
+                <input className="input" value={d.category ?? ""} placeholder="e.g. Noodle soups" onChange={(e) => setDish(d.key, { category: e.target.value || null })} /></label>
+              <label><span className="small muted">Price ($)</span>
+                <input className="input" type="number" step="0.01" min={0} value={money(d.price_cents)}
+                  onChange={(e) => setDish(d.key, { price_cents: e.target.value ? Math.round(Number(e.target.value) * 100) : null })} /></label>
+            </div>
+            <div className="mi-lines">
+              <div className="mi-line mi-line-head small muted">
+                <span>Ingredient</span>
+                <span className="tip" tabIndex={0} data-tip="Optional: how much goes on one plate. Leave it blank and fill it in later.">Portion</span>
+                <span>Unit</span><span />
+              </div>
+              {d.lines.map((l, n) => {
+                const okUnit = fits(l);
+                const unit = l.qty && l.unit ? normUnit(l.unit) : normUnit(stockUnit(l));
+                const units = portionUnits(l);
+                return (
+                  <div key={n} className="mi-line">
+                    <div className="mi-ing">
+                      <ItemPicker items={stock} itemId={l.item_id} itemName={l.item_id ? l.ingredient : null}
+                        newName={l.item_id ? "" : l.ingredient}
+                        onPickItem={(it) => setLine(d, n, { item_id: it.id, ingredient: it.name, match: "chosen",
+                          unit: l.qty && unitsFor(it.unit, it.conversions ?? []).includes(normUnit(l.unit)) ? l.unit : null })}
+                        onNewName={(name) => setLine(d, n, { item_id: null, ingredient: name, match: null })} />
+                      {!l.item_id && l.ingredient.trim() && <span className="pill new" title="A new inventory item">New</span>}
+                    </div>
+                    <input className="input" type="number" min={0} step="any" aria-label="Portion" placeholder="–" value={l.qty || ""}
+                      onChange={(e) => setLine(d, n, { qty: Number(e.target.value) || 0, unit: l.unit || unit })} />
+                    <select className={`select ${okUnit ? "" : "is-invalid"}`} aria-label="Unit" value={unit}
+                      title={okUnit ? undefined : `${l.ingredient} is counted in ${show(stockUnit(l))}: pick a unit that converts`}
+                      onChange={(e) => setUnit(d, n, e.target.value)}>
+                      {!units.includes(unit) && <option value={unit}>{show(unit)}{okUnit ? "" : " ✕"}</option>}
+                      {units.map((u) => <option key={u} value={u}>{show(u)}</option>)}
+                    </select>
+                    <button className="sb-icon" aria-label={`Remove ${l.ingredient || "ingredient"}`} title="Remove"
+                      onClick={() => setDish(d.key, { lines: d.lines.filter((_, j) => j !== n) })}>✕</button>
+                  </div>
+                );
+              })}
+              <button className="btn small" style={{ alignSelf: "start" }}
+                onClick={() => setDish(d.key, { lines: [...d.lines, { ingredient: "", item_id: null, qty: 0, unit: null }] })}>
+                + Add ingredient
+              </button>
+            </div>
+          </div>
+        )}
+      </li>
+    );
+  }
+
   return (
-    <Dialog title="Set up recipes from your menu" onClose={onClose} width="min(1080px, 100%)" footer={footer}>
+    <Dialog title="Add menu items from your menu" onClose={onClose} width="min(1080px, 100%)" footer={footer}>
       {!imp && (
         <div className="stack mi-start">
-          <p>Upload your menu and Pass suggests what goes into each dish, using your inventory items where it can.
-            You check and change everything before anything is saved.</p>
+          <p>Upload your menu and Pass picks out the menu items you don't have in Pass yet, and suggests the ingredients
+            of each one, using your inventory items where it can. You check everything before anything is saved.</p>
           <div className="mi-drop">
             <input ref={file} type="file" hidden accept="image/*,application/pdf,.xlsx,.csv,.tsv,text/csv"
-              onChange={(e) => void upload(e.target.files?.[0])} />
+              onChange={(e) => void start(e.target.files?.[0])} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment"
-              onChange={(e) => void upload(e.target.files?.[0])} />
+              onChange={(e) => void start(e.target.files?.[0])} />
             <div className="row" style={{ justifyContent: "center" }}>
               <button className="btn primary" disabled={busy !== ""} onClick={() => file.current?.click()}>
                 {busy === "upload" ? "Uploading…" : "Choose a file"}
@@ -232,10 +332,13 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
             </div>
             <p className="small muted">A photo or PDF of the menu, or an Excel (.xlsx) or CSV list of your dishes</p>
           </div>
+          <button className="linkish small" style={{ alignSelf: "start" }} disabled={busy !== ""} onClick={() => void start()}>
+            Or add menu items and their ingredients by hand
+          </button>
           {pending.filter((p) => p.status !== "failed").map((p) => (
             <button key={p.id} className="linkish small" style={{ alignSelf: "start" }} onClick={() => void load(p.id)}>
-              Continue {p.status === "processing" ? "the menu being read" : "your review"}: {p.file_name ?? "menu"}
-              {p.dishes ? ` (${p.dishes} dishes)` : ""}
+              Continue {p.status === "processing" ? "the menu being read" : "where you left off"}: {p.file_name ?? "added by hand"}
+              {p.dishes ? ` (${p.dishes} menu items)` : ""}
             </button>
           ))}
           {error && <p className="small error">{error}</p>}
@@ -245,9 +348,7 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
       {imp?.status === "processing" && (
         <div className="inv-reading">
           <span className="spinner" aria-hidden />
-          {imp.progress?.total
-            ? `Suggesting recipes: ${imp.progress.done} of ${imp.progress.total} dish${imp.progress.total === 1 ? "" : "es"}…`
-            : "Reading the menu…"}
+          {imp.progress?.total ? `Suggesting ingredients: ${imp.progress.done} of ${imp.progress.total} menu items…` : "Reading the menu…"}
         </div>
       )}
 
@@ -263,168 +364,88 @@ export default function MenuImport({ base, stock, menu, onClose, onDone }: {
 
       {imp?.status === "confirmed" && imp.result && (
         <div className="stack">
-          <p className="notice"><strong>{imp.result.recipes} recipe{imp.result.recipes === 1 ? "" : "s"} saved.</strong></p>
-          {imp.result.dishes_created.length > 0 && <p className="small">Added to your menu: {imp.result.dishes_created.join(", ")}.</p>}
+          <p className="notice"><strong>{imp.result.dishes_created.length} menu item{imp.result.dishes_created.length === 1 ? "" : "s"} added with {imp.result.recipes === 1 ? "its recipe" : "their recipes"}.</strong></p>
+          {imp.result.dishes_created.length > 0 && <p className="small">{imp.result.dishes_created.join(", ")}.</p>}
           {imp.result.items_created.length > 0 && <p className="small">New inventory items: {imp.result.items_created.join(", ")}.</p>}
           {imp.result.errors.length > 0 && <p className="small error">Not saved: {imp.result.errors.join("; ")}</p>}
-          <p className="small muted">Next: count your stock once so quantities start right. Costs fill in from your
-            invoices, and plate costs follow.</p>
+          <p className="small muted">Next: fill in any missing portions with each menu item's Recipe button, and count
+            your stock once so quantities start right. Costs fill in from your invoices.</p>
         </div>
       )}
 
       {imp?.status === "review" && (
-        <div className="stack mi-review">
-          <p className="small muted">
-            These are suggestions, with typical restaurant portions. Check each dish against how your kitchen makes it:
-            change portions, swap or add ingredients, and untick anything you don't want.
-          </p>
-          {imp.warnings.map((w, i) => <p key={i} className="small warn-text">⚠ {w}</p>)}
-          {error && <p className="small error" role="alert">{error}</p>}
-          {empty.length > 0 && (
-            <div className="panel mi-empty">
-              <span><strong>{empty.length} dish{empty.length === 1 ? " has" : "es have"} no ingredients yet.</strong>{" "}
-                <span className="muted small">Ask again, or add them yourself.</span></span>
-              <button className="btn primary small" disabled={busy !== ""} onClick={() => void suggestAgain(empty.map((d) => d.key))}>
-                {busy === "suggest" ? "Asking…" : `✨ Suggest recipes for ${empty.length}`}
-              </button>
-            </div>
-          )}
-          <div className="row" style={{ gap: 8 }}>
-            <button className="linkish small" onClick={() => update(imp.dishes.map((d) => ({ ...d, include: true })))}>Tick all</button>
-            <button className="linkish small" onClick={() => update(imp.dishes.map((d) => ({ ...d, include: false })))}>Untick all</button>
+        <>
+          <div className="mi-board" role="group" aria-label="Overview">
+            <div className="mi-stat"><span className="mi-num">{real.length}</span><span>New menu items</span></div>
+            <button className={`mi-stat ${empty.length ? "is-warn" : ""}`} onClick={goMissing}
+              title="Go to the menu items to add ingredients to by hand">
+              <span className="mi-num">{empty.length}</span><span>No recipe suggested ↓</span>
+            </button>
+            <div className="mi-stat"><span className="mi-num">{newItems.length}</span><span>New inventory items</span></div>
           </div>
-
-          <ol className="mi-dishes">
-            {imp.dishes.map((d) => {
-              const expanded = open === d.key;
-              const bad = d.include && d.lines.some((l) => (l.item_id || l.ingredient.trim()) && (!fits(l) || !(l.qty > 0)));
-              return (
-                <li key={d.key} className={`mi-dish ${d.include ? "" : "is-off"} ${bad ? "is-bad" : ""}`}>
-                  <div className="mi-dish-head">
-                    <input type="checkbox" aria-label={`Include ${d.name}`} checked={d.include}
-                      onChange={(e) => setDish(d.key, { include: e.target.checked })} />
-                    <button className="mi-dish-name" onClick={() => setOpen(expanded ? null : d.key)} aria-expanded={expanded}>
-                      <strong>{d.name}</strong>
-                      {d.category && <span className="small muted"> · {d.category}</span>}
-                    </button>
-                    {d.menu_item_id
-                      ? <span className="pill good" title={`Linked to “${d.menu_name ?? d.name}” on your menu`}>On your menu</span>
-                      : <span className="pill new" title="Added to your menu when you create the recipes">New dish{d.price_cents ? ` · $${money(d.price_cents)}` : ""}</span>}
-                    {d.had_recipe && <span className="pill" title="Its current recipe is shown. Tick it to save changes.">Has a recipe</span>}
-                    <button className="btn small" onClick={() => setOpen(expanded ? null : d.key)}>{expanded ? "Close" : "Edit"}</button>
-                  </div>
-                  {!expanded && (
-                    <p className="small muted mi-summary">
-                      {d.lines.length ? d.lines.map((l) => `${l.ingredient} ${qty(l.qty)} ${show(l.unit)}`).join(" · ") : "No ingredients yet"}
-                    </p>
-                  )}
-                  {expanded && (
-                    <div className="stack mi-edit">
-                      <div className="mi-dish-fields">
-                        <label><span className="small muted">On your menu</span>
-                          <select className="select" value={d.menu_item_id ?? ""}
-                            onChange={(e) => {
-                              const m = menu.find((x) => x.id === e.target.value);
-                              setDish(d.key, { menu_item_id: m?.id ?? null, menu_name: m?.name ?? null, menu_match: m ? "chosen" : null });
-                            }}>
-                            <option value="">➕ Add as a new dish</option>
-                            {menu.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                          </select>
-                        </label>
-                        {!d.menu_item_id && (
-                          <>
-                            <label><span className="small muted">Name</span>
-                              <input className="input" value={d.name} onChange={(e) => setDish(d.key, { name: e.target.value })} /></label>
-                            <label><span className="small muted">Price ($)</span>
-                              <input className="input" type="number" step="0.01" min={0} value={money(d.price_cents)}
-                                onChange={(e) => setDish(d.key, { price_cents: e.target.value ? Math.round(Number(e.target.value) * 100) : null })} /></label>
-                          </>
-                        )}
-                      </div>
-                      <div className="mi-lines">
-                        <div className="mi-line mi-line-head small muted">
-                          <span>Ingredient</span><span>Portion</span><span>Unit</span><span />
-                        </div>
-                        {d.lines.map((l, n) => {
-                          const okUnit = fits(l);
-                          return (
-                            <div key={n} className="mi-line">
-                              <div className="mi-ing">
-                                <ItemPicker items={stock} itemId={l.item_id} itemName={l.item_id ? l.ingredient : null}
-                                  newName={l.item_id ? "" : l.ingredient}
-                                  onPickItem={(it) => {
-                                    const units = unitsFor(it.unit, it.conversions ?? []);
-                                    setLine(d, n, { item_id: it.id, ingredient: it.name, match: "chosen",
-                                      unit: units.includes(normUnit(l.unit)) ? l.unit : normUnit(it.unit) || "each" });
-                                  }}
-                                  onNewName={(name) => setLine(d, n, { item_id: null, ingredient: name, match: null })} />
-                                {!l.item_id && l.ingredient.trim() && <span className="pill new" title="A new inventory item">New</span>}
-                              </div>
-                              <input className="input" type="number" min={0} step="any" aria-label="Portion" value={l.qty || ""}
-                                onChange={(e) => setLine(d, n, { qty: Number(e.target.value) || 0 })} />
-                              <select className={`select ${okUnit ? "" : "is-invalid"}`} aria-label="Unit" value={normUnit(l.unit)}
-                                title={okUnit ? undefined : `${l.ingredient} is counted in ${show(stockUnit(l))}: pick a unit that converts`}
-                                onChange={(e) => setUnit(d, n, e.target.value)}>
-                                {!okUnit && <option value={normUnit(l.unit)}>{show(l.unit)} ✕</option>}
-                                {portionUnits(l).map((u) => <option key={u} value={u}>{show(u)}</option>)}
-                              </select>
-                              <button className="sb-icon" aria-label={`Remove ${l.ingredient}`} title="Remove"
-                                onClick={() => setDish(d.key, { lines: d.lines.filter((_, j) => j !== n) })}>✕</button>
-                            </div>
-                          );
-                        })}
-                        <div className="row" style={{ gap: 6 }}>
-                          <button className="btn small"
-                            onClick={() => setDish(d.key, { include: true, lines: [...d.lines, { ingredient: "", item_id: null, qty: 0, unit: "g" }] })}>
-                            + Add ingredient
-                          </button>
-                          <button className="btn small" disabled={busy !== ""} title="Replace this dish's ingredients with a new suggestion"
-                            onClick={() => void suggestAgain([d.key])}>✨ Suggest again</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-
-          {usedNew.length > 0 && (
-            <section className="stack mi-new">
-              <h3 style={{ margin: 0 }}>New inventory items <span className="small muted">({usedNew.length})</span></h3>
-              <p className="small muted" style={{ margin: 0 }}>Added to your inventory with no stock and no cost yet: costs come
-                from your invoices, quantities from your first count. Same name in several dishes = one item.</p>
-              <div className="mi-new-grid">
-                <span className="small muted">Name</span><span className="small muted">Counted in</span><span className="small muted">Category</span>
-                {usedNew.map(([k, ing]) => (
-                  <NewIngredient key={k} ing={ing}
-                    onRename={(name) => renameIngredient(k, name)}
-                    onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
-                ))}
-              </div>
+          {error && <p className="small error" role="alert">{error}</p>}
+          {step === "dishes" ? (
+            <div className="stack mi-review">
+              {imp.warnings.map((w, i) => <p key={i} className="small muted" style={{ margin: 0 }}>ℹ {w}</p>)}
+              {suggested.length > 0 && (
+                <section className="stack">
+                  <h3 className="mi-h">Suggested recipes <span className="small muted">({suggested.length})</span></h3>
+                  <p className="small muted" style={{ margin: 0 }}>Check the ingredients of each menu item: swap, add or remove
+                    them. Portions are optional for now.</p>
+                  <ol className="mi-dishes">{suggested.map((d) => dishCard(d))}</ol>
+                </section>
+              )}
+              <section ref={missingRef} className="stack mi-missing">
+                <h3 className="mi-h">No recipe suggested <span className="small muted">({byHand.length})</span></h3>
+                <p className="small muted" style={{ margin: 0 }}>
+                  {byHand.length ? "Add their ingredients by hand. Menu items left without ingredients aren't added."
+                    : "Add a menu item here if one is missing."}
+                </p>
+                {byHand.length > 0 && <ol className="mi-dishes">{byHand.map((d) => dishCard(d))}</ol>}
+                <button className="btn" style={{ alignSelf: "start" }} onClick={addDish}>+ Add a menu item</button>
+              </section>
+            </div>
+          ) : (
+            <section className="stack mi-review">
+              <h3 className="mi-h">New inventory items <span className="small muted">({newItems.length})</span></h3>
+              <p className="small muted" style={{ margin: 0 }}>These are added to your inventory with no stock and no cost yet:
+                costs come from your invoices, quantities from your first count. Check the names and what each is counted in.</p>
+              {newItems.length === 0 ? <p className="muted">None: these recipes only use items you already have.</p> : (
+                <div className="mi-new-grid">
+                  <span className="small muted">Name</span><span className="small muted">Counted in</span>
+                  <span className="small muted">Category</span><span className="small muted">Used in</span>
+                  {newItems.map(([k, ing]) => (
+                    <NewIngredient key={k} ing={ing}
+                      usedIn={real.filter((d) => d.lines.some((l) => !l.item_id && keyOf(l.ingredient) === k)).map((d) => d.name)}
+                      onRename={(name) => renameIngredient(k, name)}
+                      onChange={(patch) => update(imp.dishes, { ...imp.ingredients, [k]: { ...ing, ...patch } })} />
+                  ))}
+                </div>
+              )}
             </section>
           )}
-        </div>
+        </>
       )}
     </Dialog>
   );
 }
 
-function NewIngredient({ ing, onRename, onChange }: {
-  ing: Ingredient; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
+function NewIngredient({ ing, usedIn, onRename, onChange }: {
+  ing: Ingredient; usedIn: string[]; onRename: (name: string) => void; onChange: (patch: Partial<Ingredient>) => void;
 }) {
   const [name, setName] = useState(ing.name);
   return (
     <>
-      <input className="input" value={name} onChange={(e) => setName(e.target.value)}
+      <input className="input" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)}
         onBlur={() => { if (name.trim() && name.trim() !== ing.name) onRename(name.trim()); else setName(ing.name); }} />
-      <select className="select" value={normUnit(ing.unit)} onChange={(e) => onChange({ unit: e.target.value })}>
+      <select className="select" aria-label="Counted in" value={normUnit(ing.unit)} onChange={(e) => onChange({ unit: e.target.value })}>
         {STOCK_UNITS.map((u) => <option key={u} value={u}>{show(u)}</option>)}
       </select>
-      <select className="select" value={ing.category ?? ""} onChange={(e) => onChange({ category: e.target.value || null })}>
+      <select className="select" aria-label="Category" value={ing.category ?? ""} onChange={(e) => onChange({ category: e.target.value || null })}>
         <option value="">Ingredients</option>
         {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
       </select>
+      <span className="small muted mi-used" title={usedIn.join(", ")}>{usedIn.slice(0, 3).join(", ")}{usedIn.length > 3 ? ` +${usedIn.length - 3}` : ""}</span>
     </>
   );
 }
