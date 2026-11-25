@@ -59,9 +59,9 @@ export default function Today() {
     { label: "Sales today", value: t?.summary.gross ?? "–", info: "So far today, before tax and tips",
       sub: t?.summary.comparison?.gross_change_pct != null ? `${pct(t.summary.comparison.gross_change_pct)} vs last week` : null },
     { label: `Sales in ${s?.this_month_label ?? "this month"}`, value: s ? compact(s.this_month.gross_cents) : "–",
-      info: "This month so far", sub: s ? `${s.last_month_label} ${compact(s.last_month.gross_cents)}` : null },
+      info: "This month so far", sub: s?.last_month.gross_cents ? `${s.last_month_label} ${compact(s.last_month.gross_cents)}` : null },
     { label: "Orders this month", value: s ? whole(s.this_month.orders) : "–", info: "Orders closed this month so far",
-      sub: s ? `${s.last_month_label} ${whole(s.last_month.orders)}` : null },
+      sub: s?.last_month.orders ? `${s.last_month_label} ${whole(s.last_month.orders)}` : null },
     manager
       ? { label: "Food cost this month", value: cogs.data?.food_cost_pct != null ? `${cogs.data.food_cost_pct}%` : "–",
         info: "What food cost against food sales, from stock counts and invoices", warn: cogs.data?.food_cost_pct != null && cogs.data.food_cost_pct > cogs.data.target_pct,
@@ -110,7 +110,7 @@ export default function Today() {
               </div>
               <div className="chart-figure">
                 <strong>{now != null ? c.fmt(now) : "–"}</strong>
-                {before != null && <span>{s!.last_month_label} {c.fmt(before)}</span>}
+                {!!before && <span>{s!.last_month_label} {c.fmt(before)}</span>}
               </div>
               {s ? <AreaChart points={points(c.metric)} format={c.fmt} name={`${c.title} over time`} /> : <div className="chart-empty muted small">Loading…</div>}
               <div className="chart-legend"><span className="legend-swatch" />{c.title}</div>
