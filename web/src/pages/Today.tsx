@@ -4,6 +4,7 @@ import { useApp } from "../context";
 import { useApi } from "../hooks";
 import type { Dashboard } from "../lib/api";
 import { money, pct, PERIODS } from "../lib/format";
+import FoodCost from "./inventory/FoodCost";
 
 export default function Today() {
   const { location } = useApp();
@@ -21,8 +22,8 @@ export default function Today() {
     <>
       <div className="page-head">
         <div>
-          <h1>{PERIODS.find((p) => p.value === period)?.label ?? "Sales"}</h1>
-          <p>{s?.note ?? `${location.name}, updated from your POS`}</p>
+          <h1>Home</h1>
+          <p>Sales {(PERIODS.find((p) => p.value === period)?.label ?? "").toLowerCase()}: {s?.note ?? `${location.name}, updated from your POS`}</p>
         </div>
         <div className="seg" role="group" aria-label="Period">
           {PERIODS.map((p) => (
@@ -142,6 +143,17 @@ export default function Today() {
             </section>
           </div>
         </>
+      )}
+
+      {location.role !== "staff" && (
+        <section id="food-cost" className="stack home-food-cost">
+          <div>
+            <h2 style={{ margin: 0 }}>Food cost</h2>
+            <p className="small muted" style={{ margin: "4px 0 0" }}>What your food actually cost against food sales, next to
+              what your recipes say it should be.</p>
+          </div>
+          <FoodCost />
+        </section>
       )}
     </>
   );

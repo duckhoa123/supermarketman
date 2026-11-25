@@ -1154,3 +1154,4 @@ button.mi-stat:hover { border-color: var(--basil); }
   .mi-stat { padding: 8px; font-size: 0.75rem; }
   .mi-num { font-size: 1.3rem; }
 }
+.home-food-cost { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
