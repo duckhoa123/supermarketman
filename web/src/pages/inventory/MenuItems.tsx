@@ -95,13 +95,6 @@ export default function MenuItems() {
           <div className="small muted">dishes above their target %</div></div>
       </div>
       {notice && <p className="notice small">{notice}</p>}
-      {d.menu.length > 0 && d.with_recipe === 0 && (
-        <div className="panel mi-hint">
-          <div><strong>No recipes yet.</strong> <span className="muted">Upload your menu: Pass adds the menu items you don't
-            have yet and suggests their ingredients, for you to check.</span></div>
-          <button className="btn primary" onClick={() => setImporting(true)}>📄 Import menu</button>
-        </div>
-      )}
       {importing && (
         <MenuImport base={base} stock={onHand.data?.items ?? []} onClose={() => { setImporting(false); void reload(); }}
           onDone={(message) => { setImporting(false); setNotice(message); void reload(); }} />
