@@ -54,7 +54,7 @@ async def test_menu_to_recipes(client, session, demo_location_id, fake_llm):
     # The spreadsheet went to the AI as text, with the current menu so it leaves those dishes out.
     assert "Pho Tai,Pho,16.50" in llm.calls[0]["messages"][0]["content"][0]["text"]
     assert "Burrata & Tomato" in llm.calls[0]["system"][1]["text"]
-    assert "Rice vermicelli (kg)" in llm.calls[1]["system"][1]["text"]
+    assert "Rice vermicelli (kg, Dry goods)" in llm.calls[1]["system"][1]["text"]
 
     # Only new dishes: Burrata & Tomato is already on the menu.
     dishes = {d["name"]: d for d in imp["dishes"]}
@@ -188,3 +188,15 @@ def test_new_ingredients_without_a_unit_are_counted_by_weight():
     assert ings["pork shoulder"]["unit"] == "kg" and ings["egg"]["unit"] == "each"
     assert dishes[0]["suggested"] and dishes[0]["lines"][0] == {"ingredient": "Pork shoulder", "item_id": None,
                                                                 "match": None, "qty": 0, "unit": None}
+
+
+def test_suggestions_use_the_inventory_item_the_ai_names():
+    verm = Item(id="verm", name="Rice vermicelli", unit="kg")
+    dishes = [{"name": "Bun Thit Nuong", "lines": []}]
+    ings: dict = {}
+    mi.apply_recipes(dishes, {"recipes": [{"n": 1, "dish": "Bun Thit Nuong", "lines": [
+        {"ingredient": "Rice noodles", "existing": "rice vermicelli"}, {"ingredient": "Rice vermicelli"},
+        {"ingredient": "Pork", "existing": "Not in inventory"}]}]}, [verm], ings)
+    lines = dishes[0]["lines"]
+    assert [(ln["ingredient"], ln["item_id"]) for ln in lines] == [("Rice vermicelli", "verm"), ("Pork", None)]
+    assert list(ings) == ["pork"]

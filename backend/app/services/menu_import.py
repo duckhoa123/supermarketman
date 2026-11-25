@@ -82,9 +82,11 @@ ingredients: the chef fills in the portions.
 - List the ingredients that cost money: proteins, noodles and rice, vegetables, herbs, sauces, dairy, bread, drinks \
 and their mixers. Leave out water, salt, pepper and a drizzle of oil (the restaurant covers those with a small \
 fixed amount per plate).
-- Use the restaurant's own inventory names, exactly as written, when it's the same ingredient. Otherwise give a \
-plain ingredient name a supplier would recognise (e.g. "Beef brisket", "Rice vermicelli", "Bean sprouts"), and \
-use the same name every time it comes up.
+- Map every ingredient to the restaurant's own inventory first. If an inventory item is the same ingredient, even \
+when it's named differently (a brand, a size, a translation, singular or plural: "Rice noodles" → "Rice vermicelli", \
+"Nuoc mam" → "Fish sauce (Red Boat)", "Eggs" → "Egg"), put that item's name, exactly as listed, in existing, and \
+use it as the ingredient. Only when nothing in the inventory fits, leave existing out and give a plain ingredient \
+name a supplier would recognise (e.g. "Beef brisket", "Bean sprouts"), using the same name every time it comes up.
 - For every ingredient that isn't in the restaurant's inventory, add it to new_ingredients once, with the unit \
 it's usually bought and counted in (kg, lb, l, each) and a category from: CATEGORIES.
 - A sauce or broth made in the kitchen can be one ingredient (e.g. "Pho broth"): don't break it down.
@@ -102,6 +104,8 @@ RECIPE_TOOL = {
                 "dish": {"type": "string", "description": "the dish name exactly as given"},
                 "lines": {"type": "array", "items": {"type": "object", "properties": {
                     "ingredient": {"type": "string"},
+                    "existing": {"type": "string",
+                                 "description": "the inventory item's exact name, when it's the same ingredient"},
                 }, "required": ["ingredient"]}},
             }, "required": ["n", "dish", "lines"]}},
             "new_ingredients": {"type": "array", "items": {"type": "object", "properties": {
@@ -266,10 +270,13 @@ def apply_recipes(dishes: list[dict], raw: dict, stock: list[Item], ingredients:
         lines, seen = [], set()
         for ln in r.get("lines") or []:
             name = re.sub(r"\s+", " ", str(ln.get("ingredient") or "")).strip()[:300]
+            if ln.get("existing") and key_of(str(ln["existing"])) in by_name:
+                name = by_name[key_of(str(ln["existing"]))].name
             if not name or key_of(name) in seen:
                 continue
             seen.add(key_of(name))
-            item = by_name.get(key_of(name))
+            # The inventory item the AI says it is, then the same name, then a close name.
+            item = by_name.get(key_of(str(ln.get("existing") or ""))) or by_name.get(key_of(name))
             match = "exact" if item is not None else None
             if item is None:
                 hit = im.match_item(name, pairs, threshold=0.85)
@@ -326,7 +333,8 @@ async def suggest(session: AsyncSession, location: Location, imp: MenuImport, di
     from app.agent.runner import record_usage
 
     stock = [i for i in await inventory.stock_items(session, location, active_only=True)]
-    names = "\n".join(f"- {i.name} ({i.unit or 'each'})" for i in stock) or "(none yet)"
+    names = "\n".join(f"- {i.name} ({i.unit or 'each'}{', ' + i.category if i.category else ''})" for i in stock) \
+        or "(none yet)"
     system = [{"type": "text", "text": RECIPE_SYSTEM.replace("CATEGORIES", ", ".join(CATEGORIES))},
               {"type": "text", "text": f"The restaurant: {location.name}, prices in {location.currency}.\n"
                                        f"Its inventory items:\n{names}", "cache_control": {"type": "ephemeral"}}]
