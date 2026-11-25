@@ -16,7 +16,7 @@ type Series = {
 };
 type Range = "daily" | "3m" | "6m" | "12m";
 const RANGES: [Range, string][] = [["daily", "Daily"], ["3m", "3 months"], ["6m", "6 months"], ["12m", "12 months"]];
-type Metric = "gross_cents" | "orders" | "avg_ticket_cents" | "tip_cents";
+type Metric = "gross_cents" | "orders";
 
 const localDay = (d: Date) => d.toLocaleDateString("en-CA");
 
@@ -40,8 +40,7 @@ export default function Today() {
 
   function points(metric: Metric): ChartPoint[] {
     if (!s) return [];
-    // An average ticket only exists when something sold: days without orders are left out, not drawn as 0.
-    return s.points.filter((p) => metric !== "avg_ticket_cents" || p.orders > 0).map((p) => {
+    return s.points.map((p) => {
       const d = new Date(`${p.start}T12:00:00`);
       const label = s.unit === "month" ? d.toLocaleDateString(undefined, { month: "short" })
         : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -54,8 +53,6 @@ export default function Today() {
   const charts: { metric: Metric; title: string; info: string; fmt: (v: number) => string }[] = [
     { metric: "gross_cents", title: "Sales", info: "Total sales before tax and tips, from your POS", fmt: compact },
     { metric: "orders", title: "Orders", info: "Number of orders (tickets) closed", fmt: whole },
-    { metric: "avg_ticket_cents", title: "Average ticket", info: "Sales ÷ orders", fmt: (v) => money(Math.round(v), cur) },
-    { metric: "tip_cents", title: "Tips", info: "Tips added on orders", fmt: compact },
   ];
 
   const kpis = [
@@ -65,8 +62,6 @@ export default function Today() {
       info: "This month so far", sub: s ? `${s.last_month_label} ${compact(s.last_month.gross_cents)}` : null },
     { label: "Orders this month", value: s ? whole(s.this_month.orders) : "–", info: "Orders closed this month so far",
       sub: s ? `${s.last_month_label} ${whole(s.last_month.orders)}` : null },
-    { label: "Average ticket", value: s?.this_month.avg_ticket_cents != null ? money(s.this_month.avg_ticket_cents, cur) : "–",
-      info: "This month: sales ÷ orders", sub: s?.last_month.avg_ticket_cents != null ? `${s.last_month_label} ${money(s.last_month.avg_ticket_cents, cur)}` : null },
     manager
       ? { label: "Food cost this month", value: cogs.data?.food_cost_pct != null ? `${cogs.data.food_cost_pct}%` : "–",
         info: "What food cost against food sales, from stock counts and invoices", warn: cogs.data?.food_cost_pct != null && cogs.data.food_cost_pct > cogs.data.target_pct,
