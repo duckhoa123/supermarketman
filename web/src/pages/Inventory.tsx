@@ -3,13 +3,14 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { flushQueue, pendingCount } from "../lib/inventory";
 import CountPanel from "./inventory/Count";
+import FoodCost from "./inventory/FoodCost";
 import Ledger from "./inventory/Ledger";
 import OnHandPanel from "./inventory/OnHand";
 import WastePanel from "./inventory/Waste";
 
-type Tab = "onhand" | "count" | "waste" | "ledger";
+type Tab = "onhand" | "count" | "waste" | "cost" | "ledger";
 const TABS: [Tab, string][] = [
-  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"],
+  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["cost", "Food cost"],
   ["ledger", "History"],
 ];
 const STAFF_TABS: Tab[] = ["onhand", "count", "waste"];  // staff count and log waste; costs are for managers
@@ -49,7 +50,6 @@ export default function Inventory() {
   }, []);
 
   if (moved) return <Navigate replace to="/menu-items" />;
-  if (asked === "cost") return <Navigate replace to="/today#food-cost" />;  // Food cost lives on Home now
   return (
     <>
       <div className="page-head">
@@ -74,6 +74,7 @@ export default function Inventory() {
       {tab === "onhand" && <OnHandPanel />}
       {tab === "count" && <CountPanel />}
       {tab === "waste" && <WastePanel />}
+      {tab === "cost" && <FoodCost />}
       {tab === "ledger" && <Ledger />}
     </>
   );

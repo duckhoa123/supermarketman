@@ -1,12 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import AreaChart, { type ChartPoint } from "../components/AreaChart";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
 import type { Dashboard } from "../lib/api";
 import { money, pct } from "../lib/format";
 import type { Cogs } from "../lib/inventory";
-import FoodCost from "./inventory/FoodCost";
 
 type Totals = { gross_cents: number; orders: number; tip_cents: number; avg_ticket_cents: number | null };
 type Series = {
@@ -25,6 +24,7 @@ export default function Today() {
   const { location } = useApp();
   const base = `/locations/${location.id}`;
   const manager = location.role !== "staff";
+  const navigate = useNavigate();
   const [range, setRange] = useState<Range>("daily");
   const today = useApi<Dashboard>(`${base}/dashboard?period=today`);
   const series = useApi<Series>(`${base}/dashboard/series?range=${range}`);
@@ -64,7 +64,7 @@ export default function Today() {
       sub: s?.last_month.orders ? `${s.last_month_label} ${whole(s.last_month.orders)}` : null },
     manager
       ? { label: "Food cost this month", value: cogs.data?.food_cost_pct != null ? `${cogs.data.food_cost_pct}%` : "–",
-        info: "What food cost against food sales, from stock counts and invoices", warn: cogs.data?.food_cost_pct != null && cogs.data.food_cost_pct > cogs.data.target_pct,
+        info: "What food cost against food sales, from stock counts and invoices", to: "/inventory?tab=cost", warn: cogs.data?.food_cost_pct != null && cogs.data.food_cost_pct > cogs.data.target_pct,
         sub: cogs.data ? `target ${cogs.data.target_pct}%` : null }
       : { label: "Review rating, 7 days", value: t?.reviews.average_rating?.toFixed(1) ?? "–", info: "Average star rating", sub: null },
   ];
@@ -84,7 +84,9 @@ export default function Today() {
 
       <div className="kpi-band">
         {kpis.map((k) => (
-          <div key={k.label} className="kpi-card">
+          <div key={k.label} className={`kpi-card ${"to" in k ? "is-link" : ""}`} role={"to" in k ? "link" : undefined}
+            tabIndex={"to" in k ? 0 : undefined} onClick={() => "to" in k && k.to && navigate(k.to)}
+            onKeyDown={(e) => e.key === "Enter" && "to" in k && k.to && navigate(k.to)}>
             <div className="kpi-head"><span>{k.label}</span><span className="info-dot tip" tabIndex={0} data-tip={k.info}>i</span></div>
             <div className={`kpi-value ${"warn" in k && k.warn ? "error" : ""}`}>{k.value}</div>
             {k.sub && <div className="kpi-sub">{k.sub}</div>}
@@ -156,16 +158,6 @@ export default function Today() {
         </div>
       )}
 
-      {manager && (
-        <section id="food-cost" className="stack home-food-cost">
-          <div>
-            <h2 style={{ margin: 0 }}>Food cost</h2>
-            <p className="small muted" style={{ margin: "4px 0 0" }}>What your food actually cost against food sales, next to
-              what your recipes say it should be.</p>
-          </div>
-          <FoodCost />
-        </section>
-      )}
     </>
   );
 }
