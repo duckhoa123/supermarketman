@@ -5,13 +5,12 @@ import { flushQueue, pendingCount } from "../lib/inventory";
 import CountPanel from "./inventory/Count";
 import FoodCost from "./inventory/FoodCost";
 import Ledger from "./inventory/Ledger";
-import MenuItems from "./inventory/MenuItems";
 import OnHandPanel from "./inventory/OnHand";
 import WastePanel from "./inventory/Waste";
 
-type Tab = "onhand" | "count" | "waste" | "menu" | "cost" | "ledger";
+type Tab = "onhand" | "count" | "waste" | "cost" | "ledger";
 const TABS: [Tab, string][] = [
-  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["menu", "Menu items"], ["cost", "Food cost"],
+  ["onhand", "Inventory items"], ["count", "Count"], ["waste", "Waste"], ["cost", "Food cost"],
   ["ledger", "History"],
 ];
 const STAFF_TABS: Tab[] = ["onhand", "count", "waste"];  // staff count and log waste; costs are for managers
@@ -22,8 +21,9 @@ export default function Inventory() {
   const { location } = useApp();
   const [params, setParams] = useSearchParams();
   const tabs = location.role === "staff" ? TABS.filter(([t]) => STAFF_TABS.includes(t)) : TABS;
-  const asked = params.get("tab") === "recipes" ? "menu" : params.get("tab");  // Recipes now live on Menu items
+  const asked = params.get("tab");
   const tab = (tabs.some(([t]) => t === asked) ? asked : "onhand") as Tab;
+  const moved = asked === "menu" || asked === "recipes";  // Menu items have their own page now
   const [pending, setPending] = useState(pendingCount());
   const [synced, setSynced] = useState("");
 
@@ -49,6 +49,7 @@ export default function Inventory() {
     };
   }, []);
 
+  if (moved) return <Navigate replace to="/menu-items" />;
   return (
     <>
       <div className="page-head">
@@ -75,12 +76,11 @@ export default function Inventory() {
       {tab === "waste" && <WastePanel />}
       {tab === "cost" && <FoodCost />}
       {tab === "ledger" && <Ledger />}
-      {tab === "menu" && <MenuItems />}
     </>
   );
 }
 
 /** The old Stock address opens the menu items tab. */
 export function OldStockLink() {
-  return <Navigate replace to="/inventory?tab=menu" />;
+  return <Navigate replace to="/menu-items" />;
 }

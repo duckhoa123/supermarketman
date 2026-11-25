@@ -29,6 +29,7 @@ import Supplies, { OldSuppliesLink } from "./pages/Supplies";
 import Inventory, { OldStockLink } from "./pages/Inventory";
 import Tables from "./pages/Tables";
 import Today from "./pages/Today";
+import MenuItemsPage from "./pages/MenuItemsPage";
 import Updates from "./pages/Updates";
 import Website from "./pages/Website";
 import Discover from "./pages/customer/Discover";
@@ -208,11 +209,12 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
   const navigate = useNavigate();
   const phone = useIsPhone();
   const nav: NavItem[] = [
-    { to: "/today", label: "Today" },
+    { to: "/today", label: "Home" },
     { to: "/plan", label: "Plan" },
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
     { to: "/inventory", label: "Inventory" },
+    ...(location.role !== "staff" ? [{ to: "/menu-items", label: "Menu items" }] : []),
     { to: "/supplies", label: "Supplies" },
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
@@ -244,6 +246,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
       <Route path="/app-orders" element={<AppOrders />} />
       <Route path="/bookings" element={<Bookings />} />
       <Route path="/inventory" element={<Inventory />} />
+      <Route path="/menu-items" element={<MenuItemsPage />} />
       <Route path="/stock" element={<OldStockLink />} />
       <Route path="/supplies" element={<Supplies />} />
       <Route path="/receiving" element={<OldSuppliesLink from="receiving" />} />
@@ -286,9 +289,9 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
           </RestaurantDock>
         </WorkProvider>
       ) : (
-        // Wider windows: the classic layout, opening on Today, with the agent in the corner.
+        // Wider windows: the classic layout, opening on Home, with the agent in the corner.
         <RestaurantDock>
-          <Shell primary={[{ to: "/", label: "Today", end: true }, ...nav.filter((n) => n.to !== "/today")]} screens={[]}
+          <Shell primary={[{ to: "/", label: "Home", end: true }, ...nav.filter((n) => n.to !== "/today")]} screens={[]}
             profile={profile} footer={picker} onSwitchAgent={() => navigate("/agents")}>
             <Routes>
               <Route path="/" element={<Today />} />

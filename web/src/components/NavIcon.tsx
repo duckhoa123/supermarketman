@@ -7,6 +7,8 @@ const PATHS: Record<string, string[]> = {
   appOrders: ["M7 3h10a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z", "M11 18h2", "M9 8h6", "M9 11h4"],
   bookings: ["M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z", "M4 10h16", "M8 3v4", "M16 3v4", "M9 15l2 2 4-4"],
   inventory: ["M21 8 12 3 3 8v8l9 5 9-5Z", "M3 8l9 5 9-5", "M12 13v8"],
+  home: ["M3 11 12 4l9 7", "M5 10v10h14V10", "M10 20v-6h4v6"],
+  menu: ["M6 3v8a2 2 0 0 0 4 0V3", "M8 11v10", "M17 3c-1.7 0-3 2.2-3 6s1.3 5 3 5v7", "M17 3v18"],
   supplies: ["M3 6h11v10H3Z", "M14 9h4l3 3v4h-7", "M7.5 18.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z", "M18.5 18.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"],
   posOrders: ["M6 3h12v18l-3-2-3 2-3-2-3 2Z", "M9 8h6", "M9 12h6", "M9 16h3"],
   tables: ["M4 9h16", "M6 9v10", "M18 9v10", "M8 5h8", "M12 5v4"],
@@ -29,7 +31,7 @@ const PATHS: Record<string, string[]> = {
 };
 
 const BY_LABEL: Record<string, string> = {
-  Chat: "chat", Today: "today", Plan: "plan", "App orders": "appOrders", Bookings: "bookings", Inventory: "inventory",
+  Chat: "chat", Today: "today", Home: "home", "Menu items": "menu", Plan: "plan", "App orders": "appOrders", Bookings: "bookings", Inventory: "inventory",
   Supplies: "supplies", "POS orders": "posOrders", Tables: "tables", Reviews: "reviews", Website: "website",
   Alerts: "alerts", Settings: "settings", Fleet: "fleet", "Working on": "working", "My shift": "shift",
   Activity: "activity", You: "you", Discover: "discover", Orders: "bag", "Food log": "foodLog", Profile: "you",
