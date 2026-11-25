@@ -319,3 +319,66 @@ async def dashboard(session: AsyncSession, location: Location, period: str = "to
         "reviews": await list_reviews(session, location, "last_7_days", limit=5),
         "trend_28d": trend,
     }
+
+
+SERIES_RANGES = {"daily": ("day", 60), "3m": ("week", 13), "6m": ("month", 6), "12m": ("month", 12)}
+
+
+def _bucket(d: date, unit: str) -> date:
+    if unit == "week":
+        return d - timedelta(days=d.weekday())
+    if unit == "month":
+        return d.replace(day=1)
+    return d
+
+
+def _months_back(d: date, n: int) -> date:
+    y, m = d.year, d.month - n
+    while m <= 0:
+        y, m = y - 1, m + 12
+    return date(y, m, 1)
+
+
+async def series(session: AsyncSession, location: Location, rng: str = "daily") -> dict:
+    """Sales, orders, average ticket and tips over time for the Home charts: by day for the last 60 days, by week
+    for 3 months, by month for 6 or 12 months. Each metric also has this month so far and last month in full, for
+    the headline number and its comparison."""
+    if rng not in SERIES_RANGES:
+        raise ValueError(f"Unknown range {rng}")
+    unit, n = SERIES_RANGES[rng]
+    today = local_today(location)
+    if unit == "day":
+        start = today - timedelta(days=n - 1)
+    elif unit == "week":
+        start = _bucket(today, "week") - timedelta(weeks=n - 1)
+    else:
+        start = _months_back(today, n - 1)
+    month_start, last_month_start = today.replace(day=1), _months_back(today, 1)
+    rows = await _daily(session, location, min(start, last_month_start), today)
+
+    buckets: dict[date, dict] = {}
+    d = start
+    while d <= today:
+        buckets.setdefault(_bucket(d, unit), {"gross_cents": 0, "orders": 0, "tip_cents": 0})
+        d += timedelta(days=1)
+    month = {"gross_cents": 0, "orders": 0, "tip_cents": 0}
+    last = {"gross_cents": 0, "orders": 0, "tip_cents": 0}
+    for r in rows:
+        values = {"gross_cents": r.gross_cents or 0, "orders": r.orders_count or 0, "tip_cents": r.tip_cents or 0}
+        if r.day >= start:
+            b = buckets[_bucket(r.day, unit)]
+            for k, v in values.items():
+                b[k] += v
+        target = month if r.day >= month_start else last if r.day >= last_month_start else None
+        if target is not None:
+            for k, v in values.items():
+                target[k] += v
+
+    def avg(x: dict) -> int | None:
+        return round(x["gross_cents"] / x["orders"]) if x["orders"] else None
+
+    points = [{"start": k.isoformat(), **v, "avg_ticket_cents": avg(v)} for k, v in sorted(buckets.items())]
+    totals = {"this_month": {**month, "avg_ticket_cents": avg(month)},
+              "last_month": {**last, "avg_ticket_cents": avg(last)},
+              "last_month_label": last_month_start.strftime("%b"), "this_month_label": month_start.strftime("%b")}
+    return {"range": rng, "unit": unit, "currency": location.currency, "points": points, **totals}

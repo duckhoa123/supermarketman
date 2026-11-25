@@ -23,6 +23,16 @@ def _bad_period(exc: ValueError):
     return HTTPException(422, str(exc))
 
 
+@router.get("/dashboard/series")
+async def get_dashboard_series(range: str = "daily", location: Location = Depends(require_location),  # noqa: A002
+                               session: AsyncSession = Depends(get_session)):
+    """Sales, orders, average ticket and tips over time, for the Home charts."""
+    try:
+        return await analytics.series(session, location, range)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.get("/dashboard")
 async def get_dashboard(period: str = "today", location: Location = Depends(require_location),
                         session: AsyncSession = Depends(get_session)):

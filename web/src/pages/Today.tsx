@@ -1,21 +1,80 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import AreaChart, { type ChartPoint } from "../components/AreaChart";
 import { useApp } from "../context";
 import { useApi } from "../hooks";
 import type { Dashboard } from "../lib/api";
-import { money, pct, PERIODS } from "../lib/format";
+import { money, pct } from "../lib/format";
+import type { Cogs } from "../lib/inventory";
 import FoodCost from "./inventory/FoodCost";
 
+type Totals = { gross_cents: number; orders: number; tip_cents: number; avg_ticket_cents: number | null };
+type Series = {
+  range: string; unit: "day" | "week" | "month"; currency: string;
+  points: (Totals & { start: string })[];
+  this_month: Totals; last_month: Totals; this_month_label: string; last_month_label: string;
+};
+type Range = "daily" | "3m" | "6m" | "12m";
+const RANGES: [Range, string][] = [["daily", "Daily"], ["3m", "3 months"], ["6m", "6 months"], ["12m", "12 months"]];
+type Metric = "gross_cents" | "orders" | "avg_ticket_cents" | "tip_cents";
+
+const localDay = (d: Date) => d.toLocaleDateString("en-CA");
+
+/** Home: the month at a glance, sales over time, today's floor, and food cost. */
 export default function Today() {
   const { location } = useApp();
-  const [period, setPeriod] = useState("today");
-  const { data, error, loading } = useApi<Dashboard>(`/locations/${location.id}/dashboard?period=${period}`);
+  const base = `/locations/${location.id}`;
+  const manager = location.role !== "staff";
+  const [range, setRange] = useState<Range>("daily");
+  const today = useApi<Dashboard>(`${base}/dashboard?period=today`);
+  const series = useApi<Series>(`${base}/dashboard/series?range=${range}`);
+  const now = new Date();
+  const cogs = useApi<Cogs>(manager ? `${base}/inventory/cogs?start=${localDay(new Date(now.getFullYear(), now.getMonth(), 1))}&end=${localDay(now)}` : null);
 
-  const s = data?.summary;
-  const change = s?.comparison?.gross_change_pct;
-  const ordersChange = s?.comparison?.orders_change_pct;
-  const maxDay = Math.max(1, ...(data?.trend_28d.map((d) => d.gross_cents) ?? [1]));
-  const hours = data?.by_hour.rows ?? [];
+  const cur = location.currency;
+  const compact = (cents: number) => new Intl.NumberFormat(undefined, {
+    style: "currency", currency: cur, notation: "compact", maximumFractionDigits: cents >= 100000 ? 2 : 0 }).format(cents / 100);
+  const whole = (n: number) => new Intl.NumberFormat(undefined, { notation: n >= 10000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(n);
+  const s = series.data;
+  const t = today.data;
+
+  function points(metric: Metric): ChartPoint[] {
+    if (!s) return [];
+    // An average ticket only exists when something sold: days without orders are left out, not drawn as 0.
+    return s.points.filter((p) => metric !== "avg_ticket_cents" || p.orders > 0).map((p) => {
+      const d = new Date(`${p.start}T12:00:00`);
+      const label = s.unit === "month" ? d.toLocaleDateString(undefined, { month: "short" })
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const tip = s.unit === "month" ? d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
+        : s.unit === "week" ? `Week of ${label}` : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return { label, tip, value: p[metric] };
+    });
+  }
+
+  const charts: { metric: Metric; title: string; info: string; fmt: (v: number) => string }[] = [
+    { metric: "gross_cents", title: "Sales", info: "Total sales before tax and tips, from your POS", fmt: compact },
+    { metric: "orders", title: "Orders", info: "Number of orders (tickets) closed", fmt: whole },
+    { metric: "avg_ticket_cents", title: "Average ticket", info: "Sales ÷ orders", fmt: (v) => money(Math.round(v), cur) },
+    { metric: "tip_cents", title: "Tips", info: "Tips added on orders", fmt: compact },
+  ];
+
+  const kpis = [
+    { label: "Sales today", value: t?.summary.gross ?? "–", info: "So far today, before tax and tips",
+      sub: t?.summary.comparison?.gross_change_pct != null ? `${pct(t.summary.comparison.gross_change_pct)} vs last week` : null },
+    { label: `Sales in ${s?.this_month_label ?? "this month"}`, value: s ? compact(s.this_month.gross_cents) : "–",
+      info: "This month so far", sub: s ? `${s.last_month_label} ${compact(s.last_month.gross_cents)}` : null },
+    { label: "Orders this month", value: s ? whole(s.this_month.orders) : "–", info: "Orders closed this month so far",
+      sub: s ? `${s.last_month_label} ${whole(s.last_month.orders)}` : null },
+    { label: "Average ticket", value: s?.this_month.avg_ticket_cents != null ? money(s.this_month.avg_ticket_cents, cur) : "–",
+      info: "This month: sales ÷ orders", sub: s?.last_month.avg_ticket_cents != null ? `${s.last_month_label} ${money(s.last_month.avg_ticket_cents, cur)}` : null },
+    manager
+      ? { label: "Food cost this month", value: cogs.data?.food_cost_pct != null ? `${cogs.data.food_cost_pct}%` : "–",
+        info: "What food cost against food sales, from stock counts and invoices", warn: cogs.data?.food_cost_pct != null && cogs.data.food_cost_pct > cogs.data.target_pct,
+        sub: cogs.data ? `target ${cogs.data.target_pct}%` : null }
+      : { label: "Review rating, 7 days", value: t?.reviews.average_rating?.toFixed(1) ?? "–", info: "Average star rating", sub: null },
+  ];
+
+  const hours = t?.by_hour.rows ?? [];
   const maxHour = Math.max(1, ...hours.map((h) => h.gross_cents));
 
   return (
@@ -23,129 +82,86 @@ export default function Today() {
       <div className="page-head">
         <div>
           <h1>Home</h1>
-          <p>Sales {(PERIODS.find((p) => p.value === period)?.label ?? "").toLowerCase()}: {s?.note ?? `${location.name}, updated from your POS`}</p>
-        </div>
-        <div className="seg" role="group" aria-label="Period">
-          {PERIODS.map((p) => (
-            <button key={p.value} className={p.value === period ? "on" : ""} onClick={() => setPeriod(p.value)}>
-              {p.label}
-            </button>
-          ))}
+          <p>{location.name}, updated from your POS{t?.as_of ? ` · as of ${new Date(t.as_of).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : ""}</p>
         </div>
       </div>
+      {(today.error || series.error) && <p className="error">{today.error || series.error}</p>}
 
-      {error && <p className="error">{error}</p>}
-      {loading && !data && <p className="muted">Loading…</p>}
+      <div className="kpi-band">
+        {kpis.map((k) => (
+          <div key={k.label} className="kpi-card">
+            <div className="kpi-head"><span>{k.label}</span><span className="info-dot tip" tabIndex={0} data-tip={k.info}>i</span></div>
+            <div className={`kpi-value ${"warn" in k && k.warn ? "error" : ""}`}>{k.value}</div>
+            {k.sub && <div className="kpi-sub">{k.sub}</div>}
+          </div>
+        ))}
+      </div>
 
-      {data && s && (
-        <>
-          <div className="figures">
-            <div className="figure">
-              <div className="label">Sales</div>
-              <div className="value">{s.gross}</div>
-              {change !== null && change !== undefined && (
-                <div className={change >= 0 ? "up small" : "down small"}>
-                  {pct(change)} vs same days last week
+      <div className="seg range-seg" role="group" aria-label="Range">
+        {RANGES.map(([r, label]) => (
+          <button key={r} className={r === range ? "on" : ""} onClick={() => setRange(r)}>{label}</button>
+        ))}
+      </div>
+
+      <div className="chart-grid">
+        {charts.map((c) => {
+          const now = s?.this_month[c.metric];
+          const before = s?.last_month[c.metric];
+          return (
+            <section key={c.metric} className="chart-card">
+              <div className="chart-head">
+                <h2>{c.title}</h2>
+                <span className="info-dot tip" tabIndex={0} data-tip={c.info}>i</span>
+              </div>
+              <div className="chart-figure">
+                <strong>{now != null ? c.fmt(now) : "–"}</strong>
+                {before != null && <span>{s!.last_month_label} {c.fmt(before)}</span>}
+              </div>
+              {s ? <AreaChart points={points(c.metric)} format={c.fmt} name={`${c.title} over time`} /> : <div className="chart-empty muted small">Loading…</div>}
+              <div className="chart-legend"><span className="legend-swatch" />{c.title}</div>
+            </section>
+          );
+        })}
+      </div>
+
+      {t && (
+        <div className="chart-grid three">
+          <section className="chart-card">
+            <div className="chart-head"><h2>Today by hour</h2></div>
+            {hours.length === 0 ? <p className="empty">No sales yet today.</p> : (
+              <>
+                <div className="bars">
+                  {hours.map((h) => (
+                    <div key={h.hour} className="bar" style={{ height: `${(h.gross_cents / maxHour) * 100}%` }}
+                      title={`${h.hour}: ${money(h.gross_cents, cur)}`} />
+                  ))}
                 </div>
-              )}
-            </div>
-            <div className="figure">
-              <div className="label">Orders</div>
-              <div className="value">{s.orders}</div>
-              {ordersChange != null && <div className="small muted">{pct(ordersChange)} vs last week</div>}
-            </div>
-            <div className="figure">
-              <div className="label">Average ticket</div>
-              <div className="value">{s.avg_ticket}</div>
-            </div>
-            <div className="figure">
-              <div className="label">Review rating, 7 days</div>
-              <div className="value">{data.reviews.average_rating?.toFixed(1) ?? "–"}</div>
-            </div>
-          </div>
-
-          <div className="grid two">
-            <section className="panel">
-              <h2>Last 28 days</h2>
-              <div className="bars" aria-label="Daily sales for the last 28 days">
-                {data.trend_28d.map((d, i) => (
-                  <div
-                    key={d.day}
-                    className={`bar ${i === data.trend_28d.length - 1 ? "today" : ""}`}
-                    style={{ height: `${(d.gross_cents / maxDay) * 100}%` }}
-                    title={`${d.day}: ${money(d.gross_cents, location.currency)}`}
-                  />
-                ))}
-              </div>
-              <div className="bars-axis">
-                <span>{data.trend_28d[0]?.day.slice(5)}</span>
-                <span>Today</span>
-              </div>
-            </section>
-
-            <section className="panel">
-              <h2>Sales by hour</h2>
-              {hours.length === 0 ? (
-                <p className="empty">No sales in this period yet.</p>
-              ) : (
-                <>
-                  <div className="bars">
-                    {hours.map((h) => (
-                      <div
-                        key={h.hour}
-                        className="bar"
-                        style={{ height: `${(h.gross_cents / maxHour) * 100}%` }}
-                        title={`${h.hour}: ${money(h.gross_cents, location.currency)}`}
-                      />
-                    ))}
-                  </div>
-                  <div className="bars-axis">
-                    <span>{hours[0].hour}</span>
-                    <span>{hours[hours.length - 1].hour}</span>
-                  </div>
-                </>
-              )}
-            </section>
-
-            <section className="panel">
-              <h2>Best sellers</h2>
-              <ul className="list">
-                {data.top_items.rows.map((r) => (
-                  <li key={r.name} className="spread">
-                    <span>{r.name}</span>
-                    <span className="muted">
-                      {r.qty} sold · {r.revenue}
-                    </span>
-                  </li>
-                ))}
-                {data.top_items.rows.length === 0 && <li className="muted">No items sold yet.</li>}
-              </ul>
-            </section>
-
-            <section className="panel">
-              <div className="spread" style={{ marginBottom: 12 }}>
-                <h2 style={{ margin: 0 }}>Running low</h2>
-                <Link to="/inventory" className="small">
-                  All stock
-                </Link>
-              </div>
-              <ul className="list">
-                {data.low_stock.items.map((i) => (
-                  <li key={i.id} className="spread">
-                    <span>{i.name}</span>
-                    <span className="pill low">
-                      {i.stock_qty} {i.unit ?? "left"}
-                    </span>
-                  </li>
-                ))}
-                {data.low_stock.items.length === 0 && <li className="muted">Nothing is below its alert level.</li>}
-              </ul>
-            </section>
-          </div>
-        </>
+                <div className="bars-axis"><span>{hours[0].hour}</span><span>{hours[hours.length - 1].hour}</span></div>
+              </>
+            )}
+          </section>
+          <section className="chart-card">
+            <div className="chart-head"><h2>Best sellers today</h2></div>
+            <ul className="list">
+              {t.top_items.rows.map((r) => (
+                <li key={r.name} className="spread"><span>{r.name}</span><span className="muted">{r.qty} sold · {r.revenue}</span></li>
+              ))}
+              {t.top_items.rows.length === 0 && <li className="muted">No items sold yet.</li>}
+            </ul>
+          </section>
+          <section className="chart-card">
+            <div className="chart-head"><h2>Running low</h2><Link to="/inventory" className="small">All stock</Link></div>
+            <ul className="list">
+              {t.low_stock.items.map((i) => (
+                <li key={i.id} className="spread"><span>{i.name}</span><span className="pill low">{i.stock_qty} {i.unit ?? "left"}</span></li>
+              ))}
+              {t.low_stock.items.length === 0 && <li className="muted">Nothing is below its alert level.</li>}
+            </ul>
+          </section>
+        </div>
       )}
 
-      {location.role !== "staff" && (
+      {manager && (
         <section id="food-cost" className="stack home-food-cost">
           <div>
             <h2 style={{ margin: 0 }}>Food cost</h2>
