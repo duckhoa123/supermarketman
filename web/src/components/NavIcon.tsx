@@ -31,7 +31,7 @@ const PATHS: Record<string, string[]> = {
 };
 
 const BY_LABEL: Record<string, string> = {
-  Chat: "chat", Today: "today", Home: "home", "Menu items": "menu", Plan: "plan", "App orders": "appOrders", Bookings: "bookings", Inventory: "inventory",
+  Chat: "chat", Today: "today", Home: "home", Menu: "menu", Plan: "plan", "App orders": "appOrders", Bookings: "bookings", Inventory: "inventory",
   Supplies: "supplies", "POS orders": "posOrders", Tables: "tables", Reviews: "reviews", Website: "website",
   Alerts: "alerts", Settings: "settings", Fleet: "fleet", "Working on": "working", "My shift": "shift",
   Activity: "activity", You: "you", Discover: "discover", Orders: "bag", "Food log": "foodLog", Profile: "you",

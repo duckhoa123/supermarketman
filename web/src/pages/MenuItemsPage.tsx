@@ -10,7 +10,7 @@ export default function MenuItemsPage() {
     <>
       <div className="page-head">
         <div>
-          <h1>Menu items</h1>
+          <h1>Menu</h1>
           <p>What you sell, with each dish's recipe, plate cost and food cost. Import your menu to set them up.</p>
         </div>
       </div>

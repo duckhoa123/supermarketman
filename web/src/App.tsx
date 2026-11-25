@@ -214,7 +214,7 @@ function RestaurantApp({ me, refreshMe, setMode }: ModeProps) {
     { to: "/app-orders", label: "App orders" },
     { to: "/bookings", label: "Bookings" },
     { to: "/inventory", label: "Inventory" },
-    ...(location.role !== "staff" ? [{ to: "/menu-items", label: "Menu items" }] : []),
+    ...(location.role !== "staff" ? [{ to: "/menu-items", label: "Menu" }] : []),
     { to: "/supplies", label: "Supplies" },
     { to: "/orders", label: "POS orders" },
     { to: "/tables", label: "Tables" },
