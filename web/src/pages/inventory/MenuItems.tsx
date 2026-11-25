@@ -115,7 +115,7 @@ export default function MenuItems() {
             </button>
           )}
           <button className="btn" onClick={() => setSettings(true)} title="Food cost targets and how ingredients are costed">⚙ Cost settings</button>
-          <button className="btn" onClick={() => setImporting(true)} title="Add new menu items and their recipes from your menu">📄 Import menu</button>
+          <button className="btn" onClick={() => setImporting(true)} title="Add new menu items and their recipes from your menu">✨ Import menu</button>
           <button className="btn primary" onClick={() => setEditing("new")}>+ Add item</button>
         </div>
       </div>

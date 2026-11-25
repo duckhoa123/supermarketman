@@ -282,6 +282,9 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
               <label><span className="small muted">Price ($)</span>
                 <input className="input" type="number" step="0.01" min={0} value={money(d.price_cents)}
                   onChange={(e) => setDish(d.key, { price_cents: e.target.value ? Math.round(Number(e.target.value) * 100) : null })} /></label>
+              <label className="mi-desc"><span className="small muted">Description</span>
+                <textarea className="input" rows={2} maxLength={500} value={d.description ?? ""} placeholder="e.g. Rare beef, rice noodles, herbs"
+                  onChange={(e) => setDish(d.key, { description: e.target.value || null })} /></label>
             </div>
             <div className="mi-lines">
               <div className="mi-line mi-line-head small muted">

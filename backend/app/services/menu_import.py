@@ -539,6 +539,8 @@ async def confirm(session: AsyncSession, location: Location, imp: MenuImport, us
             except pos_write.PosError as exc:
                 errors.append(f"{d['name']}: couldn't add it to the menu ({exc})")
                 continue
+            if (d.get("description") or "").strip():
+                menu.description = d["description"].strip()[:1000]  # shown on the website and the app menu
             created_dishes.append(menu.name)
             d["menu_item_id"] = menu.id
         lines = [{"ingredient_id": ln.get("item_id") or made[key_of(ln["ingredient"])].id,

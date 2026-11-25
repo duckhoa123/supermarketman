@@ -107,7 +107,7 @@ async def test_by_hand_without_a_menu(client, session, demo_location_id):
     r = await client.post(f"/locations/{demo_location_id}/menu-imports/blank", headers=OWNER)
     assert r.status_code == 200 and r.json()["status"] == "review" and r.json()["dishes"] == []
     base = f"/locations/{demo_location_id}/menu-imports/{r.json()['id']}"
-    dish = {"key": "k1", "name": "Mango Sticky Rice", "price_cents": 900, "lines": [
+    dish = {"key": "k1", "name": "Mango Sticky Rice", "price_cents": 900, "description": "Coconut sticky rice", "lines": [
         {"ingredient": "Mango", "qty": 0}, {"ingredient": "", "qty": 0}]}
     await client.put(base, headers=OWNER, json={"dishes": [dish, {**dish, "key": "k2", "name": "Tiramisu"}],
                                                 "ingredients": {}})
@@ -116,6 +116,8 @@ async def test_by_hand_without_a_menu(client, session, demo_location_id):
     await client.put(base, headers=OWNER, json={"dishes": [dish], "ingredients": {}})
     out = (await client.post(f"{base}/confirm", headers=OWNER)).json()
     assert out["dishes_created"] == ["Mango Sticky Rice"] and out["items_created"] == ["Mango"]
+    mango = await session.scalar(select(Item).where(Item.location_id == demo_location_id, Item.name == "Mango Sticky Rice"))
+    assert mango.description == "Coconut sticky rice"
 
 
 def out_id(base: str) -> str:

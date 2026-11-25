@@ -1196,3 +1196,5 @@ button.mi-stat:hover { border-color: var(--basil); }
   .kpi-value { font-size: 1.35rem; }
   .chart-grid, .chart-grid.three { grid-template-columns: 1fr; }
 }
+.mi-desc { grid-column: 1 / -1; }
+.mi-desc textarea { resize: vertical; font: inherit; }
