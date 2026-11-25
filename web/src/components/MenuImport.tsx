@@ -43,7 +43,6 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
   const [dirty, setDirty] = useState(false);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const file = useRef<HTMLInputElement>(null);
-  const camera = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLElement>(null);
   const itemsRef = useRef<HTMLElement>(null);
   const missingRef = useRef<HTMLElement>(null);
@@ -337,13 +336,10 @@ export default function MenuImport({ base, stock, onClose, onDone }: {
           <div className="mi-drop">
             <input ref={file} type="file" hidden accept="image/*,application/pdf,.xlsx,.csv,.tsv,text/csv"
               onChange={(e) => void start(e.target.files?.[0])} />
-            <input ref={camera} type="file" hidden accept="image/*" capture="environment"
-              onChange={(e) => void start(e.target.files?.[0])} />
             <div className="row" style={{ justifyContent: "center" }}>
               <button className="btn primary" disabled={busy !== ""} onClick={() => file.current?.click()}>
-                {busy === "upload" ? "Uploading…" : "Choose a file"}
+                {busy === "upload" ? "Uploading…" : "Upload"}
               </button>
-              <button className="btn" disabled={busy !== ""} onClick={() => camera.current?.click()}>📷 Take a photo</button>
             </div>
             <p className="small muted">A photo or PDF of the menu, or an Excel (.xlsx) or CSV list of your dishes</p>
           </div>
