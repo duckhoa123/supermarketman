@@ -3,8 +3,9 @@ import { ItemDialog, Dialog } from "../../components/PosDialogs";
 import { pctClass, RecipeEditor } from "../../components/RecipeEditor";
 import { useApp } from "../../context";
 import MenuImport from "../../components/MenuImport";
+import RecipeView from "../../components/RecipeView";
 import { useApi } from "../../hooks";
-import { api, type InventoryItem } from "../../lib/api";
+import { API_URL, api, type InventoryItem } from "../../lib/api";
 import { money, qty, type MenuCost, type OnHand, type RecipeReport } from "../../lib/inventory";
 
 type SortKey = "name" | "price" | "plate" | "pct" | "margin" | "sold" | "change";
@@ -26,6 +27,14 @@ export default function MenuItems() {
   const [recipeFor, setRecipeFor] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [layout, setLayout] = useState<"cards" | "table">(() => {
+    try { return localStorage.getItem("pass.menu.layout") === "table" ? "table" : "cards"; } catch { return "cards"; }
+  });
+  const chooseLayout = (l: "cards" | "table") => {
+    setLayout(l);
+    try { localStorage.setItem("pass.menu.layout", l); } catch { /* private mode */ }
+  };
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -107,6 +116,10 @@ export default function MenuItems() {
           <button className={filter === "none" ? "chip on" : "chip"} onClick={() => { setFilter("none"); setSort({ key: "sold", desc: true }); }}>No recipe <b>{noRecipe}</b></button>
         </div>
         <div className="row">
+          <div className="seg" role="group" aria-label="Layout">
+            <button className={layout === "cards" ? "on" : ""} onClick={() => chooseLayout("cards")} title="Cards">▦ Cards</button>
+            <button className={layout === "table" ? "on" : ""} onClick={() => chooseLayout("table")} title="Cost table">☰ Table</button>
+          </div>
           <input className="input" style={{ width: 170 }} placeholder="Search dishes" value={search} onChange={(e) => setSearch(e.target.value)} />
           {picked.size > 0 && (
             <button className="btn danger" disabled={deleting}
@@ -120,7 +133,36 @@ export default function MenuItems() {
         </div>
       </div>
 
-      <div className="panel table-wrap inv-table-wrap">
+      {layout === "cards" && (
+        <>
+          <p className="small muted" style={{ margin: 0 }}>{rows.length} menu item{rows.length === 1 ? "" : "s"}</p>
+          <div className="dish-grid">
+            {rows.map((r) => (
+              <button key={r.id} className={`dish-card ${r.over_target ? "is-over" : ""}`} onClick={() => setViewing(r.id)}>
+                <div className="dish-photo">
+                  {d.logo_path ? <img src={`${API_URL}${d.logo_path}`} alt="" loading="lazy" />
+                    : <span className="dish-initial" aria-hidden>{r.name.trim().charAt(0).toUpperCase()}</span>}
+                </div>
+                <div className="dish-body">
+                  <span className="dish-pill">{r.category || "Menu"} · Menu item</span>
+                  <h3 className="dish-name">{r.name}</h3>
+                  <p className="dish-desc">{r.description || " "}</p>
+                </div>
+                <div className="dish-foot">
+                  <span>{money(r.price_cents)}</span>
+                  <span>{r.has_recipe ? `Plate ${money(r.plate_cost_cents)}` : ""}</span>
+                  <span className={r.food_cost_pct != null ? pctClass(r.food_cost_pct, r.target_pct) : "muted"}>
+                    {r.food_cost_pct != null ? `${r.food_cost_pct}% cost` : r.has_recipe ? "Recipe set" : "No recipe"}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+          {rows.length === 0 && <p className="empty">{d.menu.length ? (filter === "none" ? "Every dish has a recipe." : "No dishes match.") : "No menu items yet. Import your menu or add one."}</p>}
+        </>
+      )}
+
+      {layout === "table" && <div className="panel table-wrap inv-table-wrap">
         <table className="data inv-cost-table">
           <thead><tr>
             <th className="sortable" style={{ width: 28 }}>
@@ -171,7 +213,13 @@ export default function MenuItems() {
         {rows.length === 0 && (
           <p className="empty">{d.menu.length ? (filter === "none" ? "Every dish has a recipe." : "No dishes match.") : "No menu items with a price yet. Add one, or connect Clover in Settings."}</p>
         )}
-      </div>
+      </div>}
+
+      {viewing && (
+        <RecipeView base={base} itemId={viewing} onClose={() => setViewing(null)}
+          onEditRecipe={() => { setRecipeFor(viewing); setViewing(null); }}
+          onEditItem={byId[viewing] ? () => { setEditing(byId[viewing]); setViewing(null); } : undefined} />
+      )}
 
       {editing && (
         <ItemDialog locationId={location.id} item={editing === "new" ? null : editing} categories={categories}

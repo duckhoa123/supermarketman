@@ -734,6 +734,17 @@ async def _previous_costs(session: AsyncSession, ids: list[str]) -> dict[str, tu
     return out
 
 
+async def _logo_path(session: AsyncSession, location: Location) -> str | None:
+    """The restaurant's logo from its website, to show on the menu cards."""
+    from app.models import Website
+
+    site = await session.scalar(select(Website).where(Website.location_id == location.id))
+    if site is None:
+        return None
+    logo = ((site.published or site.draft or {}).get("layout") or {}).get("logo")
+    return f"/sites/{site.slug}/assets/{logo}" if logo else None
+
+
 @router.get("/recipes")
 async def list_recipes(location: Location = Depends(require_manager), session: AsyncSession = Depends(get_session)):
     """The menu cost report: every menu item with plate cost, food cost %, margin and the change since last time,
@@ -754,6 +765,7 @@ async def list_recipes(location: Location = Depends(require_manager), session: A
         plate = costing.plate(m.id) if has else None
         qty, revenue = sold.get(m.name.strip().lower(), (0.0, 0))
         row = {"id": m.id, "name": m.name, "category": m.category, "price_cents": m.price_cents,
+               "description": m.description,
                "has_recipe": has, "ingredients": len(plate.lines) if plate else 0,
                "complete": plate.complete if plate else False, "sold_30d": qty, "revenue_30d_cents": revenue,
                "plate_cost_cents": None, "food_cost_pct": None, "suggested_price_cents": None, "margin_cents": None,
@@ -780,7 +792,8 @@ async def list_recipes(location: Location = Depends(require_manager), session: A
                       "batch_cost_cents": round(batch.cost_cents) if batch else None,
                       "unit_cost": round(unit_cost, 4) if unit_cost is not None else None,
                       "stock_qty": p.stock_qty})
-    return {"menu": rows, "prep": preps, "todo": todo, "target_food_cost_pct": location.target_food_cost_pct,
+    return {"menu": rows, "prep": preps, "logo_path": await _logo_path(session, location),
+            "todo": todo, "target_food_cost_pct": location.target_food_cost_pct,
             "target_beverage_cost_pct": location.target_beverage_cost_pct,
             "with_recipe": sum(r["has_recipe"] for r in rows), "sellers": sum(r["sold_30d"] > 0 for r in rows),
             "over_target": sum(r["over_target"] for r in rows),
@@ -807,7 +820,7 @@ async def recipe_detail(session: AsyncSession, location: Location, menu: Item) -
                                          .order_by(PlateCostHistory.created_at.desc()).limit(20)))
     target = inv.target_for(menu, location)
     out = {"id": menu.id, "name": menu.name, "category": menu.category, "price_cents": menu.price_cents,
-           "provider": menu.provider,
+           "provider": menu.provider, "description": menu.description,
            "is_prep": inv.is_prep(menu), "batch_qty": menu.batch_qty, "unit": menu.unit,
            "q_factor_cents": menu.q_factor_cents, "q_factor_pct": menu.q_factor_pct, "recipe_notes": menu.recipe_notes,
            "item_target_pct": menu.target_food_cost_pct,

@@ -50,6 +50,7 @@ export type Count = { id: string; area: string; storage_area_id: string | null; 
 
 export type MenuCost = {
   id: string; name: string; category: string | null; price_cents: number; has_recipe: boolean; ingredients: number;
+  description?: string | null;
   complete: boolean; sold_30d: number; revenue_30d_cents: number; plate_cost_cents: number | null;
   food_cost_pct: number | null; suggested_price_cents: number | null; margin_cents: number | null;
   target_pct: number; over_target: boolean; previous_cost_cents: number | null; previous_at: string | null;
@@ -57,7 +58,8 @@ export type MenuCost = {
 export type PrepCost = { id: string; name: string; unit: string | null; batch_qty: number; has_recipe: boolean;
   complete: boolean; ingredients: number; batch_cost_cents: number | null; unit_cost: number | null; stock_qty: number | null };
 export type RecipeReport = { menu: MenuCost[]; prep: PrepCost[]; todo: MenuCost[]; target_food_cost_pct: number;
-  target_beverage_cost_pct: number; with_recipe: number; sellers: number; over_target: number; theoretical_pct: number | null };
+  target_beverage_cost_pct: number; with_recipe: number; sellers: number; over_target: number; theoretical_pct: number | null;
+  logo_path?: string | null };
 
 export type RecipeLineOut = { id: string; ingredient_id: string; name: string; qty: number; unit: string | null;
   stock_unit: string | null; yield_pct: number; is_prep: boolean; conversions: Conversion[]; stock_qty: number | null;
@@ -65,6 +67,7 @@ export type RecipeLineOut = { id: string; ingredient_id: string; name: string; q
 
 export type RecipeDetail = {
   id: string; name: string; category: string | null; price_cents: number; provider: string; is_prep: boolean; batch_qty: number | null;
+  description?: string | null;
   unit: string | null; q_factor_cents: number | null; q_factor_pct: number | null; recipe_notes: string | null;
   item_target_pct: number | null; recipe_since: string | null; complete: boolean; target_food_cost_pct: number;
   ingredients_cents: number; q_cents: number; plate_cost_cents: number; food_cost_pct: number | null;

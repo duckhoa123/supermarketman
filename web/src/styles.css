@@ -1,6 +1,7 @@
 /* Pass — tokens */
 :root {
   --basil: #2f5d50;
+  --serif: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
   --basil-strong: #244a40;
   --basil-tint: #e3ece8;
   --tomato: #c8402f;
@@ -1198,3 +1199,39 @@ button.mi-stat:hover { border-color: var(--basil); }
 }
 .mi-desc { grid-column: 1 / -1; }
 .mi-desc textarea { resize: vertical; font: inherit; }
+
+/* Menu cards and the recipe view */
+.dish-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 22px; }
+.dish-card { display: flex; flex-direction: column; text-align: left; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); cursor: pointer; overflow: hidden; font: inherit; color: var(--ink); transition: box-shadow 0.15s, transform 0.15s; }
+.dish-card:hover { box-shadow: 0 8px 24px rgba(20, 24, 20, 0.08); transform: translateY(-1px); }
+.dish-card.is-over { border-color: var(--tomato-tint); }
+.dish-photo { height: 190px; display: grid; place-items: center; background: var(--surface); padding: 14px; }
+.dish-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.dish-initial { width: 100%; height: 100%; display: grid; place-items: center; border-radius: 10px; background: linear-gradient(135deg, var(--basil-tint), var(--page)); color: var(--basil-strong); font-family: var(--serif); font-size: 4rem; }
+.dish-body { padding: 8px 28px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.dish-pill { align-self: flex-start; padding: 3px 9px; border-radius: 6px; background: var(--basil-tint); color: var(--basil-strong); font-size: 0.74rem; }
+.dish-name { margin: 2px 0 0; font-family: var(--serif); font-weight: 400; font-size: 1.85rem; line-height: 1.15; }
+.dish-desc { margin: 0; color: var(--muted); font-size: 0.98rem; min-height: 1.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dish-foot { display: flex; justify-content: space-between; gap: 8px; margin: 0 28px; padding: 14px 0 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.92rem; }
+.rv-title { display: flex; flex-direction: column; gap: 4px; }
+.rv-title > span { font-family: var(--serif); font-weight: 400; font-size: 2.3rem; line-height: 1.1; }
+.rv-title small { font-size: 0.95rem; font-weight: 400; color: var(--muted); }
+.rv-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.rv-price { color: var(--muted); }
+.rv-make { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.rv-make .input { width: 90px; font-size: 1.1rem; }
+.rv-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 48px; margin-top: 6px; }
+.rv-h { font-family: var(--serif); font-weight: 400; font-size: 1.75rem; margin: 0 0 12px; }
+.rv-list { list-style: none; margin: 0; padding: 0; }
+.rv-list li { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 1.02rem; }
+.rv-qty { white-space: nowrap; }
+.rv-steps { margin: 0; padding-left: 1.6em; display: flex; flex-direction: column; gap: 22px; font-size: 1.05rem; line-height: 1.6; }
+.rv-steps li::marker { font-family: var(--serif); color: var(--muted); }
+.rv-box { margin-top: 22px; padding: 16px 20px; border-radius: 12px; background: var(--page); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; font-size: 0.92rem; }
+@media (max-width: 760px) {
+  .rv-cols { grid-template-columns: 1fr; gap: 26px; }
+  .rv-make { margin-left: 0; }
+  .dish-body { padding: 8px 18px 14px; }
+  .dish-foot { margin: 0 18px; }
+  .dish-name { font-size: 1.5rem; }
+}
