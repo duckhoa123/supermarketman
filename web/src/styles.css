@@ -1235,3 +1235,10 @@ button.mi-stat:hover { border-color: var(--basil); }
   .dish-foot { margin: 0 18px; }
   .dish-name { font-size: 1.5rem; }
 }
+.kind-seg { align-self: flex-start; }
+.kind-seg b { margin-left: 4px; font-weight: 600; color: var(--muted); }
+.new-prep { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px dashed var(--basil); border-radius: var(--radius-m); background: var(--page); }
+.new-prep-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.new-prep-row label { display: flex; flex-direction: column; gap: 3px; }
+.new-prep-row label:first-child { flex: 1; min-width: 200px; }
+.dish-foot > span { white-space: nowrap; }

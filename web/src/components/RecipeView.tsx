@@ -5,8 +5,8 @@ import { pctClass } from "./RecipeEditor";
 import { Dialog } from "./PosDialogs";
 
 /** A menu item's recipe to read: what goes in (scaled to how many plates), how to make it, and what it costs. */
-export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEditItem }: {
-  base: string; itemId: string; onClose: () => void; onEditRecipe: () => void; onEditItem?: () => void;
+export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEditItem, onMake }: {
+  base: string; itemId: string; onClose: () => void; onEditRecipe: () => void; onEditItem?: () => void; onMake?: () => void;
 }) {
   const { data: r, error } = useApi<RecipeDetail>(`${base}/recipes/${itemId}`);
   const [make, setMake] = useState("1");
@@ -23,21 +23,24 @@ export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEdit
   return (
     <Dialog title={title} onClose={onClose} width="min(1000px, 100%)"
       footer={<div className="row" style={{ marginLeft: "auto" }}>
-        {onEditItem && <button className="btn" onClick={onEditItem}>Edit item</button>}
+        {onMake && <button className="btn" onClick={onMake}>Made a batch</button>}
+        {onEditItem && !r?.is_prep && <button className="btn" onClick={onEditItem}>Edit item</button>}
         <button className="btn primary" onClick={onEditRecipe}>{r?.lines.length ? "Edit recipe" : "+ Add recipe"}</button>
       </div>}>
       {error && <p className="error">{error}</p>}
       {!r ? <p className="muted">Loading…</p> : (
         <div className="stack rv">
           <div className="rv-meta">
-            <span className="dish-pill">{r.category || "Menu"} · Menu item</span>
-            {r.price_cents > 0 && <span className="rv-price">{money(r.price_cents)}</span>}
+            <span className="dish-pill">{r.is_prep ? "Prep item" : `${r.category || "Menu"} · Menu item`}</span>
+            {!r.is_prep && r.price_cents > 0 && <span className="rv-price">{money(r.price_cents)}</span>}
             <label className="rv-make">Make
-              <input className="input" type="number" min={1} step={1} value={make} onChange={(e) => setMake(e.target.value)} aria-label="Plates" />
-              plate{n === 1 ? "" : "s"}
+              <input className="input" type="number" min={1} step={1} value={make} onChange={(e) => setMake(e.target.value)} aria-label={r.is_prep ? "Batches" : "Plates"} />
+              {r.is_prep ? `batch${n === 1 ? "" : "es"}` : `plate${n === 1 ? "" : "s"}`}
             </label>
           </div>
-          {n !== 1 && <p className="small muted" style={{ margin: 0 }}>Recipe is for one plate. Quantities below are scaled to {qty(n)} plates.</p>}
+          {r.is_prep
+            ? <p className="small muted" style={{ margin: 0 }}>One batch makes {qty(r.batch_qty)} {r.unit === "l" ? "L" : r.unit ?? ""}.{n !== 1 ? ` Quantities below are for ${qty(n)} batches (${qty((r.batch_qty ?? 0) * n)} ${r.unit === "l" ? "L" : r.unit ?? ""}).` : ""}</p>
+            : n !== 1 && <p className="small muted" style={{ margin: 0 }}>Recipe is for one plate. Quantities below are scaled to {qty(n)} plates.</p>}
           <div className="rv-cols">
             <section>
               <h3 className="rv-h">Ingredients</h3>
@@ -51,8 +54,9 @@ export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEdit
               {r.lines.length > 0 && (
                 <div className="rv-box">
                   <strong>Cost</strong>
-                  <span>Plate cost {money(r.plate_cost_cents)}{!r.complete && " (some ingredients have no cost yet)"}</span>
-                  {r.food_cost_pct != null && <span>Food cost <b className={pctClass(r.food_cost_pct, r.target_food_cost_pct)}>{r.food_cost_pct}%</b> · target {r.item_target_pct ?? r.target_food_cost_pct}%</span>}
+                  <span>{r.is_prep ? "Batch cost" : "Plate cost"} {money(r.plate_cost_cents)}{!r.complete && " (some ingredients have no cost yet)"}</span>
+                  {r.is_prep && r.batch_qty ? <span>Per {r.unit === "l" ? "L" : r.unit ?? "unit"}: {money(r.plate_cost_cents / r.batch_qty)}</span> : null}
+                  {!r.is_prep && r.food_cost_pct != null && <span>Food cost <b className={pctClass(r.food_cost_pct, r.target_food_cost_pct)}>{r.food_cost_pct}%</b> · target {r.item_target_pct ?? r.target_food_cost_pct}%</span>}
                 </div>
               )}
             </section>

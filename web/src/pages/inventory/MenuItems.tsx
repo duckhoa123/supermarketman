@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { ItemDialog, Dialog } from "../../components/PosDialogs";
-import { pctClass, RecipeEditor } from "../../components/RecipeEditor";
+import { MakeDialog, pctClass, RecipeEditor } from "../../components/RecipeEditor";
 import { useApp } from "../../context";
 import MenuImport from "../../components/MenuImport";
+import NewPrep from "../../components/NewPrep";
 import RecipeView from "../../components/RecipeView";
 import { useApi } from "../../hooks";
 import { API_URL, api, type InventoryItem } from "../../lib/api";
-import { money, qty, type MenuCost, type OnHand, type RecipeReport } from "../../lib/inventory";
+import { money, qty, type MenuCost, type OnHand, type PrepCost, type RecipeReport } from "../../lib/inventory";
 
 type SortKey = "name" | "price" | "plate" | "pct" | "margin" | "sold" | "change";
 type Filter = "all" | "over" | "none";
@@ -28,6 +29,9 @@ export default function MenuItems() {
   const [settings, setSettings] = useState(false);
   const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [kind, setKind] = useState<"menu" | "prep">("menu");
+  const [newPrep, setNewPrep] = useState(false);
+  const [making, setMaking] = useState<PrepCost | null>(null);
   const [layout, setLayout] = useState<"cards" | "table">(() => {
     try { return localStorage.getItem("pass.menu.layout") === "table" ? "table" : "cards"; } catch { return "cards"; }
   });
@@ -109,6 +113,49 @@ export default function MenuItems() {
           onDone={(message) => { setImporting(false); setNotice(message); void reload(); }} />
       )}
 
+      <div className="seg kind-seg" role="tablist" aria-label="Show">
+        <button role="tab" aria-selected={kind === "menu"} className={kind === "menu" ? "on" : ""} onClick={() => setKind("menu")}>Menu items <b>{d.menu.length}</b></button>
+        <button role="tab" aria-selected={kind === "prep"} className={kind === "prep" ? "on" : ""} onClick={() => setKind("prep")}>Prep items <b>{d.prep.length}</b></button>
+      </div>
+
+      {kind === "prep" && (
+        <>
+          <div className="spread inv-toolbar">
+            <p className="small muted" style={{ margin: 0 }}>Made in the kitchen with their own recipe (broths, sauces, doughs), used in menu items
+              and in other prep items. One batch makes a set amount.</p>
+            <button className="btn primary" onClick={() => setNewPrep(true)}>+ New prep item</button>
+          </div>
+          {newPrep && (
+            <div className="panel" style={{ padding: 14 }}>
+              <NewPrep base={base} onCancel={() => setNewPrep(false)}
+                onCreated={(item) => { setNewPrep(false); void reload(); setRecipeFor(item.id); }} />
+            </div>
+          )}
+          <div className="dish-grid">
+            {d.prep.map((pr) => (
+              <button key={pr.id} className="dish-card" onClick={() => setViewing(pr.id)}>
+                <div className="dish-photo">
+                  {d.logo_path ? <img src={`${API_URL}${d.logo_path}`} alt="" loading="lazy" />
+                    : <span className="dish-initial" aria-hidden>{pr.name.trim().charAt(0).toUpperCase()}</span>}
+                </div>
+                <div className="dish-body">
+                  <span className="dish-pill">Prep item</span>
+                  <h3 className="dish-name">{pr.name}</h3>
+                  <p className="dish-desc">{pr.has_recipe ? `${pr.ingredients} ingredient${pr.ingredients === 1 ? "" : "s"}` : "No recipe yet"}</p>
+                </div>
+                <div className="dish-foot">
+                  <span>Yield {qty(pr.batch_qty)} {pr.unit === "l" ? "L" : pr.unit ?? ""}</span>
+                  <span>{pr.batch_cost_cents != null ? `Batch ${money(pr.batch_cost_cents)}` : ""}</span>
+                  <span>{pr.stock_qty != null ? `${qty(pr.stock_qty)} ${pr.unit === "l" ? "L" : pr.unit ?? ""} made` : "Made fresh"}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+          {d.prep.length === 0 && !newPrep && <p className="empty">No prep items yet. Add your broths, sauces and doughs here, or from a menu item's recipe.</p>}
+        </>
+      )}
+
+      {kind === "menu" && <>
       <div className="spread inv-toolbar">
         <div className="chips" role="group" aria-label="Show">
           <button className={filter === "all" ? "chip on" : "chip"} onClick={() => setFilter("all")}>All <b>{d.menu.length}</b></button>
@@ -215,8 +262,11 @@ export default function MenuItems() {
         )}
       </div>}
 
+      </>}
+
       {viewing && (
         <RecipeView base={base} itemId={viewing} onClose={() => setViewing(null)}
+          onMake={d.prep.some((p) => p.id === viewing && p.has_recipe) ? () => { setMaking(d.prep.find((p) => p.id === viewing) ?? null); setViewing(null); } : undefined}
           onEditRecipe={() => { setRecipeFor(viewing); setViewing(null); }}
           onEditItem={byId[viewing] ? () => { setEditing(byId[viewing]); setViewing(null); } : undefined} />
       )}
@@ -229,6 +279,10 @@ export default function MenuItems() {
       {recipeFor && onHand.data && (
         <RecipeEditor base={base} itemId={recipeFor} stock={onHand.data.items} onClose={() => setRecipeFor(null)}
           onSaved={(m) => { setRecipeFor(null); setNotice(m); void reload(); }} />
+      )}
+      {making && (
+        <MakeDialog base={base} prep={{ id: making.id, name: making.name, unit: making.unit, batch_qty: making.batch_qty }}
+          onClose={() => setMaking(null)} onDone={(m) => { setMaking(null); setNotice(m); void reload(); }} />
       )}
       {settings && (
         <CostSettings base={base} food={d.target_food_cost_pct} drinks={d.target_beverage_cost_pct}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type InventoryItem } from "../lib/api";
 
 function money(cents: number) {
@@ -13,13 +13,19 @@ function toCents(text: string): number | null {
 export function Dialog({ title, onClose, children, footer, narrow = false, width }: {
   title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; narrow?: boolean; width?: string;
 }) {
+  const back = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Escape closes only the dialog on top, when one is opened over another.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const open = document.querySelectorAll(".sb-modal-back");
+      if (open[open.length - 1] === back.current) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="sb-modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div ref={back} className="sb-modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="sb-modal" role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : "Dialog"}
         style={narrow ? { width: "min(460px, 100%)" } : width ? { width } : undefined}>
         <div className="sb-flyout-head">

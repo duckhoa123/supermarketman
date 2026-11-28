@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useApi } from "../hooks";
 import { api } from "../lib/api";
 import { convert, money, normUnit, qty, unitCost, unitsFor, type RecipeDetail, type StockItem } from "../lib/inventory";
+import NewPrep from "./NewPrep";
 import { Dialog } from "./PosDialogs";
 
 export const pctClass = (pct: number | null, target: number) => pct == null ? "" : pct > target + 0.05 ? "error" : "good-text";
@@ -23,8 +24,14 @@ export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const d = detail.data;
-  const byId = useMemo(() => Object.fromEntries(stock.map((s) => [s.id, s])), [stock]);
-  const choices = useMemo(() => stock.filter((s) => s.id !== itemId).sort((a, b) => Number(b.is_prep) - Number(a.is_prep) || a.name.localeCompare(b.name)), [stock, itemId]);
+  const [extra, setExtra] = useState<StockItem[]>([]);  // prep items created from this recipe
+  const [making, setMaking] = useState(false);
+  const [nested, setNested] = useState<string | null>(null);  // a prep item's own recipe, opened on top
+  const all = useMemo(() => [...stock, ...extra.filter((x) => !stock.some((s) => s.id === x.id))], [stock, extra]);
+  const byId = useMemo(() => Object.fromEntries(all.map((s) => [s.id, s])), [all]);
+  const choices = useMemo(() => all.filter((s) => s.id !== itemId).sort((a, b) => a.name.localeCompare(b.name)), [all, itemId]);
+  const prepChoices = choices.filter((s) => s.is_prep);
+  const stockChoices = choices.filter((s) => !s.is_prep);
 
   // Start the form from the saved recipe once it loads.
   if (d && lines === null) {
@@ -130,7 +137,8 @@ export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                         setLine(i, { ingredient_id: e.target.value, unit: normUnit(next?.unit) || "each" });
                       }}>
                         <option value="">Choose…</option>
-                        {choices.map((s) => <option key={s.id} value={s.id}>{s.is_prep ? "▸ " : ""}{s.name}</option>)}
+                        {prepChoices.length > 0 && <optgroup label="Prep items">{prepChoices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}
+                        <optgroup label="Inventory items">{stockChoices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>
                       </select>
                       <input className="input" inputMode="decimal" aria-label="Portion" value={l.qty} placeholder="8" onChange={(e) => setLine(i, { qty: e.target.value })} />
                       <select className="select" aria-label="Unit" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })}>
@@ -145,14 +153,27 @@ export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                       ) : <span className="num">{c?.cost != null ? money(c.cost) : "–"}</span>}
                       <button className="sb-icon" aria-label="Remove ingredient" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>
                     </div>
-                    {c?.problem && l.ingredient_id && <small className="warn-text">{c.problem}</small>}
+                    {ing?.is_prep && (
+                      <small className="muted">Prep item: one batch makes {qty(ing.batch_qty)} {ing.unit === "l" ? "L" : ing.unit ?? ""} ·{" "}
+                        <button className="linkish" onClick={() => setNested(ing.id)}>{ing.has_recipe ? "its recipe" : "add its recipe"}</button></small>
+                    )}
+                    {c?.problem && l.ingredient_id && !(ing?.is_prep && !ing.has_recipe) && <small className="warn-text">{c.problem}</small>}
                   </div>
                 );
               })}
             </div>
-            <span className="tip" tabIndex={-1} data-tip="Not in the list? Add it on the Inventory items tab first." style={{ textDecoration: "none" }}>
-              <button className="btn small" style={{ alignSelf: "start" }} onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each" }])}>+ Add an ingredient</button>
-            </span>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn small" onClick={() => setLines([...lines, { key: `n${Date.now()}`, ingredient_id: "", qty: "", unit: "each" }])}>+ Add an ingredient</button>
+              {!making && <button className="btn small" onClick={() => setMaking(true)} title="Something made in the kitchen with its own recipe: a broth, sauce or dough">+ New prep item</button>}
+            </div>
+            {making && (
+              <NewPrep base={base} onCancel={() => setMaking(false)} onCreated={(item) => {
+                setExtra((x) => [...x, item]);
+                setLines([...lines.filter((l) => l.ingredient_id), { key: `n${Date.now()}`, ingredient_id: item.id, qty: "", unit: normUnit(item.unit) || "each" }]);
+                setMaking(false);
+                setNested(item.id);  // straight on to what goes into it
+              }} />
+            )}
             <label className="stack" style={{ gap: 4 }}><span className="small tip" tabIndex={0} data-tip="Printed on the recipe card for the kitchen">Method and plating notes</span>
               <textarea className="textarea" rows={3} maxLength={5000} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Sear skin side down 4 minutes; plate rice left, asparagus fanned right." />
             </label>
@@ -171,7 +192,7 @@ export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
                 <span>{money(live.qCents)}</span>
               </div>
               <div className="spread rec-plate"><span>{d.is_prep ? "Batch cost" : "Plate cost"}</span><strong>{money(live.plate)}</strong></div>
-              {d.is_prep && d.batch_qty ? <div className="spread small"><span>Per {d.unit ?? "unit"}</span><span>{unitCost(live.plate / d.batch_qty)}</span></div> : null}
+              {d.is_prep && d.batch_qty ? <div className="spread small"><span>Per {d.unit === "l" ? "L" : d.unit ?? "unit"}</span><span>{unitCost(live.plate / d.batch_qty)}</span></div> : null}
             </div>
             {!d.is_prep && (
               <div className="rec-total">
@@ -199,6 +220,13 @@ export function RecipeEditor({ base, itemId, stock, onClose, onSaved }: {
             {error && <p className="small error">{error}</p>}
           </aside>
         </div>
+      )}
+      {nested && (
+        <RecipeEditor base={base} itemId={nested} stock={all} onClose={() => setNested(null)}
+          onSaved={() => {
+            setExtra((x) => x.map((p) => (p.id === nested ? { ...p, has_recipe: true } : p)));
+            setNested(null);
+          }} />
       )}
     </Dialog>
   );
