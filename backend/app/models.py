@@ -168,6 +168,11 @@ class Item(TimestampMixin, Base):
     # Restock: days after delivery before it can be used (thawing, portioning), and its own safety margin in days
     # (empty: the restaurant's, 2 by default).
     ready_days: Mapped[int | None] = mapped_column(Integer)
+    # The recipe card: prep + cook time in minutes, active | development, and notes for the kitchen.
+    prep_minutes: Mapped[int | None] = mapped_column(Integer)
+    recipe_status: Mapped[str | None] = mapped_column(String(16))
+    allergen_notes: Mapped[str | None] = mapped_column(Text)
+    storage_notes: Mapped[str | None] = mapped_column(Text)
     safety_days: Mapped[float | None] = mapped_column(Float)
     barcode: Mapped[str | None] = mapped_column(String(64))
     shelf_order: Mapped[int | None] = mapped_column(Integer)  # order on the count sheet, within its area

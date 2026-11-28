@@ -458,3 +458,34 @@ async def test_count_report_alerts_and_recount(client, session, demo_location_id
     assert r.status_code == 200
     recount = await session.scalar(select(Alert).where(Alert.kind == "count_recount"))
     assert recount.title == "Please count Everything again" and recount.body == "Check the top shelf"
+
+
+async def test_recipe_card_fields(client, session, demo_location_id):
+    """The edit dialog saves the whole card: name, description, time, status, notes, and a prep item's batch."""
+    base = f"/locations/{demo_location_id}"
+    crab = (await client.post(f"{base}/inventory/items", headers=OWNER, json={
+        "name": "Crab can", "unit": "each", "unit_cost": 900, "qty": 6})).json()["id"]
+    balls = (await client.post(f"{base}/inventory/items", headers=OWNER, json={
+        "name": "Crab balls", "unit": "each", "batch_qty": 40})).json()["id"]
+    r = await client.put(f"{base}/recipes/{balls}", headers=OWNER, json={
+        "lines": [{"ingredient_id": crab, "qty": 1, "unit": "each"}], "name": "Dungeness Crab Balls",
+        "description": "Crab ball for crab noodle soup", "category": "Protein", "batch_qty": 50, "unit": "balls",
+        "prep_minutes": 20, "recipe_status": "active", "allergen_notes": "Peanuts, gluten",
+        "storage_notes": "Label and keep in the walk-in", "recipe_notes": "Mix\nRoll into 2 oz balls"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert (d["name"], d["batch_qty"], d["unit"], d["prep_minutes"]) == ("Dungeness Crab Balls", 50, "balls", 20)
+    assert d["allergen_notes"] == "Peanuts, gluten" and d["description"] == "Crab ball for crab noodle soup"
+    # A dish: description and status; its name and price go through the POS path (a Pass item here).
+    report = (await client.get(f"{base}/recipes", headers=OWNER)).json()
+    dish = next(m for m in report["menu"] if m["name"] == "Tiramisu")
+    r = await client.put(f"{base}/recipes/{dish['id']}", headers=OWNER, json={
+        "lines": [{"ingredient_id": balls, "qty": 2, "unit": "balls"}], "name": "Tiramisu (house)", "price_cents": 1500,
+        "recipe_status": "development", "prep_minutes": 15})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["name"] == "Tiramisu (house)" and d["price_cents"] == 1500 and d["recipe_status"] == "development"
+    prep = next(p for p in (await client.get(f"{base}/recipes", headers=OWNER)).json()["prep"] if p["id"] == balls)
+    assert prep["prep_minutes"] == 20 and prep["category"] == "Protein"
+    assert (await client.put(f"{base}/recipes/{balls}", headers=OWNER, json={
+        "lines": [], "recipe_status": "secret"})).status_code == 422

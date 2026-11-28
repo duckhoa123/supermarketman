@@ -1242,3 +1242,35 @@ button.mi-stat:hover { border-color: var(--basil); }
 .new-prep-row label { display: flex; flex-direction: column; gap: 3px; }
 .new-prep-row label:first-child { flex: 1; min-width: 200px; }
 .dish-foot > span { white-space: nowrap; }
+
+/* Edit prep item / menu item: one column, labels above soft rounded fields, like a recipe card form */
+.ed-title { display: flex; flex-direction: column; gap: 6px; }
+.ed-title > span { font-family: var(--serif); font-weight: 400; font-size: 2.1rem; line-height: 1.1; }
+.ed-title small { font-size: 0.95rem; font-weight: 400; color: var(--muted); }
+.ed { display: flex; flex-direction: column; gap: 16px; }
+.ed-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ed-field > span { font-size: 0.9rem; color: var(--muted); }
+.ed .input, .ed .select { border-radius: 10px; padding: 10px 12px; font-size: 0.98rem; }
+.ed textarea.input { resize: vertical; line-height: 1.5; font-family: inherit; }
+.ed-row { display: grid; gap: 14px; }
+.ed-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ed-row.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ed-h { margin: 6px 0 -4px; font-family: var(--serif); font-weight: 500; font-size: 1.35rem; }
+.ed-lines { display: flex; flex-direction: column; gap: 8px; }
+.ed-line-wrap { display: flex; flex-direction: column; gap: 3px; }
+.ed-line { display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px 36px; gap: 8px; align-items: center; }
+.ed-line-head { font-size: 0.8rem; color: var(--muted); }
+.ed-x { border: 0; background: none; font-size: 1.4rem; line-height: 1; color: var(--muted); cursor: pointer; border-radius: 8px; height: 36px; }
+.ed-x:hover { background: var(--page); color: var(--ink); }
+.ed-cost { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.ed-cost-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px;
+  background: none; border: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.ed-cost-body { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px; }
+.ed-delete { color: var(--tomato); }
+@media (max-width: 640px) {
+  .ed-row.three, .ed-row.two { grid-template-columns: 1fr; }
+  .ed-line { grid-template-columns: minmax(0, 1fr) 70px 80px 32px; }
+}
+.dish-pill.is-dev { background: var(--oil-tint); color: var(--ink); }
+.ed-cost-body .spread { align-items: center; }
+.ed-cost-body .input, .ed-cost-body .select { padding: 4px 8px; }

@@ -31,13 +31,16 @@ export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEdit
       {!r ? <p className="muted">Loading…</p> : (
         <div className="stack rv">
           <div className="rv-meta">
-            <span className="dish-pill">{r.is_prep ? "Prep item" : `${r.category || "Menu"} · Menu item`}</span>
+            <span className="dish-pill">{r.is_prep ? `${r.category ? `${r.category} · ` : ""}Prep item` : `${r.category || "Menu"} · Menu item`}</span>
             {!r.is_prep && r.price_cents > 0 && <span className="rv-price">{money(r.price_cents)}</span>}
+            {r.prep_minutes ? <span className="rv-price">{r.prep_minutes} min</span> : null}
+            {r.recipe_status === "development" && <span className="dish-pill is-dev">In development</span>}
             <label className="rv-make">Make
               <input className="input" type="number" min={1} step={1} value={make} onChange={(e) => setMake(e.target.value)} aria-label={r.is_prep ? "Batches" : "Plates"} />
               {r.is_prep ? `batch${n === 1 ? "" : "es"}` : `plate${n === 1 ? "" : "s"}`}
             </label>
           </div>
+          {r.description && <p style={{ margin: 0 }}>{r.description}</p>}
           {r.is_prep
             ? <p className="small muted" style={{ margin: 0 }}>One batch makes {qty(r.batch_qty)} {r.unit === "l" ? "L" : r.unit ?? ""}.{n !== 1 ? ` Quantities below are for ${qty(n)} batches (${qty((r.batch_qty ?? 0) * n)} ${r.unit === "l" ? "L" : r.unit ?? ""}).` : ""}</p>
             : n !== 1 && <p className="small muted" style={{ margin: 0 }}>Recipe is for one plate. Quantities below are scaled to {qty(n)} plates.</p>}
@@ -62,9 +65,11 @@ export default function RecipeView({ base, itemId, onClose, onEditRecipe, onEdit
             </section>
             <section>
               <h3 className="rv-h">How to make it</h3>
-              {steps.length === 0 ? <p className="muted">No method written yet. Add the steps under notes in Edit recipe.</p> : (
+              {steps.length === 0 ? <p className="muted">No method written yet. Add the steps in Edit recipe.</p> : (
                 <ol className="rv-steps">{steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
               )}
+              {r.allergen_notes && <div className="rv-box"><strong>Allergens</strong><span>{r.allergen_notes}</span></div>}
+              {r.storage_notes && <div className="rv-box"><strong>Storage & kitchen notes</strong><span>{r.storage_notes}</span></div>}
             </section>
           </div>
         </div>

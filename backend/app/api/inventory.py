@@ -765,7 +765,8 @@ async def list_recipes(location: Location = Depends(require_manager), session: A
         plate = costing.plate(m.id) if has else None
         qty, revenue = sold.get(m.name.strip().lower(), (0.0, 0))
         row = {"id": m.id, "name": m.name, "category": m.category, "price_cents": m.price_cents,
-               "description": m.description,
+               "description": m.description, "prep_minutes": m.prep_minutes,
+               "recipe_status": m.recipe_status or "active",
                "has_recipe": has, "ingredients": len(plate.lines) if plate else 0,
                "complete": plate.complete if plate else False, "sold_30d": qty, "revenue_30d_cents": revenue,
                "plate_cost_cents": None, "food_cost_pct": None, "suggested_price_cents": None, "margin_cents": None,
@@ -787,6 +788,8 @@ async def list_recipes(location: Location = Depends(require_manager), session: A
         batch = costing.plate(p.id) if costing.has_recipe(p.id) else None
         unit_cost = costing.unit_cost(p)[0] if batch else None
         preps.append({"id": p.id, "name": p.name, "unit": p.unit, "batch_qty": p.batch_qty,
+                      "category": p.category, "description": p.description, "prep_minutes": p.prep_minutes,
+                      "recipe_status": p.recipe_status or "active",
                       "has_recipe": batch is not None, "complete": batch.complete if batch else False,
                       "ingredients": len(batch.lines) if batch else 0,
                       "batch_cost_cents": round(batch.cost_cents) if batch else None,
@@ -820,7 +823,9 @@ async def recipe_detail(session: AsyncSession, location: Location, menu: Item) -
                                          .order_by(PlateCostHistory.created_at.desc()).limit(20)))
     target = inv.target_for(menu, location)
     out = {"id": menu.id, "name": menu.name, "category": menu.category, "price_cents": menu.price_cents,
-           "provider": menu.provider, "description": menu.description,
+           "provider": menu.provider, "description": menu.description, "prep_minutes": menu.prep_minutes,
+           "recipe_status": menu.recipe_status or "active", "allergen_notes": menu.allergen_notes,
+           "storage_notes": menu.storage_notes,
            "is_prep": inv.is_prep(menu), "batch_qty": menu.batch_qty, "unit": menu.unit,
            "q_factor_cents": menu.q_factor_cents, "q_factor_pct": menu.q_factor_pct, "recipe_notes": menu.recipe_notes,
            "item_target_pct": menu.target_food_cost_pct,
@@ -854,7 +859,17 @@ class RecipeIn(BaseModel):
     q_factor_pct: float | None = Field(default=None, ge=0, le=50)
     recipe_notes: str | None = Field(default=None, max_length=5000)
     target_food_cost_pct: float | None = Field(default=None, ge=5, le=90)  # this item only; empty = the default
-    price_cents: int | None = Field(default=None, ge=0, le=10_000_000)  # a Pass item's menu price
+    price_cents: int | None = Field(default=None, ge=0, le=10_000_000)  # the menu price
+    # The rest of the recipe card, all optional: only what's sent changes.
+    name: str | None = Field(default=None, min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=1000)
+    category: str | None = Field(default=None, max_length=200)
+    prep_minutes: int | None = Field(default=None, ge=0, le=10_000)
+    recipe_status: str | None = Field(default=None, pattern="^(active|development)$")
+    allergen_notes: str | None = Field(default=None, max_length=2000)
+    storage_notes: str | None = Field(default=None, max_length=2000)
+    batch_qty: float | None = Field(default=None, gt=0, le=1_000_000)  # a prep item: one batch makes this much
+    unit: str | None = Field(default=None, max_length=32)  # ...in this unit
 
 
 @router.put("/recipes/{item_id}")
@@ -863,6 +878,42 @@ async def save_recipe(item_id: str, body: RecipeIn, location: Location = Depends
     """Replace the recipe (one plate, or one batch of a prep item). From today, each one sold takes its ingredients
     out of stock."""
     menu = await _item(session, location, item_id)
+    sent = body.model_fields_set
+    # Name, price and category of a dish go through the POS (Clover gets them too); a prep item's are Pass's own.
+    if inv.is_prep(menu):
+        if "name" in sent and body.name and body.name.strip() != menu.name:
+            inv.audit(session, menu, "name", menu.name, body.name.strip(), user.id)
+            menu.name = body.name.strip()
+        if "category" in sent:
+            menu.category = (body.category or "").strip() or None
+        if body.batch_qty is not None and body.batch_qty != menu.batch_qty:
+            inv.audit(session, menu, "batch size", menu.batch_qty, body.batch_qty, user.id)
+            menu.batch_qty = body.batch_qty
+        if "unit" in sent and body.unit and inv.norm_unit(body.unit) != (menu.unit or ""):
+            inv.audit(session, menu, "unit", menu.unit, inv.norm_unit(body.unit), user.id)
+            menu.unit = menu.batch_unit = inv.norm_unit(body.unit)
+    else:
+        changes: dict = {}
+        if "name" in sent and body.name and body.name.strip() != menu.name:
+            changes["name"] = body.name.strip()
+        if "category" in sent and ((body.category or "").strip() or None) != menu.category:
+            changes["category"] = (body.category or "").strip() or None
+        if body.price_cents is not None and body.price_cents != menu.price_cents and menu.provider not in ("pass", "demo"):
+            changes["price_cents"] = body.price_cents
+        if changes:
+            from app.services import pos_write
+
+            try:
+                await pos_write.edit_item(session, location, menu, changes)
+            except pos_write.PosError as exc:
+                raise HTTPException(422, str(exc)) from exc
+    for field in ("description", "allergen_notes", "storage_notes"):
+        if field in sent:
+            setattr(menu, field, (getattr(body, field) or "").strip() or None)
+    if "prep_minutes" in sent:
+        menu.prep_minutes = body.prep_minutes
+    if "recipe_status" in sent:
+        menu.recipe_status = body.recipe_status
     try:
         await inv.save_recipe(session, location, menu, [ln.model_dump() for ln in body.lines], body.q_factor_cents,
                               body.q_factor_pct, user_id=user.id)
@@ -873,9 +924,7 @@ async def save_recipe(item_id: str, body: RecipeIn, location: Location = Depends
     if "target_food_cost_pct" in body.model_fields_set:
         inv.audit(session, menu, "target %", menu.target_food_cost_pct, body.target_food_cost_pct, user.id)
         menu.target_food_cost_pct = body.target_food_cost_pct
-    if body.price_cents is not None and body.price_cents != menu.price_cents:
-        if menu.provider not in ("pass", "demo"):
-            raise HTTPException(422, "This dish's price comes from your POS: change it on the Menu items tab.")
+    if body.price_cents is not None and body.price_cents != menu.price_cents and menu.provider in ("pass", "demo"):
         inv.audit(session, menu, "price", menu.price_cents, body.price_cents, user.id)
         menu.price_cents = body.price_cents
     await session.flush()

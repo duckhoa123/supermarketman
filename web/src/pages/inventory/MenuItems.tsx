@@ -139,13 +139,13 @@ export default function MenuItems() {
                     : <span className="dish-initial" aria-hidden>{pr.name.trim().charAt(0).toUpperCase()}</span>}
                 </div>
                 <div className="dish-body">
-                  <span className="dish-pill">Prep item</span>
+                  <span className="dish-pill">{pr.category ? `${pr.category} · ` : ""}Prep item{pr.recipe_status === "development" ? " · In development" : ""}</span>
                   <h3 className="dish-name">{pr.name}</h3>
-                  <p className="dish-desc">{pr.has_recipe ? `${pr.ingredients} ingredient${pr.ingredients === 1 ? "" : "s"}` : "No recipe yet"}</p>
+                  <p className="dish-desc">{pr.description || (pr.has_recipe ? `${pr.ingredients} ingredient${pr.ingredients === 1 ? "" : "s"}` : "No recipe yet")}</p>
                 </div>
                 <div className="dish-foot">
                   <span>Yield {qty(pr.batch_qty)} {pr.unit === "l" ? "L" : pr.unit ?? ""}</span>
-                  <span>{pr.batch_cost_cents != null ? `Batch ${money(pr.batch_cost_cents)}` : ""}</span>
+                  <span>{pr.prep_minutes ? `${pr.prep_minutes} min` : pr.batch_cost_cents != null ? `Batch ${money(pr.batch_cost_cents)}` : ""}</span>
                   <span>{pr.stock_qty != null ? `${qty(pr.stock_qty)} ${pr.unit === "l" ? "L" : pr.unit ?? ""} made` : "Made fresh"}</span>
                 </div>
               </button>
@@ -191,7 +191,7 @@ export default function MenuItems() {
                     : <span className="dish-initial" aria-hidden>{r.name.trim().charAt(0).toUpperCase()}</span>}
                 </div>
                 <div className="dish-body">
-                  <span className="dish-pill">{r.category || "Menu"} · Menu item</span>
+                  <span className="dish-pill">{r.category || "Menu"} · Menu item{r.recipe_status === "development" ? " · In development" : ""}</span>
                   <h3 className="dish-name">{r.name}</h3>
                   <p className="dish-desc">{r.description || " "}</p>
                 </div>
@@ -277,7 +277,8 @@ export default function MenuItems() {
           onDone={(m) => { setEditing(null); setNotice(m); void reload(); }} />
       )}
       {recipeFor && onHand.data && (
-        <RecipeEditor base={base} itemId={recipeFor} stock={onHand.data.items} onClose={() => setRecipeFor(null)}
+        <RecipeEditor base={base} itemId={recipeFor} stock={onHand.data.items} onClose={() => setRecipeFor(null)} categories={categories}
+          onDelete={byId[recipeFor] ? () => { const it = byId[recipeFor]; setRecipeFor(null); void remove([it]); } : undefined}
           onSaved={(m) => { setRecipeFor(null); setNotice(m); void reload(); }} />
       )}
       {making && (
