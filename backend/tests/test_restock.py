@@ -64,7 +64,9 @@ async def test_alerts_from_sales_pace(client, session, demo_location_id):
     sup = Supplier(location_id=demo_location_id, name="Ocean Fish Co")
     session.add(sup)
     await session.commit()
-    today = restock.local_now(loc).date()
+    # A fixed time of day (10 am local), so the 23:59 cut-off is never already past when the test runs.
+    now = restock.local_now(loc).replace(hour=10, minute=0, second=0, microsecond=0)
+    today = now.date()
     # Delivers tomorrow and in 4 days; the order for tomorrow is in by 11:59 pm today.
     r = await client.patch(f"/locations/{demo_location_id}/suppliers/{sup.id}", headers=OWNER, json={
         "name": "Ocean Fish Co", "delivery_days": [(today.weekday() + 1) % 7, (today.weekday() + 4) % 7],
@@ -84,19 +86,19 @@ async def test_alerts_from_sales_pace(client, session, demo_location_id):
                                   qty_after=49, created_at=start + timedelta(days=d, hours=1)))
     await session.commit()
 
-    sent = await restock.check_restock(session, loc)
+    sent = await restock.check_restock(session, loc, now)
     alerts = list(await session.scalars(select(Alert).where(Alert.location_id == demo_location_id,
                                                             Alert.kind == "restock_order")))
     assert sent >= 1 and len(alerts) == 1
     assert alerts[0].title.startswith("Order from Ocean Fish Co by 11:59 pm for tomorrow")
     assert "Salmon 70 lb (49 lb left)" in alerts[0].body
-    assert await restock.check_restock(session, loc) == 0  # not sent twice
+    assert await restock.check_restock(session, loc, now) == 0  # not sent twice
 
     # A bad night: 20 lb left can't last until the delivery is ready the day after tomorrow.
     salmon = await session.get(Item, salmon.id)
     salmon.stock_qty = 20
     await session.commit()
-    await restock.check_restock(session, loc)
+    await restock.check_restock(session, loc, now)
     runout = await session.scalar(select(Alert).where(Alert.location_id == demo_location_id, Alert.kind == "runout"))
     assert runout is not None and runout.title == "Salmon is running out"
 

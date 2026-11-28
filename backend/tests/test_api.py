@@ -189,9 +189,10 @@ async def test_clover_webhook_to_rollup(client, session, demo_location_id):
     )
     set_adapter("clover", FakeClover({"CLV1": order}))
     location = await session.get(Location, demo_location_id)
-    from app.services.analytics import local_today
+    from zoneinfo import ZoneInfo
 
-    today = local_today(location)
+    # The order's own local day: "today" would be wrong for an order 5 minutes before midnight.
+    today = order.opened_at.astimezone(ZoneInfo(location.timezone)).date()
     before = await session.scalar(
         select(DailySales.gross_cents).where(DailySales.location_id == demo_location_id, DailySales.day == today)
     ) or 0

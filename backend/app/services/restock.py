@@ -155,7 +155,8 @@ def local_now(location: Location) -> datetime:
     return utcnow().astimezone(ZoneInfo(location.timezone))
 
 
-async def plans(session: AsyncSession, location: Location, items: list[Item] | None = None) -> dict[str, Plan]:
+async def plans(session: AsyncSession, location: Location, items: list[Item] | None = None,
+                now: datetime | None = None) -> dict[str, Plan]:
     """A plan for every stocked item that's being used."""
     from app.services.inventory import stock_items
 
@@ -169,7 +170,7 @@ async def plans(session: AsyncSession, location: Location, items: list[Item] | N
         (StockMovement.kind.in_(("count", "receive", "import", "pos", "adjust")))
         | ((StockMovement.kind == "opening") & (StockMovement.qty_delta > 0))).distinct()))
     suppliers = {s.id: s for s in await session.scalars(select(Supplier).where(Supplier.location_id == location.id))}
-    now = local_now(location)
+    now = now or local_now(location)
     from app.models import ReceivedLine
 
     received_today = set(await session.scalars(select(ReceivedLine.supplier_id).where(
@@ -203,16 +204,17 @@ def _time(t: datetime) -> str:
     return t.strftime("%-I:%M %p").replace(":00 ", " ").lower()
 
 
-async def check_restock(session: AsyncSession, location: Location) -> int:
+async def check_restock(session: AsyncSession, location: Location, now: datetime | None = None) -> int:
     """Send the run-out warnings and today's order reminders. Each is sent once (per item and delivery, or per
     supplier and delivery), so running this after every sync doesn't repeat them."""
     from app.services.alerts import create_alert
     from app.services.inventory import stock_items
 
     items = {i.id: i for i in await stock_items(session, location, active_only=True)}
-    by_item = await plans(session, location, list(items.values()))
+    now = now or local_now(location)
+    by_item = await plans(session, location, list(items.values()), now)
     suppliers = {s.id: s for s in await session.scalars(select(Supplier).where(Supplier.location_id == location.id))}
-    today = local_now(location).date()
+    today = now.date()
     created = 0
     to_order: dict[str, list[tuple[Item, Plan]]] = {}
     for item_id, p in by_item.items():
