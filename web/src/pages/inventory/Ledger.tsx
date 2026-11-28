@@ -6,7 +6,7 @@ import { api } from "../../lib/api";
 import { KIND_LABEL, money, qty, unitCost, type AuditEntry, type Movement, type OnHand } from "../../lib/inventory";
 
 /** Every change to stock, newest first: who, when, how much, at what cost, and why. Nothing here is ever edited;
- * a correction is a new line. Recipe, par and unit changes are on the second view. */
+ * a correction is a new line. Recipe, reorder and unit changes are on the second view. */
 export default function Ledger() {
   const { location } = useApp();
   const base = `/locations/${location.id}`;
@@ -41,7 +41,7 @@ export default function Ledger() {
       <div className="spread inv-toolbar">
         <div className="seg">
           <button className={view === "stock" ? "on" : ""} onClick={() => setView("stock")}>Stock changes</button>
-          <button className={view === "changes" ? "on" : ""} onClick={() => setView("changes")}>Recipe & par changes</button>
+          <button className={view === "changes" ? "on" : ""} onClick={() => setView("changes")}>Recipe & stock setting changes</button>
         </div>
         <div className="row">
           <select className="select" style={{ width: "auto", maxWidth: 220 }} aria-label="Item" value={itemId}
@@ -102,7 +102,7 @@ export default function Ledger() {
               ))}
             </tbody>
           </table>
-          {(audit.data?.changes ?? []).length === 0 && <p className="empty">No recipe, par or unit changes yet.</p>}
+          {(audit.data?.changes ?? []).length === 0 && <p className="empty">No recipe or stock setting changes yet.</p>}
         </div>
       )}
     </div>

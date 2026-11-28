@@ -57,8 +57,7 @@ export default function CountPanel() {
   if (onHand.error) return <p className="error">{onHand.error}</p>;
   if (!data) return <p className="muted">Loading…</p>;
   const areaName = (a: string) => {
-    if (a === EVERYTHING) return "Everything";
-    if (a === NO_AREA) return "No area";
+    if (a === EVERYTHING || a === NO_AREA) return "Full count";
     const found = data.areas.find((x) => x.id === a);
     return found ? `${areaIcon(found.name)} ${found.name}` : "Area";
   };
@@ -88,20 +87,10 @@ export default function CountPanel() {
       <div className="panel stack">
         <div>
           <h2 style={{ margin: 0 }}>Start a count</h2>
-          <p className="small muted">Pick an area. Several people can count different areas at the same time, each on their own phone. It works without signal.</p>
+          <p className="small muted">Counts every item you keep in stock. It saves on this phone as you go and works without signal.</p>
         </div>
-        <div className="inv-count-areas">
-          {data.areas.map((a) => (
-            <button key={a.id} className="inv-count-area" onClick={() => void start(a.id)} disabled={!inArea(a.id).length}>
-              <strong><span aria-hidden>{areaIcon(a.name)}</span> {a.name}</strong><span className="small muted">{inArea(a.id).length} items</span>
-            </button>
-          ))}
-          {data.areas.length > 0 && inArea(NO_AREA).length > 0 && (
-            <button className="inv-count-area" onClick={() => void start(NO_AREA)}><strong>No area</strong><span className="small muted">{inArea(NO_AREA).length} items</span></button>
-          )}
-          <button className="inv-count-area" onClick={() => void start(EVERYTHING)} disabled={!countable.length}>
-            <strong>Everything</strong><span className="small muted">{countable.length} items · full count</span>
-          </button>
+        <div className="row">
+          <button className="btn primary" onClick={() => void start(EVERYTHING)} disabled={!countable.length}>Start counting · {countable.length} items</button>
         </div>
         {!countable.length && <p className="small muted">Nothing to count yet: add items on the Inventory items tab.</p>}
       </div>
@@ -111,7 +100,7 @@ export default function CountPanel() {
         {(history.data?.counts ?? []).length === 0 ? <p className="small muted">No counts yet.</p> : (
           <div className="table-wrap">
             <table className="data small">
-              <thead><tr><th>When</th><th>Area</th><th>By</th><th className="num">Items</th><th className="num">Different</th>
+              <thead><tr><th>When</th><th>By</th><th className="num">Items</th><th className="num">Different</th>
                 {data.can_manage && <th className="num">Difference</th>}<th>Status</th></tr></thead>
               <tbody>
                 {history.data!.counts.map((c) => (
@@ -120,7 +109,7 @@ export default function CountPanel() {
                     else setReviewing(c);
                   }}>
                     <td>{new Date(c.counted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
-                    <td>{c.area}</td><td>{c.counted_by ?? "–"}</td><td className="num">{c.items}</td><td className="num">{c.changed}</td>
+                    <td>{c.counted_by ?? "–"}</td><td className="num">{c.items}</td><td className="num">{c.changed}</td>
                     {data.can_manage && <td className={`num ${c.variance_cents && c.variance_cents < 0 ? "error" : ""}`}>{money(c.variance_cents)}</td>}
                     <td><span className={`pill ${c.status === "approved" ? "good" : c.status === "submitted" ? "warn" : ""}`}>{c.status === "submitted" ? "waiting" : c.status}</span></td>
                   </tr>

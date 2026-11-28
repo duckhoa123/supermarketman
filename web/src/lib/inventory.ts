@@ -158,7 +158,7 @@ export function unitsFor(stockUnit: string | null, conversions: Conversion[] = [
 }
 
 export const STATUS_LABEL: Record<StockStatus, string> = {
-  ok: "OK", approaching: "Near par", at_par: "At par", below_par: "Below par", out: "Out", negative: "Below zero",
+  ok: "OK", approaching: "Getting low", at_par: "Low", below_par: "Reorder now", out: "Out", negative: "Below zero",
   untracked: "Not counted",
 };
 export const STATUS_PILL: Record<StockStatus, string> = {

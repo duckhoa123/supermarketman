@@ -88,7 +88,7 @@ export function PurchasingPanel({ onScanInvoice }: { onScanInvoice: () => void }
         <ul className="list">
           {suppliers.data?.map((s) => <SupplierRow key={s.id} s={s} base={base} onSaved={suppliers.reload} onWrite={setWriting} />)}
         </ul>
-        <p className="small muted" style={{ marginTop: 8 }}>Link items to suppliers and set par levels and reorder points under Inventory.</p>
+        <p className="small muted" style={{ marginTop: 8 }}>Link items to suppliers under Inventory. Pass works out when to reorder from how fast each item is used.</p>
       </section>
 
       <section className="panel">
